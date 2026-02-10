@@ -191,10 +191,27 @@ flowchart LR
 
 ### What Gets Allowed
 
-- Traffic to explicitly allowed hostnames
-- Traffic to explicitly allowed CIDR ranges
-- Localhost traffic (127.0.0.0/8)
+- Traffic to explicitly allowed hostnames and CIDR ranges
 - Pre-existing TCP connections established before CargoWall starts (when `allow-existing-connections: true`, the default)
+
+#### Automatically Allowed Traffic
+
+CargoWall automatically allows certain traffic required for the runner and GitHub Actions to function:
+
+| Traffic | Ports | Why |
+|---------|-------|-----|
+| Localhost (127.0.0.0/8, ::1) | All | Internal communication |
+| Link-local (169.254.0.0/16, fe80::/10) | All | Network infrastructure |
+| Azure IMDS (169.254.169.254) | All | Instance metadata on GitHub-hosted runners |
+| DNS upstream server | 53 | Required for DNS resolution |
+| systemd-resolved upstreams | All | Runner DNS infrastructure |
+| Docker bridge IP | 53 | DNS for containers |
+| `actions.githubusercontent.com` | All | GitHub Actions artifact/cache services |
+| `ACTIONS_RUNTIME_URL` host | All | GitHub Actions runtime |
+| `ACTIONS_RESULTS_URL` host | All | GitHub Actions results |
+| `ACTIONS_CACHE_URL` host | All | GitHub Actions cache |
+| IPv6 multicast (ff00::/8) | All | Neighbor discovery, required for IPv6 |
+| ICMPv6 | All | IPv6 neighbor discovery protocol |
 
 ### Sudo Lockdown
 
