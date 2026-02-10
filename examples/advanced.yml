@@ -1,0 +1,93 @@
+name: Advanced CargoWall Example
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-with-config-file:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use a JSON config file for complex rules
+      - uses: code-cargo/cargowall@v1
+        with:
+          config-file: .github/cargowall.json
+          fail-on-unsupported: true
+          debug: true
+
+      - name: Build application
+        run: |
+          npm ci
+          npm run build
+
+  build-with-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # CargoWall automatically configures Docker DNS
+      # so hostname filtering works inside containers
+      - uses: code-cargo/cargowall@v1
+        with:
+          default-action: deny
+          allowed-hosts: |
+            docker.io,
+            *.docker.com,
+            registry-1.docker.io,
+            auth.docker.io,
+            production.cloudflare.docker.com,
+            ghcr.io,
+            *.pkg.github.com,
+            registry.npmjs.org
+
+      # Docker builds work with hostname filtering
+      - name: Build Docker image
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM node:20-slim
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci --only=production
+          COPY . .
+          CMD ["node", "index.js"]
+          EOF
+          docker build -t myapp .
+
+      # Docker actions also respect the firewall
+      - name: Run in Docker container
+        uses: docker://alpine:latest
+        with:
+          args: |
+            sh -c "
+              echo 'Running inside container'
+              # This should work (if alpine mirrors are allowed)
+              # apk update
+              echo 'Done'
+            "
+
+  self-hosted-example:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      # Self-hosted runners have full eBPF support
+      - uses: code-cargo/cargowall@v1
+        with:
+          default-action: deny
+          allowed-hosts: |
+            github.com,
+            *.githubusercontent.com,
+            internal-registry.company.com
+          allowed-cidrs: |
+            10.0.0.0/8,
+            192.168.0.0/16
+          fail-on-unsupported: true
+
+      - name: Build with internal dependencies
+        run: |
+          # Can reach internal registry
+          npm ci --registry=https://internal-registry.company.com
+          npm run build

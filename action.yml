@@ -1,0 +1,73 @@
+name: 'CargoWall eBPF Firewall'
+description: 'Secure GitHub Actions runners with eBPF-based network egress filtering'
+author: 'CodeCargo'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  mode:
+    description: 'Enforcement mode: "enforce" (block connections) or "audit" (log only, no blocking)'
+    required: false
+    default: 'enforce'
+  default-action:
+    description: 'Default action for unmatched traffic (allow or deny)'
+    default: 'deny'
+  allowed-hosts:
+    description: 'Comma-separated allowed hostnames (supports wildcards like *.github.com)'
+    required: false
+  allowed-cidrs:
+    description: 'Comma-separated allowed CIDR blocks'
+    required: false
+  blocked-hosts:
+    description: 'Comma-separated blocked hostnames'
+    required: false
+  blocked-cidrs:
+    description: 'Comma-separated blocked CIDR blocks'
+    required: false
+  config-file:
+    description: 'Path to YAML/JSON config file for advanced rules'
+    required: false
+  version:
+    description: 'CargoWall version to use (e.g., v1.0.0 or latest)'
+    default: 'latest'
+  fail-on-unsupported:
+    description: 'Fail the workflow if eBPF is not supported (vs warn and continue)'
+    default: 'false'
+  sudo-lockdown:
+    description: 'Enable sudo lockdown to prevent firewall bypass'
+    default: 'false'
+  sudo-allow-commands:
+    description: 'Comma-separated list of command paths to allow via sudo when lockdown is enabled (e.g. /usr/bin/apt-get,/usr/bin/docker)'
+    default: ''
+  dns-upstream:
+    description: 'Upstream DNS server for forwarding queries (auto-detected from /etc/resolv.conf if not set)'
+    default: ''
+  allow-existing-connections:
+    description: 'Allow pre-existing TCP connections at startup (prevents blocking connections established before cargowall)'
+    default: 'true'
+  binary-path:
+    description: 'Path to a pre-built cargowall binary (skips download, useful for CI testing)'
+    required: false
+  debug:
+    description: 'Enable debug logging'
+    default: 'false'
+  audit-summary:
+    description: 'Generate audit summary in workflow summary (requires mode: audit or enforce)'
+    default: 'true'
+  github-token:
+    description: 'GitHub token for fetching step timing (enables step correlation in audit summary)'
+    default: ${{ github.token }}
+
+outputs:
+  supported:
+    description: 'Whether eBPF firewall was successfully activated'
+  pid:
+    description: 'Process ID of the running cargowall instance'
+
+runs:
+  using: 'node24'
+  main: 'dist/main/index.js'
+  post: 'dist/post/index.js'
+  post-if: 'always()'

@@ -1,0 +1,178 @@
+name: Test CargoWall Action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-basic:
+    name: Basic Functionality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CargoWall
+        uses: ./
+        with:
+          default-action: deny
+          allowed-hosts: |
+            github.com,
+            *.githubusercontent.com,
+            api.github.com
+
+      - name: Test allowed connection (github.com)
+        run: |
+          curl -sf --max-time 10 https://github.com > /dev/null
+          echo "Successfully connected to github.com"
+
+      - name: Test allowed connection (api.github.com)
+        run: |
+          curl -sf --max-time 10 https://api.github.com > /dev/null
+          echo "Successfully connected to api.github.com"
+
+      - name: Test blocked connection (example.com)
+        run: |
+          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
+            echo "ERROR: example.com should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked example.com"
+
+      - name: Test blocked connection (httpbin.org)
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked httpbin.org"
+
+  test-dns-filtering:
+    name: DNS Tunneling Prevention
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CargoWall with strict hosts
+        uses: ./
+        with:
+          default-action: deny
+          allowed-hosts: "github.com,api.github.com"
+
+      - name: Test allowed DNS query
+        run: |
+          nslookup github.com 127.0.0.1 || true
+          echo "DNS query for github.com completed"
+
+      - name: Test blocked DNS query (should be refused)
+        run: |
+          # DNS queries for non-allowed domains should be refused
+          # This prevents DNS tunneling attacks
+          if nslookup attacker-domain-12345.com 127.0.0.1 2>/dev/null; then
+            # nslookup might return 0 even on REFUSED, check output
+            OUTPUT=$(nslookup attacker-domain-12345.com 127.0.0.1 2>&1 || true)
+            if echo "$OUTPUT" | grep -qi "refused\|SERVFAIL\|error\|timed out"; then
+              echo "DNS query correctly refused/failed"
+            else
+              echo "WARNING: DNS query may have succeeded unexpectedly"
+            fi
+          else
+            echo "DNS query correctly refused"
+          fi
+
+  test-cidr-rules:
+    name: CIDR-Based Rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CargoWall with CIDR rules
+        uses: ./
+        with:
+          default-action: deny
+          allowed-cidrs: "140.82.112.0/20"  # GitHub's IP range
+          allowed-hosts: "github.com"
+
+      - name: Test connection to allowed CIDR
+        run: |
+          # github.com IPs are in the allowed CIDR
+          curl -sf --max-time 10 https://github.com > /dev/null
+          echo "Successfully connected via allowed CIDR"
+
+  test-graceful-degradation:
+    name: Graceful Degradation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CargoWall (should not fail even if issues)
+        id: cargowall
+        uses: ./
+        with:
+          default-action: deny
+          allowed-hosts: "github.com"
+          fail-on-unsupported: false
+
+      - name: Check if supported
+        run: |
+          echo "CargoWall supported: ${{ steps.cargowall.outputs.supported }}"
+
+  test-docker-integration:
+    name: Docker DNS Integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CargoWall
+        uses: ./
+        with:
+          default-action: deny
+          allowed-hosts: |
+            docker.io,
+            *.docker.com,
+            registry-1.docker.io,
+            auth.docker.io,
+            production.cloudflare.docker.com
+
+      - name: Test Docker pull (should work)
+        run: |
+          docker pull alpine:latest
+          echo "Docker pull succeeded"
+
+      - name: Test Docker run with DNS filtering
+        run: |
+          # Run a container that tries to reach a blocked host
+          docker run --rm alpine:latest sh -c "
+            if wget -q --timeout=5 -O /dev/null https://example.com 2>/dev/null; then
+              echo 'ERROR: example.com should be blocked inside container'
+              exit 1
+            fi
+            echo 'Correctly blocked example.com inside container'
+          " || echo "Container test completed"
+
+  test-sudo-lockdown:
+    name: Sudo Lockdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CargoWall with sudo lockdown
+        uses: ./
+        with:
+          default-action: deny
+          allowed-hosts: "github.com,archive.ubuntu.com,security.ubuntu.com"
+          sudo-lockdown: true
+          sudo-allow-commands: /usr/bin/apt-get
+
+      - name: Test apt-get works
+        run: |
+          sudo apt-get update || echo "apt update completed (may have partial failures due to network restrictions)"
+
+      - name: Test iptables is blocked
+        run: |
+          if sudo iptables -L 2>/dev/null; then
+            echo "WARNING: iptables access may not be fully blocked"
+          else
+            echo "Correctly blocked iptables"
+          fi

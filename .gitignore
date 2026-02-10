@@ -8,9 +8,13 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+.claude
 
 # Logs
 *.log
 
 # Temporary files
 /tmp/
+
+# Node
+node_modules/

@@ -1,0 +1,92 @@
+name: Secure Build with Sudo Lockdown
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  secure-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Maximum security: enable sudo lockdown to prevent
+      # subsequent steps from disabling the firewall
+      - uses: code-cargo/cargowall@v1
+        with:
+          default-action: deny
+          allowed-hosts: |
+            github.com,
+            *.githubusercontent.com,
+            api.github.com,
+            registry.npmjs.org,
+            archive.ubuntu.com,
+            security.ubuntu.com
+          sudo-lockdown: true
+          sudo-allow-commands: /usr/bin/apt-get,/usr/bin/docker
+
+      # Package installation works via allowed commands
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      # Normal operations work fine
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      # These commands would fail with sudo lockdown enabled:
+      # - sudo iptables -F                 # Blocked
+      # - sudo pkill cargowall             # Blocked
+      # - sudo vim /etc/resolv.conf        # Blocked
+
+  verify-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: code-cargo/cargowall@v1
+        with:
+          default-action: deny
+          allowed-hosts: "github.com"
+          sudo-lockdown: true
+
+      # Verify that bypass attempts are blocked
+      - name: Verify iptables is blocked
+        run: |
+          if sudo iptables -L 2>/dev/null; then
+            echo "ERROR: iptables should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked iptables"
+
+      - name: Verify apt-get is blocked (not in sudo-allow-commands)
+        run: |
+          if sudo apt-get update 2>/dev/null; then
+            echo "ERROR: apt-get should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked apt-get"
+
+      - name: Verify kill is restricted
+        run: |
+          CARGOWALL_PID=$(cat /tmp/cargowall.pid 2>/dev/null || echo "")
+          if [ -n "$CARGOWALL_PID" ]; then
+            if sudo kill -9 "$CARGOWALL_PID" 2>/dev/null; then
+              echo "ERROR: Should not be able to kill cargowall"
+              exit 1
+            fi
+            echo "Correctly prevented killing cargowall"
+          fi

@@ -1,0 +1,19 @@
+{
+  "name": "cargowall-action",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "ncc build src/main.ts -o dist/main && ncc build src/post.ts -o dist/post && ncc build src/watcher.ts -o dist/watcher"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1",
+    "@actions/github": "^6.0.0",
+    "@actions/io": "^1.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.1",
+    "@vercel/ncc": "^0.38.3",
+    "typescript": "^5.7.0"
+  }
+}
