@@ -125,36 +125,35 @@ async function downloadAndInstall(version: string): Promise<void> {
   }
   core.info(`CargoWall version: ${resolvedVersion}`)
 
-  const downloadUrl = `https://github.com/${repo}/releases/download/${resolvedVersion}/cargowall-linux-${arch}`
-  const checksumUrl = `https://github.com/${repo}/releases/download/${resolvedVersion}/checksums.txt`
-  core.info(`Downloading from: ${downloadUrl}`)
+  const binaryAsset = `cargowall-linux-${arch}`
+  core.info(`Downloading ${binaryAsset} from ${repo} release ${resolvedVersion}`)
 
-  // Download binary
+  // Download binary and checksums using gh CLI (handles private repo auth)
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cargowall-'))
   const binaryDest = path.join(tempDir, BINARY_NAME)
 
   try {
-    const dlCurlArgs = ['-sL', '-o', binaryDest]
-    if (githubToken) {
-      dlCurlArgs.push('-H', `Authorization: token ${githubToken}`, '-H', 'Accept: application/octet-stream')
-    }
-    dlCurlArgs.push(downloadUrl)
-    const dlResult = await exec.exec('curl', dlCurlArgs, { ignoreReturnCode: true })
+    const ghEnv = githubToken ? { ...process.env, GH_TOKEN: githubToken } : undefined
+    const dlResult = await exec.exec('gh', [
+      'release', 'download', resolvedVersion,
+      '--repo', repo,
+      '--pattern', binaryAsset,
+      '--dir', tempDir
+    ], { ignoreReturnCode: true, env: ghEnv })
     if (dlResult !== 0) {
       throw new Error('Failed to download cargowall binary')
     }
+    // gh downloads with the original asset name, rename to expected path
+    await fs.rename(path.join(tempDir, binaryAsset), binaryDest)
 
-    // Download and verify checksum
+    // Download checksum file
     const checksumDest = path.join(tempDir, 'checksums.txt')
-    const csCurlArgs = ['-sL', '-o', checksumDest]
-    if (githubToken) {
-      csCurlArgs.push('-H', `Authorization: token ${githubToken}`, '-H', 'Accept: application/octet-stream')
-    }
-    csCurlArgs.push(checksumUrl)
-    const csResult = await exec.exec('curl', csCurlArgs, {
-      ignoreReturnCode: true,
-      silent: true
-    })
+    const csResult = await exec.exec('gh', [
+      'release', 'download', resolvedVersion,
+      '--repo', repo,
+      '--pattern', 'checksums.txt',
+      '--dir', tempDir
+    ], { ignoreReturnCode: true, silent: true, env: ghEnv })
 
     if (csResult === 0) {
       core.info('Verifying checksum...')
