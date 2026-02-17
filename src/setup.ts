@@ -134,14 +134,24 @@ async function downloadAndInstall(version: string): Promise<void> {
   const binaryDest = path.join(tempDir, BINARY_NAME)
 
   try {
-    const dlResult = await exec.exec('curl', ['-sL', '-o', binaryDest, downloadUrl], { ignoreReturnCode: true })
+    const dlCurlArgs = ['-sL', '-o', binaryDest]
+    if (githubToken) {
+      dlCurlArgs.push('-H', `Authorization: token ${githubToken}`, '-H', 'Accept: application/octet-stream')
+    }
+    dlCurlArgs.push(downloadUrl)
+    const dlResult = await exec.exec('curl', dlCurlArgs, { ignoreReturnCode: true })
     if (dlResult !== 0) {
       throw new Error('Failed to download cargowall binary')
     }
 
     // Download and verify checksum
     const checksumDest = path.join(tempDir, 'checksums.txt')
-    const csResult = await exec.exec('curl', ['-sL', '-o', checksumDest, checksumUrl], {
+    const csCurlArgs = ['-sL', '-o', checksumDest]
+    if (githubToken) {
+      csCurlArgs.push('-H', `Authorization: token ${githubToken}`, '-H', 'Accept: application/octet-stream')
+    }
+    csCurlArgs.push(checksumUrl)
+    const csResult = await exec.exec('curl', csCurlArgs, {
       ignoreReturnCode: true,
       silent: true
     })
