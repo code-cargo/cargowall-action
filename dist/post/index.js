@@ -29922,6 +29922,57 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 3237:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.postAuditResults = postAuditResults;
+const core = __importStar(__nccwpck_require__(7484));
+// The Go `cargowall summary` binary now handles pushing audit results to the API
+// as part of summary generation. This function is kept as a no-op for backwards
+// compatibility with post.ts which calls it.
+async function postAuditResults(_apiUrl) {
+    core.info('Audit results are now pushed via the cargowall summary command');
+}
+
+
+/***/ }),
+
 /***/ 2691:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30027,6 +30078,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
+const audit_push_1 = __nccwpck_require__(3237);
 const cleanup_1 = __nccwpck_require__(2691);
 const summary_1 = __nccwpck_require__(8855);
 async function run() {
@@ -30043,6 +30095,11 @@ async function run() {
         const auditSummary = core.getInput('audit-summary') !== 'false';
         if (auditSummary) {
             await (0, summary_1.generateSummary)();
+        }
+        // Push audit results to CodeCargo API if configured
+        const apiUrl = core.getInput('api-url');
+        if (apiUrl) {
+            await (0, audit_push_1.postAuditResults)(apiUrl);
         }
         // Minimal cleanup — VM destruction handles the rest
         await (0, cleanup_1.cleanup)();
@@ -30225,9 +30282,28 @@ async function generateSummary() {
                 core.info('Missing run context, generating basic summary...');
             }
         }
+        // Build summary command args
+        const summaryArgs = ['summary', '--audit-log', AUDIT_LOG, '--steps', stepsJson];
+        // Add API push flags if api-url is configured
+        const apiUrl = core.getInput('api-url');
+        if (apiUrl) {
+            summaryArgs.push('--api-url', apiUrl);
+            summaryArgs.push('--job-name', github.context.job);
+            summaryArgs.push('--mode', core.getInput('mode') || 'enforce');
+            summaryArgs.push('--default-action', core.getInput('default-action') || 'deny');
+            // Get OIDC token for API authentication
+            try {
+                const audience = core.getInput('api-audience') || 'codecargo';
+                const idToken = await core.getIDToken(audience);
+                summaryArgs.push('--token', idToken);
+            }
+            catch (error) {
+                core.warning(`Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`);
+            }
+        }
         // Run cargowall summary command
         let summaryOutput = '';
-        const summaryResult = await exec.exec('cargowall', ['summary', '--audit-log', AUDIT_LOG, '--steps', stepsJson], {
+        const summaryResult = await exec.exec('cargowall', summaryArgs, {
             ignoreReturnCode: true,
             listeners: {
                 stdout: (data) => { summaryOutput += data.toString(); }

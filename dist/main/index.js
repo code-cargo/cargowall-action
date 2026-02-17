@@ -26224,16 +26224,36 @@ async function downloadAndInstall(version) {
         throw new Error(`CargoWall only supports Linux (detected: ${platform})`);
     }
     // Resolve version
-    const repo = 'code-cargo/app';
+    const repo = 'code-cargo/cargowall';
+    const githubToken = core.getInput('github-token');
+    const includePrerelease = core.getInput('include-prerelease') === 'true';
     let resolvedVersion = version;
     if (version === 'latest') {
+        const curlArgs = ['-sL'];
+        if (githubToken) {
+            curlArgs.push('-H', `Authorization: token ${githubToken}`);
+        }
         let output = '';
-        await exec.exec('curl', ['-sL', `https://api.github.com/repos/${repo}/releases/latest`], {
-            listeners: {
-                stdout: (data) => { output += data.toString(); }
-            },
-            silent: true
-        });
+        if (includePrerelease) {
+            // List all releases and pick the first (most recent) one
+            curlArgs.push(`https://api.github.com/repos/${repo}/releases?per_page=1`);
+            await exec.exec('curl', curlArgs, {
+                listeners: {
+                    stdout: (data) => { output += data.toString(); }
+                },
+                silent: true
+            });
+        }
+        else {
+            // Use /releases/latest which only returns stable releases
+            curlArgs.push(`https://api.github.com/repos/${repo}/releases/latest`);
+            await exec.exec('curl', curlArgs, {
+                listeners: {
+                    stdout: (data) => { output += data.toString(); }
+                },
+                silent: true
+            });
+        }
         const match = output.match(/"tag_name"\s*:\s*"([^"]+)"/);
         if (!match) {
             throw new Error('Failed to determine latest version');
