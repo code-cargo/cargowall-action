@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   test-basic:
     name: Basic Functionality
@@ -16,6 +20,7 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: |
             github.com,
@@ -57,6 +62,7 @@ jobs:
       - name: Setup CargoWall with strict hosts
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: "github.com,api.github.com"
 
@@ -90,6 +96,7 @@ jobs:
       - name: Setup CargoWall with CIDR rules
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-cidrs: "140.82.112.0/20"  # GitHub's IP range
           allowed-hosts: "github.com"
@@ -110,6 +117,7 @@ jobs:
         id: cargowall
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: "github.com"
           fail-on-unsupported: false
@@ -127,6 +135,7 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: |
             docker.io,
@@ -160,6 +169,7 @@ jobs:
       - name: Setup CargoWall with sudo lockdown
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: "github.com,archive.ubuntu.com,security.ubuntu.com"
           sudo-lockdown: true
