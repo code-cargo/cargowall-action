@@ -1,4 +1,5 @@
 import * as core from '@actions/core'
+import { postAuditResults } from './audit-push'
 import { cleanup } from './cleanup'
 import { generateSummary } from './summary'
 
@@ -18,6 +19,12 @@ async function run(): Promise<void> {
     const auditSummary = core.getInput('audit-summary') !== 'false'
     if (auditSummary) {
       await generateSummary()
+    }
+
+    // Push audit results to CodeCargo API if configured
+    const apiUrl = core.getInput('api-url')
+    if (apiUrl) {
+      await postAuditResults(apiUrl)
     }
 
     // Minimal cleanup — VM destruction handles the rest

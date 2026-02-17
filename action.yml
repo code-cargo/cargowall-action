@@ -59,6 +59,12 @@ inputs:
   github-token:
     description: 'GitHub token for fetching step timing (enables step correlation in audit summary)'
     default: ${{ github.token }}
+  api-url:
+    description: 'CodeCargo API URL to push audit results to (e.g. https://app.codecargo.com). Requires permissions: id-token: write'
+    required: false
+  api-audience:
+    description: 'OIDC audience for CodeCargo API authentication'
+    default: 'codecargo'
 
 outputs:
   supported:

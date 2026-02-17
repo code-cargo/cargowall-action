@@ -131,9 +131,32 @@ export async function generateSummary(): Promise<void> {
       }
     }
 
+    // Build summary command args
+    const summaryArgs = ['summary', '--audit-log', AUDIT_LOG, '--steps', stepsJson]
+
+    // Add API push flags if api-url is configured
+    const apiUrl = core.getInput('api-url')
+    if (apiUrl) {
+      summaryArgs.push('--api-url', apiUrl)
+      summaryArgs.push('--job-name', github.context.job)
+      summaryArgs.push('--mode', core.getInput('mode') || 'enforce')
+      summaryArgs.push('--default-action', core.getInput('default-action') || 'deny')
+
+      // Get OIDC token for API authentication
+      try {
+        const audience = core.getInput('api-audience') || 'codecargo'
+        const idToken = await core.getIDToken(audience)
+        summaryArgs.push('--token', idToken)
+      } catch (error) {
+        core.warning(
+          `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
+        )
+      }
+    }
+
     // Run cargowall summary command
     let summaryOutput = ''
-    const summaryResult = await exec.exec('cargowall', ['summary', '--audit-log', AUDIT_LOG, '--steps', stepsJson], {
+    const summaryResult = await exec.exec('cargowall', summaryArgs, {
       ignoreReturnCode: true,
       listeners: {
         stdout: (data: Buffer) => { summaryOutput += data.toString() }
