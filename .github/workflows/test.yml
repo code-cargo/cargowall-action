@@ -23,6 +23,7 @@ jobs:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: |
+            app.dev.codecargo.dev,
             github.com,
             *.githubusercontent.com,
             api.github.com
@@ -64,7 +65,12 @@ jobs:
         with:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
-          allowed-hosts: "github.com,api.github.com"
+          allowed-hosts: |
+            app.dev.codecargo.dev,
+            github.com,
+            api.github.com
+            
+    
 
       - name: Test allowed DNS query
         run: |
@@ -99,7 +105,9 @@ jobs:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-cidrs: "140.82.112.0/20"  # GitHub's IP range
-          allowed-hosts: "github.com"
+          allowed-hosts:
+            app.dev.codecargo.dev,
+            github.com
 
       - name: Test connection to allowed CIDR
         run: |
@@ -119,7 +127,9 @@ jobs:
         with:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
-          allowed-hosts: "github.com"
+          allowed-hosts:
+            app.dev.codecargo.dev,
+            github.com
           fail-on-unsupported: false
 
       - name: Check if supported
@@ -138,6 +148,7 @@ jobs:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: |
+            app.dev.codecargo.dev,
             docker.io,
             *.docker.com,
             registry-1.docker.io,
@@ -171,7 +182,12 @@ jobs:
         with:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
-          allowed-hosts: "github.com,archive.ubuntu.com,security.ubuntu.com"
+          allowed-hosts: |
+            app.dev.codecargo.dev,
+            github.com,
+            archive.ubuntu.com,
+            security.ubuntu.com
+            security.ubuntu.com
           sudo-lockdown: true
           sudo-allow-commands: /usr/bin/apt-get
 
