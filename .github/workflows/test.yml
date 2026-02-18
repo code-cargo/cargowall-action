@@ -26,7 +26,7 @@ jobs:
           allowed-hosts: |
             app.dev.codecargo.dev,
             github.com,
-            *.githubusercontent.com,
+            githubusercontent.com,
             api.github.com
 
       - name: Test allowed connection (github.com)
@@ -149,9 +149,10 @@ jobs:
           api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: |
+            github.com,
             app.dev.codecargo.dev,
             docker.io,
-            *.docker.com,
+            docker.com,
             registry-1.docker.io,
             auth.docker.io,
             production.cloudflare.docker.com
