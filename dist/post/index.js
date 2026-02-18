@@ -30186,6 +30186,7 @@ async function generateSummary() {
     try {
         // Try to get step timing from GitHub API
         let stepsJson = '[]';
+        let jobStatus = 'success';
         const token = core.getInput('github-token') || process.env.GITHUB_TOKEN;
         const runId = github.context.runId;
         if (token && runId) {
@@ -30200,6 +30201,18 @@ async function generateSummary() {
                 if (data.jobs && data.jobs.length > 0) {
                     // Find the current job - match by runner name or use first job
                     const currentJob = data.jobs.find(j => j.runner_name === process.env.RUNNER_NAME) ?? data.jobs[0];
+                    // Infer job status from conclusion or step outcomes
+                    // The post step runs before the job formally completes, so conclusion may be null
+                    // Normalize GitHub's British 'cancelled' to our proto's American 'canceled'
+                    if (currentJob.conclusion) {
+                        jobStatus = currentJob.conclusion === 'cancelled' ? 'canceled' : currentJob.conclusion;
+                    }
+                    else if (currentJob.steps?.some(s => s.conclusion === 'cancelled')) {
+                        jobStatus = 'canceled';
+                    }
+                    else if (currentJob.steps?.some(s => s.conclusion === 'failure')) {
+                        jobStatus = 'failure';
+                    }
                     if (currentJob.steps && currentJob.steps.length > 0) {
                         const steps = currentJob.steps.map(s => ({
                             name: s.name,
@@ -30291,6 +30304,7 @@ async function generateSummary() {
             summaryArgs.push('--job-name', github.context.job);
             summaryArgs.push('--mode', core.getInput('mode') || 'enforce');
             summaryArgs.push('--default-action', core.getInput('default-action') || 'deny');
+            summaryArgs.push('--job-status', jobStatus);
             // Get OIDC token for API authentication
             try {
                 const audience = core.getInput('api-audience') || 'codecargo';
