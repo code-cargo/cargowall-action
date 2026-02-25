@@ -30302,7 +30302,18 @@ async function generateSummary() {
         if (apiUrl) {
             summaryArgs.push('--api-url', apiUrl);
             summaryArgs.push('--job-name', github.context.job);
-            summaryArgs.push('--mode', core.getInput('mode') || 'enforce');
+            // Prefer the effective mode written by the Go binary (which may have
+            // been overridden by the SaaS policy) over the static Action input.
+            let effectiveMode = core.getInput('mode') || 'enforce';
+            try {
+                const modeFromFile = (await fs_1.promises.readFile('/tmp/cargowall-mode', 'utf8')).trim();
+                if (modeFromFile)
+                    effectiveMode = modeFromFile;
+            }
+            catch {
+                // State file not present — use Action input as fallback
+            }
+            summaryArgs.push('--mode', effectiveMode);
             summaryArgs.push('--default-action', core.getInput('default-action') || 'deny');
             summaryArgs.push('--job-status', jobStatus);
             // Get OIDC token for API authentication
