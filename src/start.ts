@@ -1,5 +1,6 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
+import * as github from '@actions/github'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync } from 'fs'
@@ -84,6 +85,26 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   if (allowExistingConnections) {
     args.push('--allow-existing-connections')
+  }
+
+  // When api-url is configured, fetch OIDC token and pass API flags so the
+  // Go binary can fetch the resolved policy from the CodeCargo SaaS API.
+  const apiUrl = core.getInput('api-url')
+  if (apiUrl) {
+    args.push(`--api-url=${apiUrl}`)
+    args.push(`--job-key=${github.context.job}`)
+    try {
+      const audience = core.getInput('api-audience') || 'codecargo'
+      const idToken = await core.getIDToken(audience)
+      args.push(`--token=${idToken}`)
+    } catch (error) {
+      core.warning(`Failed to get OIDC token for policy fetch: ${error}. Falling back to env/file config.`)
+      // Remove api-url and job-key so Go binary uses env/file fallback
+      const apiUrlIdx = args.indexOf(`--api-url=${apiUrl}`)
+      if (apiUrlIdx !== -1) args.splice(apiUrlIdx, 1)
+      const jobKeyIdx = args.indexOf(`--job-key=${github.context.job}`)
+      if (jobKeyIdx !== -1) args.splice(jobKeyIdx, 1)
+    }
   }
 
   if (configFile) {
