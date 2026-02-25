@@ -28,6 +28,7 @@ export async function generateSummary(): Promise<void> {
     // Try to get step timing from GitHub API
     let stepsJson = '[]'
     let jobStatus = 'success'
+    let currentJobName = ''
     const token = core.getInput('github-token') || process.env.GITHUB_TOKEN
     const runId = github.context.runId
 
@@ -46,6 +47,8 @@ export async function generateSummary(): Promise<void> {
           const currentJob = data.jobs.find(
             j => j.runner_name === process.env.RUNNER_NAME
           ) ?? data.jobs[0]
+
+          currentJobName = currentJob.name
 
           // Infer job status from conclusion or step outcomes
           // The post step runs before the job formally completes, so conclusion may be null
@@ -150,7 +153,8 @@ export async function generateSummary(): Promise<void> {
     const apiUrl = core.getInput('api-url')
     if (apiUrl) {
       summaryArgs.push('--api-url', apiUrl)
-      summaryArgs.push('--job-name', github.context.job)
+      summaryArgs.push('--job-key', github.context.job)
+      summaryArgs.push('--job-name', currentJobName || github.context.job)
 
       // Prefer the effective mode written by the Go binary (which may have
       // been overridden by the SaaS policy) over the static Action input.

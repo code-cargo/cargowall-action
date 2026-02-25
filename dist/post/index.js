@@ -30187,6 +30187,7 @@ async function generateSummary() {
         // Try to get step timing from GitHub API
         let stepsJson = '[]';
         let jobStatus = 'success';
+        let currentJobName = '';
         const token = core.getInput('github-token') || process.env.GITHUB_TOKEN;
         const runId = github.context.runId;
         if (token && runId) {
@@ -30201,6 +30202,7 @@ async function generateSummary() {
                 if (data.jobs && data.jobs.length > 0) {
                     // Find the current job - match by runner name or use first job
                     const currentJob = data.jobs.find(j => j.runner_name === process.env.RUNNER_NAME) ?? data.jobs[0];
+                    currentJobName = currentJob.name;
                     // Infer job status from conclusion or step outcomes
                     // The post step runs before the job formally completes, so conclusion may be null
                     // Normalize GitHub's British 'cancelled' to our proto's American 'canceled'
@@ -30301,7 +30303,8 @@ async function generateSummary() {
         const apiUrl = core.getInput('api-url');
         if (apiUrl) {
             summaryArgs.push('--api-url', apiUrl);
-            summaryArgs.push('--job-name', github.context.job);
+            summaryArgs.push('--job-key', github.context.job);
+            summaryArgs.push('--job-name', currentJobName || github.context.job);
             // Prefer the effective mode written by the Go binary (which may have
             // been overridden by the SaaS policy) over the static Action input.
             let effectiveMode = core.getInput('mode') || 'enforce';
