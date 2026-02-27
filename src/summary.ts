@@ -156,6 +156,11 @@ export async function generateSummary(): Promise<void> {
       summaryArgs.push('--job-key', github.context.job)
       summaryArgs.push('--job-name', currentJobName || github.context.job)
 
+      const matrixJson = core.getState('matrix-json') || core.getInput('matrix')
+      if (matrixJson && matrixJson !== '{}' && matrixJson !== 'null') {
+        summaryArgs.push('--matrix-json', matrixJson)
+      }
+
       // Prefer the effective mode written by the Go binary (which may have
       // been overridden by the SaaS policy) over the static Action input.
       let effectiveMode = core.getInput('mode') || 'enforce'

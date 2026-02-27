@@ -30831,6 +30831,11 @@ async function start() {
     if (apiUrl) {
         args.push(`--api-url=${apiUrl}`);
         args.push(`--job-key=${github.context.job}`);
+        const matrixInput = core.getInput('matrix');
+        if (matrixInput && matrixInput !== '{}' && matrixInput !== 'null') {
+            args.push(`--matrix-json=${matrixInput}`);
+            core.saveState('matrix-json', matrixInput);
+        }
         try {
             const audience = core.getInput('api-audience') || 'codecargo';
             const idToken = await core.getIDToken(audience);
@@ -30838,13 +30843,16 @@ async function start() {
         }
         catch (error) {
             core.warning(`Failed to get OIDC token for policy fetch: ${error}. Falling back to env/file config.`);
-            // Remove api-url and job-key so Go binary uses env/file fallback
+            // Remove api-url, job-key, and matrix-json so Go binary uses env/file fallback
             const apiUrlIdx = args.indexOf(`--api-url=${apiUrl}`);
             if (apiUrlIdx !== -1)
                 args.splice(apiUrlIdx, 1);
             const jobKeyIdx = args.indexOf(`--job-key=${github.context.job}`);
             if (jobKeyIdx !== -1)
                 args.splice(jobKeyIdx, 1);
+            const matrixIdx = args.findIndex(a => a.startsWith('--matrix-json='));
+            if (matrixIdx !== -1)
+                args.splice(matrixIdx, 1);
         }
     }
     if (configFile) {

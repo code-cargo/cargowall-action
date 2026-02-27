@@ -68,6 +68,10 @@ inputs:
   api-audience:
     description: 'OIDC audience for CodeCargo API authentication'
     default: 'codecargo'
+  matrix:
+    description: 'Matrix context for per-combination policy assignment. Pass ${{ toJSON(matrix) }}'
+    required: false
+    default: ''
 
 outputs:
   supported:
