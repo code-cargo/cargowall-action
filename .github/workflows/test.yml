@@ -21,10 +21,8 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
-          api-url: https://app.dev.codecargo.dev
           default-action: deny
           allowed-hosts: |
-            app.dev.codecargo.dev,
             github.com,
             githubusercontent.com,
             api.github.com
