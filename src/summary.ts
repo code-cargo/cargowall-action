@@ -29,7 +29,7 @@ export async function generateSummary(): Promise<void> {
     let stepsJson = '[]'
     let jobStatus = 'success'
     let currentJobName = ''
-    const token = core.getInput('github-token') || process.env.GITHUB_TOKEN
+    const token = process.env.GITHUB_TOKEN
     const runId = github.context.runId
 
     if (token && runId) {
