@@ -86,7 +86,7 @@ async function downloadAndInstall(version: string): Promise<void> {
   }
 
   // Resolve version
-  const repo = 'code-cargo/cargowall'
+  const repo = 'code-cargo/cargowall-action'
   const githubToken = core.getInput('github-token')
   const includePrerelease = core.getInput('include-prerelease') === 'true'
   let resolvedVersion = version

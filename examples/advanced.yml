@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Use a JSON config file for complex rules
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
           config-file: .github/cargowall.json
           fail-on-unsupported: true
@@ -30,7 +30,7 @@ jobs:
 
       # CargoWall automatically configures Docker DNS
       # so hostname filtering works inside containers
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
           default-action: deny
           allowed-hosts: |
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Self-hosted runners have full eBPF support
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
           default-action: deny
           allowed-hosts: |

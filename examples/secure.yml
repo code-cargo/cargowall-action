@@ -13,7 +13,7 @@ jobs:
 
       # Maximum security: enable sudo lockdown to prevent
       # subsequent steps from disabling the firewall
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
           default-action: deny
           allowed-hosts: |
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
           default-action: deny
           allowed-hosts: "github.com"

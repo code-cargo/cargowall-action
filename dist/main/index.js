@@ -30503,7 +30503,7 @@ async function downloadAndInstall(version) {
         throw new Error(`CargoWall only supports Linux (detected: ${platform})`);
     }
     // Resolve version
-    const repo = 'code-cargo/cargowall';
+    const repo = 'code-cargo/cargowall-action';
     const githubToken = core.getInput('github-token');
     const includePrerelease = core.getInput('include-prerelease') === 'true';
     let resolvedVersion = version;

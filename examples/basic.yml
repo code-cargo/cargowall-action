@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Enable network egress filtering
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
           default-action: deny
           allowed-hosts: |
