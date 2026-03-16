@@ -5,7 +5,9 @@
 [![License](https://img.shields.io/github/license/code-cargo/cargowall-action)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/code-cargo/cargowall-action)](https://github.com/code-cargo/cargowall-action/releases)
 
-Secure your GitHub Actions workflows with eBPF-based network egress filtering. CargoWall uses Linux Traffic Control (TC) eBPF programs to filter outbound network connections, preventing supply chain attacks and data exfiltration.
+The official GitHub Action for [CargoWall](https://github.com/code-cargo/cargowall) — an eBPF-based network firewall for GitHub Actions runners that monitors and controls outbound connections during CI/CD runs.
+
+For concepts, architecture, and platform capabilities, see the [main CargoWall repository](https://github.com/code-cargo/cargowall).
 
 ## Features
 
@@ -42,6 +44,8 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +62,8 @@ jobs:
       - run: npm run build
       - run: npm test
 ```
+
+> **Note:** If using the `api-url` input to push audit results to CodeCargo, add `id-token: write` to your job permissions for OIDC authentication.
 
 ### With Docker Support
 
@@ -268,6 +274,12 @@ If DNS queries are timing out:
 1. Ensure Docker is running before the action
 2. CargoWall automatically configures Docker DNS
 3. Check `/etc/docker/daemon.json` was updated
+
+## Documentation
+
+* [CargoWall documentation](https://docs.codecargo.com/concepts/cargowall)
+* [CargoWall repository](https://github.com/code-cargo/cargowall) — architecture, concepts, and how it works
+* [CodeCargo platform](https://www.codecargo.com) — centralized policy management and enterprise features
 
 ## License
 
