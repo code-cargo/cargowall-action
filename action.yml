@@ -60,10 +60,7 @@ inputs:
     description: 'Generate audit summary in workflow summary (requires mode: audit or enforce)'
     default: 'true'
   github-token:
-    description: 'GitHub token for downloading CargoWall binary (only needed while the repo is private)'
-    default: ${{ github.token }}
-  actions-token:
-    description: 'GitHub token for Actions API access (step timing). Defaults to the automatic GITHUB_TOKEN.'
+    description: 'GitHub token for downloading the binary and fetching step timing in audit summary'
     default: ${{ github.token }}
   api-url:
     description: 'CodeCargo API URL to push audit results to (e.g. https://app.codecargo.com). Requires permissions: id-token: write'

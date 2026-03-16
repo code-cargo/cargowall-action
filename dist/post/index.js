@@ -30188,7 +30188,7 @@ async function generateSummary() {
         let stepsJson = '[]';
         let jobStatus = 'success';
         let currentJobName = '';
-        const token = core.getInput('actions-token') || core.getInput('github-token');
+        const token = core.getInput('github-token');
         const runId = github.context.runId;
         if (token && runId) {
             try {

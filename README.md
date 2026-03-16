@@ -1,5 +1,10 @@
 # CargoWall GitHub Action
 
+[![CI](https://github.com/code-cargo/cargowall-action/actions/workflows/test.yml/badge.svg)](https://github.com/code-cargo/cargowall-action/actions/workflows/test.yml)
+[![Check dist/](https://github.com/code-cargo/cargowall-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/code-cargo/cargowall-action/actions/workflows/check-dist.yml)
+[![License](https://img.shields.io/github/license/code-cargo/cargowall-action)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/code-cargo/cargowall-action)](https://github.com/code-cargo/cargowall-action/releases)
+
 Secure your GitHub Actions workflows with eBPF-based network egress filtering. CargoWall uses Linux Traffic Control (TC) eBPF programs to filter outbound network connections, preventing supply chain attacks and data exfiltration.
 
 ## Features
@@ -102,7 +107,7 @@ Enable sudo lockdown to prevent subsequent steps from disabling the firewall:
 
 ### With Config File
 
-For complex configurations, use a JSON config file:
+For complex configurations, use a JSON or YAML config file:
 
 ```yaml
 - uses: code-cargo/cargowall@v1
@@ -132,7 +137,7 @@ For complex configurations, use a JSON config file:
 | `allowed-cidrs`              | Comma-separated allowed CIDR blocks                                  |              |
 | `blocked-hosts`              | Comma-separated blocked hostnames                                    |              |
 | `blocked-cidrs`              | Comma-separated blocked CIDR blocks                                  |              |
-| `config-file`                | Path to JSON config file for advanced rules                          |              |
+| `config-file`                | Path to YAML/JSON config file for advanced rules                     |              |
 | `version`                    | CargoWall version to use                                             | `latest`     |
 | `fail-on-unsupported`        | Fail if eBPF not supported                                          | `false`      |
 | `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                      | `false`      |
@@ -142,7 +147,10 @@ For complex configurations, use a JSON config file:
 | `binary-path`                | Path to a pre-built cargowall binary (skips download)                |              |
 | `debug`                      | Enable debug logging                                                 | `false`      |
 | `audit-summary`              | Generate audit summary in workflow summary                           | `true`       |
-| `github-token`               | GitHub token for step correlation in audit summary                   | `${{ github.token }}` |
+| `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}` |
+| `include-prerelease`         | Include pre-release versions when resolving "latest"                 | `false`      |
+| `api-url`                    | CodeCargo API URL to push audit results to                           |              |
+| `api-audience`               | OIDC audience for CodeCargo API authentication                       | `codecargo`  |
 
 ## Outputs
 
@@ -198,20 +206,20 @@ flowchart LR
 
 CargoWall automatically allows certain traffic required for the runner and GitHub Actions to function:
 
-| Traffic | Ports | Why |
-|---------|-------|-----|
-| Localhost (127.0.0.0/8, ::1) | All | Internal communication |
-| Link-local (169.254.0.0/16, fe80::/10) | All | Network infrastructure |
-| Azure IMDS (169.254.169.254) | All | Instance metadata on GitHub-hosted runners |
-| DNS upstream server | 53 | Required for DNS resolution |
-| systemd-resolved upstreams | All | Runner DNS infrastructure |
-| Docker bridge IP | 53 | DNS for containers |
-| `actions.githubusercontent.com` | All | GitHub Actions artifact/cache services |
-| `ACTIONS_RUNTIME_URL` host | All | GitHub Actions runtime |
-| `ACTIONS_RESULTS_URL` host | All | GitHub Actions results |
-| `ACTIONS_CACHE_URL` host | All | GitHub Actions cache |
-| IPv6 multicast (ff00::/8) | All | Neighbor discovery, required for IPv6 |
-| ICMPv6 | All | IPv6 neighbor discovery protocol |
+| Traffic                             | Ports         | Why                                        |
+|-------------------------------------|---------------|--------------------------------------------|
+| Localhost (127.0.0.0/8, ::1)        | All           | Internal communication                     |
+| Azure IMDS (169.254.169.254)        | 80            | Instance metadata on GitHub-hosted runners |
+| DNS upstream server                 | 53            | Required for DNS resolution                |
+| systemd-resolved upstreams          | 53, 80, 32526 | Runner DNS infrastructure                  |
+| Docker bridge IP                    | 53            | DNS for containers                         |
+| `actions.githubusercontent.com`     | All           | GitHub Actions artifact/cache services     |
+| `ACTIONS_RUNTIME_URL` host          | All           | GitHub Actions runtime                     |
+| `ACTIONS_RESULTS_URL` host          | All           | GitHub Actions results                     |
+| `ACTIONS_CACHE_URL` host            | All           | GitHub Actions cache                       |
+| `ACTIONS_ID_TOKEN_REQUEST_URL` host | All           | GitHub Actions OIDC token requests         |
+| IPv6 multicast (ff00::/8)           | All           | Neighbor discovery, required for IPv6      |
+| ICMPv6                              | All           | IPv6 neighbor discovery protocol           |
 
 ### Sudo Lockdown
 
