@@ -1,9 +1,11 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
+import * as github from '@actions/github'
 import * as io from '@actions/io'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import * as semver from 'semver'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
@@ -86,49 +88,19 @@ async function downloadAndInstall(version: string): Promise<void> {
   }
 
   // Resolve version
-  const repo = 'code-cargo/cargowall-action'
+  const repo = 'code-cargo/cargowall'
   const githubToken = core.getInput('github-token')
   const includePrerelease = core.getInput('include-prerelease') === 'true'
   let resolvedVersion = version
   if (version === 'latest') {
-    const curlArgs = ['-sL']
-    if (githubToken) {
-      curlArgs.push('-H', `Authorization: token ${githubToken}`)
-    }
-
-    let output = ''
-    if (includePrerelease) {
-      // List all releases and pick the first (most recent) one
-      curlArgs.push(`https://api.github.com/repos/${repo}/releases?per_page=1`)
-      await exec.exec('curl', curlArgs, {
-        listeners: {
-          stdout: (data: Buffer) => { output += data.toString() }
-        },
-        silent: true
-      })
-    } else {
-      // Use /releases/latest which only returns stable releases
-      curlArgs.push(`https://api.github.com/repos/${repo}/releases/latest`)
-      await exec.exec('curl', curlArgs, {
-        listeners: {
-          stdout: (data: Buffer) => { output += data.toString() }
-        },
-        silent: true
-      })
-    }
-
-    const match = output.match(/"tag_name"\s*:\s*"([^"]+)"/)
-    if (!match) {
-      throw new Error('Failed to determine latest version')
-    }
-    resolvedVersion = match[1]
+    resolvedVersion = await resolveLatestVersion(repo, githubToken, includePrerelease)
   }
   core.info(`CargoWall version: ${resolvedVersion}`)
 
   const binaryAsset = `cargowall-linux-${arch}`
   core.info(`Downloading ${binaryAsset} from ${repo} release ${resolvedVersion}`)
 
-  // Download binary and checksums using gh CLI (handles private repo auth)
+  // Download binary and checksums using gh CLI
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cargowall-'))
   const binaryDest = path.join(tempDir, BINARY_NAME)
 
@@ -189,6 +161,64 @@ async function downloadAndInstall(version: string): Promise<void> {
   }
 
   await verifyInstallation()
+}
+
+async function resolveLatestVersion(
+  repo: string,
+  githubToken: string,
+  includePrerelease: boolean
+): Promise<string> {
+  const [owner, name] = repo.split('/')
+
+  let tags: string[]
+
+  if (githubToken) {
+    const octokit = github.getOctokit(githubToken)
+    const { data: releases } = await octokit.rest.repos.listReleases({
+      owner,
+      repo: name,
+      per_page: 100
+    })
+    tags = releases.map(r => r.tag_name)
+  } else {
+    core.info('No github-token provided, using unauthenticated API request')
+    const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com'
+    const response = await fetch(
+      `${apiUrl}/repos/${owner}/${name}/releases?per_page=100`
+    )
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch releases from ${apiUrl}/repos/${owner}/${name}/releases: ${response.status} ${response.statusText}`
+      )
+    }
+    const releases = await response.json() as Array<{ tag_name: string }>
+    tags = releases.map(r => r.tag_name)
+  }
+
+  if (tags.length === 0) {
+    throw new Error('No releases found')
+  }
+
+  // Filter to valid semver tags
+  let candidates = tags.filter(t => semver.valid(t))
+
+  // Filter out pre-releases unless requested
+  if (!includePrerelease) {
+    const stable = candidates.filter(t => !semver.prerelease(t))
+    if (stable.length > 0) {
+      candidates = stable
+    } else {
+      core.warning('No stable release found, falling back to latest pre-release')
+    }
+  }
+
+  if (candidates.length === 0) {
+    throw new Error('No valid semver releases found')
+  }
+
+  // Sort descending and pick highest
+  candidates.sort((a, b) => semver.rcompare(a, b))
+  return candidates[0]
 }
 
 async function verifyInstallation(): Promise<void> {
