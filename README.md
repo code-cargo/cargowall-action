@@ -275,6 +275,10 @@ If DNS queries are timing out:
 2. CargoWall automatically configures Docker DNS
 3. Check `/etc/docker/daemon.json` was updated
 
+## CodeCargo Platform
+
+Don't want to manage policies in workflow YAML? Sign up for the [CodeCargo platform](https://www.codecargo.com) to create and assign CargoWall policies from a centralized dashboard — with hierarchical overrides at the org, repo, workflow, and job level. Just keep this action in your workflow and manage everything else from the UI.
+
 ## Documentation
 
 * [CargoWall documentation](https://docs.codecargo.com/concepts/cargowall)
