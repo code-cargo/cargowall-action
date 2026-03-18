@@ -45,7 +45,7 @@ export async function generateSummary(): Promise<void> {
         if (data.jobs && data.jobs.length > 0) {
           // Find the current job - match by runner name or use first job
           const currentJob = data.jobs.find(
-            j => j.runner_name === process.env.RUNNER_NAME
+            (j: { runner_name: string | null }) => j.runner_name === process.env.RUNNER_NAME
           ) ?? data.jobs[0]
 
           currentJobName = currentJob.name
@@ -55,14 +55,14 @@ export async function generateSummary(): Promise<void> {
           // Normalize GitHub's British 'cancelled' to our proto's American 'canceled'
           if (currentJob.conclusion) {
             jobStatus = currentJob.conclusion === 'cancelled' ? 'canceled' : currentJob.conclusion
-          } else if (currentJob.steps?.some(s => s.conclusion === 'cancelled')) {
+          } else if (currentJob.steps?.some((s: { conclusion: string | null }) => s.conclusion === 'cancelled')) {
             jobStatus = 'canceled'
-          } else if (currentJob.steps?.some(s => s.conclusion === 'failure')) {
+          } else if (currentJob.steps?.some((s: { conclusion: string | null }) => s.conclusion === 'failure')) {
             jobStatus = 'failure'
           }
 
           if (currentJob.steps && currentJob.steps.length > 0) {
-            const steps = currentJob.steps.map(s => ({
+            const steps = currentJob.steps.map((s: { name: string; started_at: string | null; completed_at: string | null }) => ({
               name: s.name,
               started_at: s.started_at,
               completed_at: s.completed_at,
