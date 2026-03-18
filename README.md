@@ -48,6 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +66,7 @@ jobs:
       - run: npm test
 ```
 
-> **Note:** If using the `api-url` input to push audit results to CodeCargo, add `id-token: write` to your job permissions for OIDC authentication.
+> **Note:** To connect to the [CodeCargo platform](https://www.codecargo.com) via `api-url`, your job needs these minimum permissions: `id-token: write` (OIDC authentication), `actions: read` (correlate network events to steps), and `contents: read`.
 
 ### With Docker Support
 
