@@ -179,7 +179,7 @@ async function resolveLatestVersion(
       repo: name,
       per_page: 100
     })
-    tags = releases.map(r => r.tag_name)
+    tags = releases.map((r: { tag_name: string }) => r.tag_name)
   } else {
     core.info('No github-token provided, using unauthenticated API request')
     const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com'
