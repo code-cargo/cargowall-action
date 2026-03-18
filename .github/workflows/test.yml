@@ -16,7 +16,7 @@ jobs:
     name: Basic Functionality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup CargoWall
         uses: ./
@@ -57,7 +57,7 @@ jobs:
     name: DNS Tunneling Prevention
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup CargoWall with strict hosts
         uses: ./
@@ -96,7 +96,7 @@ jobs:
     name: CIDR-Based Rules
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup CargoWall with CIDR rules
         uses: ./
@@ -118,7 +118,7 @@ jobs:
     name: Graceful Degradation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup CargoWall (should not fail even if issues)
         id: cargowall
@@ -139,7 +139,7 @@ jobs:
     name: Docker DNS Integration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup CargoWall
         uses: ./
@@ -175,7 +175,7 @@ jobs:
     name: Sudo Lockdown
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup CargoWall with sudo lockdown
         uses: ./
