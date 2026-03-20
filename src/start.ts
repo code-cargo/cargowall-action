@@ -17,7 +17,6 @@ const STEP_PLAN_FILE = '/tmp/cargowall-step-plan.json'
 const STEP_TIMESTAMPS_FILE = '/tmp/cargowall-step-timestamps.jsonl'
 
 const VALID_MODES = ['enforce', 'audit'] as const
-const VALID_ACTIONS = ['allow', 'deny'] as const
 
 async function showLastLog(): Promise<void> {
   try {
@@ -33,19 +32,17 @@ async function showLastLog(): Promise<void> {
 }
 
 export async function start(): Promise<{ supported: boolean; pid: number | null }> {
-  const mode = core.getInput('mode') || 'enforce'
-  const defaultAction = core.getInput('default-action') || 'deny'
+  let mode = core.getInput('mode') || 'enforce'
 
   if (!VALID_MODES.includes(mode as typeof VALID_MODES[number])) {
     core.warning(`Invalid mode "${mode}" — expected "enforce" or "audit". Defaulting to "enforce".`)
+    mode = 'enforce'
   }
-  if (!VALID_ACTIONS.includes(defaultAction as typeof VALID_ACTIONS[number])) {
-    core.warning(`Invalid default-action "${defaultAction}" — expected "allow" or "deny". Defaulting to "deny".`)
-  }
-  const allowedHosts = core.getInput('allowed-hosts')
-  const allowedCidrs = core.getInput('allowed-cidrs')
-  const blockedHosts = core.getInput('blocked-hosts')
-  const blockedCidrs = core.getInput('blocked-cidrs')
+  const allowedHosts = parseList(core.getMultilineInput('allowed-hosts'))
+  const allowedCidrs = parseList(core.getMultilineInput('allowed-cidrs'))
+  const githubServiceHosts = parseList(core.getMultilineInput('github-service-hosts'))
+  const azureInfraHosts = parseList(core.getMultilineInput('azure-infra-hosts'))
+
   const configFile = core.getInput('config-file')
   const sudoLockdown = core.getInput('sudo-lockdown') === 'true'
   const debug = core.getInput('debug') === 'true'
@@ -77,7 +74,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   if (sudoLockdown) {
     args.push('--sudo-lockdown')
-    const sudoAllowCommands = core.getInput('sudo-allow-commands')
+    const sudoAllowCommands = parseList(core.getMultilineInput('sudo-allow-commands'))
     if (sudoAllowCommands) {
       args.push(`--sudo-allow-commands=${sudoAllowCommands}`)
     }
@@ -114,11 +111,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Log configuration
   core.info('Configuration:')
   core.info(`  Mode: ${mode}`)
-  core.info(`  Default action: ${defaultAction}`)
   if (allowedHosts) core.info(`  Allowed hosts: ${allowedHosts}`)
   if (allowedCidrs) core.info(`  Allowed CIDRs: ${allowedCidrs}`)
-  if (blockedHosts) core.info(`  Blocked hosts: ${blockedHosts}`)
-  if (blockedCidrs) core.info(`  Blocked CIDRs: ${blockedCidrs}`)
+  if (githubServiceHosts) core.info(`  GitHub service hosts: ${githubServiceHosts}`)
+  if (azureInfraHosts) core.info(`  Azure infra hosts: ${azureInfraHosts}`)
   if (configFile) core.info(`  Config file: ${configFile}`)
   core.info(`  Sudo lockdown: ${sudoLockdown}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
@@ -147,11 +143,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Set environment variables for cargowall
   const env = {
     ...process.env,
-    CARGOWALL_DEFAULT_ACTION: defaultAction,
-    CARGOWALL_ALLOWED_HOSTS: allowedHosts,
-    CARGOWALL_ALLOWED_CIDRS: allowedCidrs,
-    CARGOWALL_BLOCKED_HOSTS: blockedHosts,
-    CARGOWALL_BLOCKED_CIDRS: blockedCidrs,
+    CARGOWALL_DEFAULT_ACTION: 'deny',
+    ...(allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts }),
+    ...(allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs }),
+    ...(githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts }),
+    ...(azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }),
   }
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
@@ -291,6 +287,15 @@ async function restoreDns(): Promise<void> {
   } catch {
     // No backup to restore
   }
+}
+
+/** Split on both newlines (handled by getMultilineInput) and commas, trim, drop empties. */
+function parseList(lines: string[]): string {
+  return lines
+    .flatMap(line => line.split(','))
+    .map(entry => entry.trim())
+    .filter(Boolean)
+    .join(',')
 }
 
 function sleep(ms: number): Promise<void> {

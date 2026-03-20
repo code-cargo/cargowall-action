@@ -14,13 +14,9 @@ jobs:
       # Enable network egress filtering
       - uses: code-cargo/cargowall-action@v1
         with:
-          default-action: deny
           allowed-hosts: |
-            github.com,
-            *.githubusercontent.com,
-            api.github.com,
-            registry.npmjs.org,
-            *.cloudflare.com
+            registry.npmjs.org
+            cloudflare.com
 
       # Your build steps - only allowed hosts can be reached
       - name: Setup Node.js

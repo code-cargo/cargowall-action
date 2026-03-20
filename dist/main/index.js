@@ -23384,6 +23384,13 @@ function getInput(name, options) {
   }
   return val.trim();
 }
+function getMultilineInput(name, options) {
+  const inputs = getInput(name, options).split("\n").filter((x) => x !== "");
+  if (options && options.trimWhitespace === false) {
+    return inputs;
+  }
+  return inputs.map((input) => input.trim());
+}
 function setOutput(name, value) {
   const filePath = process.env["GITHUB_OUTPUT"] || "";
   if (filePath) {
@@ -27700,7 +27707,6 @@ var STARTUP_TIMEOUT = 30;
 var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
 var STEP_TIMESTAMPS_FILE = "/tmp/cargowall-step-timestamps.jsonl";
 var VALID_MODES = ["enforce", "audit"];
-var VALID_ACTIONS = ["allow", "deny"];
 async function showLastLog() {
   try {
     let logOutput = "";
@@ -27718,18 +27724,15 @@ ${logOutput}`);
   }
 }
 async function start() {
-  const mode = getInput("mode") || "enforce";
-  const defaultAction = getInput("default-action") || "deny";
+  let mode = getInput("mode") || "enforce";
   if (!VALID_MODES.includes(mode)) {
     warning(`Invalid mode "${mode}" \u2014 expected "enforce" or "audit". Defaulting to "enforce".`);
+    mode = "enforce";
   }
-  if (!VALID_ACTIONS.includes(defaultAction)) {
-    warning(`Invalid default-action "${defaultAction}" \u2014 expected "allow" or "deny". Defaulting to "deny".`);
-  }
-  const allowedHosts = getInput("allowed-hosts");
-  const allowedCidrs = getInput("allowed-cidrs");
-  const blockedHosts = getInput("blocked-hosts");
-  const blockedCidrs = getInput("blocked-cidrs");
+  const allowedHosts = parseList(getMultilineInput("allowed-hosts"));
+  const allowedCidrs = parseList(getMultilineInput("allowed-cidrs"));
+  const githubServiceHosts = parseList(getMultilineInput("github-service-hosts"));
+  const azureInfraHosts = parseList(getMultilineInput("azure-infra-hosts"));
   const configFile = getInput("config-file");
   const sudoLockdown = getInput("sudo-lockdown") === "true";
   const debug2 = getInput("debug") === "true";
@@ -27752,7 +27755,7 @@ async function start() {
   }
   if (sudoLockdown) {
     args.push("--sudo-lockdown");
-    const sudoAllowCommands = getInput("sudo-allow-commands");
+    const sudoAllowCommands = parseList(getMultilineInput("sudo-allow-commands"));
     if (sudoAllowCommands) {
       args.push(`--sudo-allow-commands=${sudoAllowCommands}`);
     }
@@ -27781,11 +27784,10 @@ async function start() {
   }
   info("Configuration:");
   info(`  Mode: ${mode}`);
-  info(`  Default action: ${defaultAction}`);
   if (allowedHosts) info(`  Allowed hosts: ${allowedHosts}`);
   if (allowedCidrs) info(`  Allowed CIDRs: ${allowedCidrs}`);
-  if (blockedHosts) info(`  Blocked hosts: ${blockedHosts}`);
-  if (blockedCidrs) info(`  Blocked CIDRs: ${blockedCidrs}`);
+  if (githubServiceHosts) info(`  GitHub service hosts: ${githubServiceHosts}`);
+  if (azureInfraHosts) info(`  Azure infra hosts: ${azureInfraHosts}`);
   if (configFile) info(`  Config file: ${configFile}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
@@ -27805,11 +27807,11 @@ async function start() {
   info("Starting cargowall...");
   const env = {
     ...process.env,
-    CARGOWALL_DEFAULT_ACTION: defaultAction,
-    CARGOWALL_ALLOWED_HOSTS: allowedHosts,
-    CARGOWALL_ALLOWED_CIDRS: allowedCidrs,
-    CARGOWALL_BLOCKED_HOSTS: blockedHosts,
-    CARGOWALL_BLOCKED_CIDRS: blockedCidrs
+    CARGOWALL_DEFAULT_ACTION: "deny",
+    ...allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts },
+    ...allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs },
+    ...githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts },
+    ...azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }
   };
   const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
@@ -27912,6 +27914,9 @@ async function restoreDns() {
     await exec("sudo", ["cp", RESOLV_CONF_BACKUP, "/etc/resolv.conf"]);
   } catch {
   }
+}
+function parseList(lines) {
+  return lines.flatMap((line) => line.split(",")).map((entry) => entry.trim()).filter(Boolean).join(",");
 }
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));

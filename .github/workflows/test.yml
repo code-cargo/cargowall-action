@@ -21,10 +21,9 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
-          default-action: deny
           allowed-hosts: |
-            github.com,
-            githubusercontent.com,
+            github.com
+            githubusercontent.com
             api.github.com
 
       - name: Test allowed connection (github.com)
@@ -63,13 +62,12 @@ jobs:
         uses: ./
         with:
           api-url: https://app.dev.codecargo.dev
-          default-action: deny
           allowed-hosts: |
-            app.dev.codecargo.dev,
-            github.com,
+            app.dev.codecargo.dev
+            github.com
             api.github.com
-            
-    
+
+
 
       - name: Test allowed DNS query
         run: |
@@ -102,10 +100,9 @@ jobs:
         uses: ./
         with:
           api-url: https://app.dev.codecargo.dev
-          default-action: deny
           allowed-cidrs: "140.82.112.0/20"  # GitHub's IP range
           allowed-hosts:
-            app.dev.codecargo.dev,
+            app.dev.codecargo.dev
             github.com
 
       - name: Test connection to allowed CIDR
@@ -125,9 +122,8 @@ jobs:
         uses: ./
         with:
           api-url: https://app.dev.codecargo.dev
-          default-action: deny
-          allowed-hosts:
-            app.dev.codecargo.dev,
+          allowed-hosts: |
+            app.dev.codecargo.dev
             github.com
           fail-on-unsupported: false
 
@@ -145,14 +141,13 @@ jobs:
         uses: ./
         with:
           api-url: https://app.dev.codecargo.dev
-          default-action: deny
           allowed-hosts: |
-            github.com,
-            app.dev.codecargo.dev,
-            docker.io,
-            docker.com,
-            registry-1.docker.io,
-            auth.docker.io,
+            github.com
+            app.dev.codecargo.dev
+            docker.io
+            docker.com
+            registry-1.docker.io
+            auth.docker.io
             production.cloudflare.docker.com
 
       - name: Test Docker pull (should work)
@@ -181,12 +176,10 @@ jobs:
         uses: ./
         with:
           api-url: https://app.dev.codecargo.dev
-          default-action: deny
           allowed-hosts: |
-            app.dev.codecargo.dev,
-            github.com,
-            archive.ubuntu.com,
-            security.ubuntu.com
+            app.dev.codecargo.dev
+            github.com
+            archive.ubuntu.com
             security.ubuntu.com
           sudo-lockdown: true
           sudo-allow-commands: /usr/bin/apt-get

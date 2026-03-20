@@ -11,21 +11,27 @@ inputs:
     description: 'Enforcement mode: "enforce" (block connections) or "audit" (log only, no blocking)'
     required: false
     default: 'enforce'
-  default-action:
-    description: 'Default action for unmatched traffic (allow or deny)'
-    default: 'deny'
   allowed-hosts:
-    description: 'Comma-separated allowed hostnames (supports wildcards like *.github.com)'
+    description: 'Allowed hostnames, one per line (auto matches subdomains example.com would also match api.example.com)'
     required: false
   allowed-cidrs:
-    description: 'Comma-separated allowed CIDR blocks'
+    description: 'Allowed CIDR blocks, one per line'
     required: false
-  blocked-hosts:
-    description: 'Comma-separated blocked hostnames'
+  github-service-hosts:
+    description: 'GitHub service hostnames to auto-allow on port 443 (one per line)'
     required: false
-  blocked-cidrs:
-    description: 'Comma-separated blocked CIDR blocks'
+    default: |
+      github.com
+      api.github.com
+      githubapp.com
+      actions.githubusercontent.com
+      github.githubassets.com
+  azure-infra-hosts:
+    description: 'Azure infrastructure hostnames to auto-allow on port 443 (one per line)'
     required: false
+    default: |
+      trafficmanager.net
+      blob.core.windows.net
   config-file:
     description: 'Path to YAML/JSON config file for advanced rules'
     required: false
@@ -42,7 +48,7 @@ inputs:
     description: 'Enable sudo lockdown to prevent firewall bypass'
     default: 'false'
   sudo-allow-commands:
-    description: 'Comma-separated list of command paths to allow via sudo when lockdown is enabled (e.g. /usr/bin/apt-get,/usr/bin/docker)'
+    description: 'Command paths to allow via sudo when lockdown is enabled, one per line (e.g. /usr/bin/apt-get)'
     default: ''
   dns-upstream:
     description: 'Upstream DNS server for forwarding queries (auto-detected from /etc/resolv.conf if not set)'

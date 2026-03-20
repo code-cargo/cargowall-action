@@ -25,12 +25,11 @@ For concepts, architecture, and platform capabilities, see the [main CargoWall r
 ## Quick Start
 
 ```yaml
-- uses: code-cargo/cargowall@v1
+- uses: code-cargo/cargowall-action@v1
   with:
-    default-action: deny
     allowed-hosts: |
-      github.com,
-      githubusercontent.com,
+      github.com
+      githubusercontent.com
       registry.npmjs.org
 ```
 
@@ -52,13 +51,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: code-cargo/cargowall@v1
+      - uses: code-cargo/cargowall-action@v1
         with:
-          default-action: deny
           allowed-hosts: |
-            github.com,
-            githubusercontent.com,
-            api.github.com,
+            githubusercontent.com
             registry.npmjs.org
 
       - run: npm ci
@@ -73,12 +69,11 @@ jobs:
 CargoWall automatically configures Docker to use its DNS proxy, so hostname filtering works inside containers:
 
 ```yaml
-- uses: code-cargo/cargowall@v1
+- uses: code-cargo/cargowall-action@v1
   with:
-    default-action: deny
     allowed-hosts: |
-      docker.io,
-      docker.com,
+      docker.io
+      docker.com
       registry.npmjs.org
 
 - name: Build Docker image
@@ -90,12 +85,10 @@ CargoWall automatically configures Docker to use its DNS proxy, so hostname filt
 Run in audit mode to log connections without blocking them — useful for understanding your workflow's network dependencies before enforcing rules:
 
 ```yaml
-- uses: code-cargo/cargowall@v1
+- uses: code-cargo/cargowall-action@v1
   with:
     mode: audit
-    default-action: deny
     allowed-hosts: |
-      github.com,
       githubusercontent.com
 ```
 
@@ -104,14 +97,14 @@ Run in audit mode to log connections without blocking them — useful for unders
 Enable sudo lockdown to prevent subsequent steps from disabling the firewall:
 
 ```yaml
-- uses: code-cargo/cargowall@v1
+- uses: code-cargo/cargowall-action@v1
   with:
-    default-action: deny
     allowed-hosts: |
-      github.com,
       archive.ubuntu.com
     sudo-lockdown: true
-    sudo-allow-commands: /usr/bin/apt-get,/usr/bin/docker
+    sudo-allow-commands: |
+      /usr/bin/apt-get
+      /usr/bin/docker
 ```
 
 ### With Config File
@@ -119,7 +112,7 @@ Enable sudo lockdown to prevent subsequent steps from disabling the firewall:
 For complex configurations, use a JSON or YAML config file:
 
 ```yaml
-- uses: code-cargo/cargowall@v1
+- uses: code-cargo/cargowall-action@v1
   with:
     config-file: .github/cargowall.json
 ```
@@ -127,7 +120,6 @@ For complex configurations, use a JSON or YAML config file:
 **`.github/cargowall.json`**:
 ```json
 {
-  "defaultAction": "deny",
   "rules": [
     { "type": "hostname", "value": "github.com", "action": "allow" },
     { "type": "hostname", "value": "registry.npmjs.org", "action": "allow" },
@@ -138,28 +130,27 @@ For complex configurations, use a JSON or YAML config file:
 
 ## Inputs
 
-| Input                        | Description                                                          | Default      |
-|------------------------------|----------------------------------------------------------------------|--------------|
-| `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)           | `enforce`    |
-| `default-action`             | Default action for unmatched traffic (`allow` or `deny`)             | `deny`       |
-| `allowed-hosts`              | Comma-separated allowed hostnames (supports wildcards)               |              |
-| `allowed-cidrs`              | Comma-separated allowed CIDR blocks                                  |              |
-| `blocked-hosts`              | Comma-separated blocked hostnames                                    |              |
-| `blocked-cidrs`              | Comma-separated blocked CIDR blocks                                  |              |
-| `config-file`                | Path to YAML/JSON config file for advanced rules                     |              |
-| `version`                    | CargoWall version to use                                             | `latest`     |
-| `fail-on-unsupported`        | Fail if eBPF not supported                                          | `false`      |
-| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                      | `false`      |
-| `sudo-allow-commands`        | Comma-separated command paths to allow via sudo when locked          |              |
-| `dns-upstream`               | Upstream DNS server (auto-detected if not set)                       | auto-detect  |
-| `allow-existing-connections` | Allow pre-existing TCP connections at startup                        | `true`       |
-| `binary-path`                | Path to a pre-built cargowall binary (skips download)                |              |
-| `debug`                      | Enable debug logging                                                 | `false`      |
-| `audit-summary`              | Generate audit summary in workflow summary                           | `true`       |
-| `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}` |
-| `include-prerelease`         | Include pre-release versions when resolving "latest"                 | `false`      |
-| `api-url`                    | CodeCargo API URL to push audit results to                           |              |
-| `api-audience`               | OIDC audience for CodeCargo API authentication                       | `codecargo`  |
+| Input                        | Description                                                                       | Default                    |
+|------------------------------|-----------------------------------------------------------------------------------|----------------------------|
+| `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                         | `enforce`                  |
+| `allowed-hosts`              | Allowed hostnames, one per line (auto matches subdomains)                         |                            |
+| `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                 |                            |
+| `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line)                 | See [defaults](#automatically-allowed-traffic) |
+| `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line)           | See [defaults](#automatically-allowed-traffic) |
+| `config-file`                | Path to YAML/JSON config file for advanced rules                                  |                            |
+| `version`                    | CargoWall version to use                                                          | `latest`                   |
+| `fail-on-unsupported`        | Fail if eBPF not supported                                                        | `false`                    |
+| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                   | `false`                    |
+| `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                         |                            |
+| `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                    | auto-detect                |
+| `allow-existing-connections` | Allow pre-existing TCP connections at startup                                     | `true`                     |
+| `binary-path`                | Path to a pre-built cargowall binary (skips download)                             |                            |
+| `debug`                      | Enable debug logging                                                              | `false`                    |
+| `audit-summary`              | Generate audit summary in workflow summary                                        | `true`                     |
+| `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}`      |
+| `include-prerelease`         | Include pre-release versions when resolving "latest"                              | `false`                    |
+| `api-url`                    | CodeCargo API URL to push audit results to                                        |                            |
+| `api-audience`               | OIDC audience for CodeCargo API authentication                                    | `codecargo`                |
 
 ## Outputs
 
@@ -213,7 +204,9 @@ flowchart LR
 
 #### Automatically Allowed Traffic
 
-CargoWall automatically allows certain traffic required for the runner and GitHub Actions to function:
+CargoWall automatically allows certain traffic required for the runner and GitHub Actions to function.
+
+**Infrastructure (hardcoded):**
 
 | Traffic                             | Ports         | Why                                        |
 |-------------------------------------|---------------|--------------------------------------------|
@@ -222,13 +215,29 @@ CargoWall automatically allows certain traffic required for the runner and GitHu
 | DNS upstream server                 | 53            | Required for DNS resolution                |
 | systemd-resolved upstreams          | 53, 80, 32526 | Runner DNS infrastructure                  |
 | Docker bridge IP                    | 53            | DNS for containers                         |
-| `actions.githubusercontent.com`     | All           | GitHub Actions artifact/cache services     |
-| `ACTIONS_RUNTIME_URL` host          | All           | GitHub Actions runtime                     |
-| `ACTIONS_RESULTS_URL` host          | All           | GitHub Actions results                     |
-| `ACTIONS_CACHE_URL` host            | All           | GitHub Actions cache                       |
-| `ACTIONS_ID_TOKEN_REQUEST_URL` host | All           | GitHub Actions OIDC token requests         |
+| `ACTIONS_RUNTIME_URL` host          | 443           | GitHub Actions runtime                     |
+| `ACTIONS_RESULTS_URL` host          | 443           | GitHub Actions results                     |
+| `ACTIONS_CACHE_URL` host            | 443           | GitHub Actions cache                       |
+| `ACTIONS_ID_TOKEN_REQUEST_URL` host | 443           | GitHub Actions OIDC token requests         |
 | IPv6 multicast (ff00::/8)           | All           | Neighbor discovery, required for IPv6      |
 | ICMPv6                              | All           | IPv6 neighbor discovery protocol           |
+
+**GitHub service hostnames** (configurable via `github-service-hosts`):
+
+| Hostname                            | Ports | Why                                    |
+|-------------------------------------|-------|----------------------------------------|
+| `github.com`                        | 443   | Git operations, API                    |
+| `api.github.com`                    | 443   | GitHub REST/GraphQL API                |
+| `githubapp.com`                     | 443   | GitHub Apps infrastructure             |
+| `actions.githubusercontent.com`     | 443   | Actions artifact/cache/log services    |
+| `github.githubassets.com`           | 443   | GitHub static assets                   |
+
+**Azure infrastructure hostnames** (configurable via `azure-infra-hosts`):
+
+| Hostname                            | Ports | Why                                    |
+|-------------------------------------|-------|----------------------------------------|
+| `trafficmanager.net`                | 443   | Azure Traffic Manager (DNS routing)    |
+| `blob.core.windows.net`            | 443   | Azure Blob Storage (Actions artifacts) |
 
 ### Sudo Lockdown
 
@@ -236,7 +245,9 @@ When `sudo-lockdown: true`, sudo is restricted so that subsequent workflow steps
 
 ```yaml
 sudo-lockdown: true
-sudo-allow-commands: /usr/bin/apt-get,/usr/bin/docker
+sudo-allow-commands: |
+  /usr/bin/apt-get
+  /usr/bin/docker
 ```
 
 With this configuration, `sudo apt-get install ...` and `sudo docker build ...` will work, but attempts to run `sudo iptables -F`, `sudo pkill cargowall`, or `sudo vim /etc/resolv.conf` will be blocked.

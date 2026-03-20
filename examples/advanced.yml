@@ -32,15 +32,14 @@ jobs:
       # so hostname filtering works inside containers
       - uses: code-cargo/cargowall-action@v1
         with:
-          default-action: deny
           allowed-hosts: |
-            docker.io,
-            *.docker.com,
-            registry-1.docker.io,
-            auth.docker.io,
-            production.cloudflare.docker.com,
-            ghcr.io,
-            *.pkg.github.com,
+            docker.io
+            docker.com
+            registry-1.docker.io
+            auth.docker.io
+            production.cloudflare.docker.com
+            ghcr.io
+            pkg.github.com
             registry.npmjs.org
 
       # Docker builds work with hostname filtering
@@ -76,13 +75,10 @@ jobs:
       # Self-hosted runners have full eBPF support
       - uses: code-cargo/cargowall-action@v1
         with:
-          default-action: deny
           allowed-hosts: |
-            github.com,
-            *.githubusercontent.com,
             internal-registry.company.com
           allowed-cidrs: |
-            10.0.0.0/8,
+            10.0.0.0/8
             192.168.0.0/16
           fail-on-unsupported: true
 

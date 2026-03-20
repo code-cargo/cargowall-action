@@ -166,7 +166,7 @@ export async function generateSummary(): Promise<void> {
         // State file not present — use Action input as fallback
       }
       summaryArgs.push('--mode', effectiveMode)
-      summaryArgs.push('--default-action', core.getInput('default-action') || 'deny')
+      summaryArgs.push('--default-action', 'deny')
       summaryArgs.push('--job-status', jobStatus)
 
       // Get OIDC token for API authentication

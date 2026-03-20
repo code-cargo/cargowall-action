@@ -25303,7 +25303,7 @@ ${watcherLog.trimEnd()}`);
       } catch {
       }
       summaryArgs.push("--mode", effectiveMode);
-      summaryArgs.push("--default-action", getInput("default-action") || "deny");
+      summaryArgs.push("--default-action", "deny");
       summaryArgs.push("--job-status", jobStatus);
       try {
         const audience = getInput("api-audience") || "codecargo";
