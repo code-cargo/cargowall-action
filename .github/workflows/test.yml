@@ -100,10 +100,10 @@ jobs:
         uses: ./
         with:
           api-url: https://app.dev.codecargo.dev
-          allowed-cidrs: "140.82.112.0/20"  # GitHub's IP range
-          allowed-hosts:
+          allowed-cidrs: |
+            "140.82.112.0/20"  # GitHub's IP range
+          allowed-hosts: |
             app.dev.codecargo.dev
-            github.com
 
       - name: Test connection to allowed CIDR
         run: |
