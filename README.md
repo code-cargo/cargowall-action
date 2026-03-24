@@ -152,8 +152,8 @@ For complex configurations, use a JSON or YAML config file:
 | `audit-summary`              | Generate audit summary in workflow summary                                        | `true`                                         |
 | `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}`                          |
 | `include-prerelease`         | Include pre-release versions when resolving "latest"                              | `false`                                        |
-| `api-url`                    | CodeCargo API URL to push audit results to                                        | `https://app.codecargo.com`                    |
-| `offline`                    | Skip CodeCargo API communication entirely                                         | `false`                                        |
+| `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)   | `https://app.codecargo.com`                    |
+| `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)              | `false`                                        |
 | `api-audience`               | OIDC audience for CodeCargo API authentication                                    | `codecargo`                                    |
 
 ## Outputs
