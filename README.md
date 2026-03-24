@@ -1,5 +1,7 @@
 # CargoWall GitHub Action
 
+> ⚠️ **Warning:** The CodeCargo API is under active development and not yet finalized. Breaking changes may occur. Set `offline: true` to disable API communication if you don't need platform integration.
+
 [![CI](https://github.com/code-cargo/cargowall-action/actions/workflows/test.yml/badge.svg)](https://github.com/code-cargo/cargowall-action/actions/workflows/test.yml)
 [![Check dist](https://github.com/code-cargo/cargowall-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/code-cargo/cargowall-action/actions/workflows/check-dist.yml)
 [![License](https://img.shields.io/github/license/code-cargo/cargowall-action)](LICENSE)
@@ -48,6 +50,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +65,7 @@ jobs:
       - run: npm test
 ```
 
-> **Note:** To connect to the [CodeCargo platform](https://www.codecargo.com) via `api-url`, your job needs these minimum permissions: `id-token: write` (OIDC authentication), `actions: read` (correlate network events to steps), and `contents: read`.
+> **Note:** The action connects to the [CodeCargo platform](https://www.codecargo.com) by default. For full integration, your job needs these permissions: `id-token: write` (OIDC authentication), `actions: read` (correlate network events to steps), and `contents: read`. If `id-token: write` is not granted, the action will warn and continue without API integration. Set `offline: true` to skip API communication entirely.
 
 ### With Docker Support
 
@@ -130,27 +133,28 @@ For complex configurations, use a JSON or YAML config file:
 
 ## Inputs
 
-| Input                        | Description                                                                       | Default                    |
-|------------------------------|-----------------------------------------------------------------------------------|----------------------------|
-| `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                         | `enforce`                  |
-| `allowed-hosts`              | Allowed hostnames, one per line (auto matches subdomains)                         |                            |
-| `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                 |                            |
+| Input                        | Description                                                                       | Default                                        |
+|------------------------------|-----------------------------------------------------------------------------------|------------------------------------------------|
+| `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                         | `enforce`                                      |
+| `allowed-hosts`              | Allowed hostnames, one per line (auto matches subdomains)                         |                                                |
+| `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                 |                                                |
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line)                 | See [defaults](#automatically-allowed-traffic) |
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line)           | See [defaults](#automatically-allowed-traffic) |
-| `config-file`                | Path to YAML/JSON config file for advanced rules                                  |                            |
-| `version`                    | CargoWall version to use                                                          | `latest`                   |
-| `fail-on-unsupported`        | Fail if eBPF not supported                                                        | `false`                    |
-| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                   | `false`                    |
-| `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                         |                            |
-| `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                    | auto-detect                |
-| `allow-existing-connections` | Allow pre-existing TCP connections at startup                                     | `true`                     |
-| `binary-path`                | Path to a pre-built cargowall binary (skips download)                             |                            |
-| `debug`                      | Enable debug logging                                                              | `false`                    |
-| `audit-summary`              | Generate audit summary in workflow summary                                        | `true`                     |
-| `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}`      |
-| `include-prerelease`         | Include pre-release versions when resolving "latest"                              | `false`                    |
-| `api-url`                    | CodeCargo API URL to push audit results to                                        |                            |
-| `api-audience`               | OIDC audience for CodeCargo API authentication                                    | `codecargo`                |
+| `config-file`                | Path to YAML/JSON config file for advanced rules                                  |                                                |
+| `version`                    | CargoWall version to use                                                          | `latest`                                       |
+| `fail-on-unsupported`        | Fail if eBPF not supported                                                        | `false`                                        |
+| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                   | `false`                                        |
+| `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                         |                                                |
+| `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                    | auto-detect                                    |
+| `allow-existing-connections` | Allow pre-existing TCP connections at startup                                     | `true`                                         |
+| `binary-path`                | Path to a pre-built cargowall binary (skips download)                             |                                                |
+| `debug`                      | Enable debug logging                                                              | `false`                                        |
+| `audit-summary`              | Generate audit summary in workflow summary                                        | `true`                                         |
+| `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}`                          |
+| `include-prerelease`         | Include pre-release versions when resolving "latest"                              | `false`                                        |
+| `api-url`                    | CodeCargo API URL to push audit results to                                        | `https://app.codecargo.com`                    |
+| `offline`                    | Skip CodeCargo API communication entirely                                         | `false`                                        |
+| `api-audience`               | OIDC audience for CodeCargo API authentication                                    | `codecargo`                                    |
 
 ## Outputs
 
@@ -234,10 +238,10 @@ CargoWall automatically allows certain traffic required for the runner and GitHu
 
 **Azure infrastructure hostnames** (configurable via `azure-infra-hosts`):
 
-| Hostname                            | Ports | Why                                    |
-|-------------------------------------|-------|----------------------------------------|
-| `trafficmanager.net`                | 443   | Azure Traffic Manager (DNS routing)    |
-| `blob.core.windows.net`            | 443   | Azure Blob Storage (Actions artifacts) |
+| Hostname                | Ports | Why                                    |
+|-------------------------|-------|----------------------------------------|
+| `trafficmanager.net`    | 443   | Azure Traffic Manager (DNS routing)    |
+| `blob.core.windows.net` | 443   | Azure Blob Storage (Actions artifacts) |
 
 ### Sudo Lockdown
 

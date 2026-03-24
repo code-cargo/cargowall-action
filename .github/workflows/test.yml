@@ -61,9 +61,8 @@ jobs:
       - name: Setup CargoWall with strict hosts
         uses: ./
         with:
-          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
-            app.dev.codecargo.dev
+            app.codecargo.com
             github.com
             api.github.com
 
@@ -99,11 +98,10 @@ jobs:
       - name: Setup CargoWall with CIDR rules
         uses: ./
         with:
-          api-url: https://app.dev.codecargo.dev
           allowed-cidrs: |
             "140.82.112.0/20"  # GitHub's IP range
           allowed-hosts: |
-            app.dev.codecargo.dev
+            app.codecargo.com
 
       - name: Test connection to allowed CIDR
         run: |
@@ -121,9 +119,8 @@ jobs:
         id: cargowall
         uses: ./
         with:
-          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
-            app.dev.codecargo.dev
+            app.codecargo.com
             github.com
           fail-on-unsupported: false
 
@@ -140,10 +137,9 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
-          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
             github.com
-            app.dev.codecargo.dev
+            app.codecargo.com
             docker.io
             docker.com
             registry-1.docker.io
@@ -175,9 +171,8 @@ jobs:
       - name: Setup CargoWall with sudo lockdown
         uses: ./
         with:
-          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
-            app.dev.codecargo.dev
+            app.codecargo.com
             github.com
             archive.ubuntu.com
             security.ubuntu.com

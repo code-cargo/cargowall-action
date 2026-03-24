@@ -27763,8 +27763,9 @@ async function start() {
   if (allowExistingConnections) {
     args.push("--allow-existing-connections");
   }
+  const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
-  if (apiUrl) {
+  if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`);
     args.push(`--job-key=${context2.job}`);
     try {

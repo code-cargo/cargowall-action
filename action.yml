@@ -69,8 +69,12 @@ inputs:
     description: 'GitHub token for downloading the binary and fetching step timing in audit summary'
     default: ${{ github.token }}
   api-url:
-    description: 'CodeCargo API URL to push audit results to (e.g. https://app.codecargo.com). Requires permissions: id-token: write'
+    description: 'CodeCargo API URL to push audit results to. Requires permissions: id-token: write'
     required: false
+    default: 'https://app.codecargo.com'
+  offline:
+    description: 'Skip CodeCargo API communication entirely (no policy fetch or audit push)'
+    default: 'false'
   api-audience:
     description: 'OIDC audience for CodeCargo API authentication'
     default: 'codecargo'

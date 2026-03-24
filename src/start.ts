@@ -84,10 +84,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     args.push('--allow-existing-connections')
   }
 
-  // When api-url is configured, fetch OIDC token and pass API flags so the
-  // Go binary can fetch the resolved policy from the CodeCargo SaaS API.
+  // When api-url is configured and offline mode is not enabled, fetch OIDC
+  // token and pass API flags so the Go binary can fetch the resolved policy
+  // from the CodeCargo SaaS API.
+  const offline = core.getInput('offline') === 'true'
   const apiUrl = core.getInput('api-url')
-  if (apiUrl) {
+  if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`)
     args.push(`--job-key=${github.context.job}`)
     try {

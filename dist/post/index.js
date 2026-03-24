@@ -25291,8 +25291,9 @@ ${watcherLog.trimEnd()}`);
       }
     }
     const summaryArgs = ["summary", "--audit-log", AUDIT_LOG, "--steps", stepsJson];
+    const offline = getInput("offline") === "true";
     const apiUrl = getInput("api-url");
-    if (apiUrl) {
+    if (apiUrl && !offline) {
       summaryArgs.push("--api-url", apiUrl);
       summaryArgs.push("--job-key", context2.job);
       summaryArgs.push("--job-name", currentJobName || context2.job);
@@ -25313,6 +25314,10 @@ ${watcherLog.trimEnd()}`);
         warning(
           `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
         );
+        for (const flag of ["--api-url", "--job-key", "--job-name", "--mode", "--default-action", "--job-status"]) {
+          const idx = summaryArgs.findIndex((a) => a === flag);
+          if (idx !== -1) summaryArgs.splice(idx, 2);
+        }
       }
     }
     let summaryOutput = "";

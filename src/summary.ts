@@ -149,9 +149,10 @@ export async function generateSummary(): Promise<void> {
     // Build summary command args
     const summaryArgs = ['summary', '--audit-log', AUDIT_LOG, '--steps', stepsJson]
 
-    // Add API push flags if api-url is configured
+    // Add API push flags if api-url is configured and offline mode is not enabled
+    const offline = core.getInput('offline') === 'true'
     const apiUrl = core.getInput('api-url')
-    if (apiUrl) {
+    if (apiUrl && !offline) {
       summaryArgs.push('--api-url', apiUrl)
       summaryArgs.push('--job-key', github.context.job)
       summaryArgs.push('--job-name', currentJobName || github.context.job)
@@ -178,6 +179,11 @@ export async function generateSummary(): Promise<void> {
         core.warning(
           `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
         )
+        // Remove API-related args so the binary doesn't attempt an unauthenticated push
+        for (const flag of ['--api-url', '--job-key', '--job-name', '--mode', '--default-action', '--job-status']) {
+          const idx = summaryArgs.findIndex(a => a === flag)
+          if (idx !== -1) summaryArgs.splice(idx, 2) // remove flag and its value
+        }
       }
     }
 
