@@ -21,6 +21,7 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
+          offline: 'true'
           allowed-hosts: |
             github.com
             githubusercontent.com
