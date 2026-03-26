@@ -217,7 +217,8 @@ async function resolveLatestVersion(
   }
 
   // Filter to valid semver tags within the same major.minor version as this action (patch floats)
-  const versionRange = `~${CARGOWALL_ACTION_MAJOR}.${CARGOWALL_ACTION_MINOR}.0`
+  // The -0 suffix ensures pre-releases of the .0 version are included (e.g. 1.0.0-rc.1)
+  const versionRange = `~${CARGOWALL_ACTION_MAJOR}.${CARGOWALL_ACTION_MINOR}.0-0`
   let candidates = tags.filter(t => semver.valid(t) && semver.satisfies(t, versionRange, { includePrerelease: true }))
   core.info(`Resolving latest cargowall v${CARGOWALL_ACTION_MAJOR}.${CARGOWALL_ACTION_MINOR}.x release`)
 

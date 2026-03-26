@@ -27332,7 +27332,7 @@ async function resolveLatestVersion(repo, githubToken, includePrerelease) {
   if (tags.length === 0) {
     throw new Error("No releases found");
   }
-  const versionRange = `~${1}.${0}.0`;
+  const versionRange = `~${1}.${0}.0-0`;
   let candidates = tags.filter((t) => semver.valid(t) && semver.satisfies(t, versionRange, { includePrerelease: true }));
   info(`Resolving latest cargowall v${1}.${0}.x release`);
   if (!includePrerelease) {
