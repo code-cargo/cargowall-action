@@ -165,10 +165,7 @@ async function downloadAndInstall(version: string): Promise<void> {
     if (attestResult === 0) {
       core.info('Attestation verified: binary provenance confirmed')
     } else {
-      // fail this once we have v1.0.0 released on code-cargo/cargowall (will be immutable with attestation)
-      core.warning(
-        'Attestation verification failed or unavailable — binary integrity relies on checksum only'
-      )
+      throw new Error('Attestation verification failed — binary provenance could not be confirmed')
     }
 
     // Install binary

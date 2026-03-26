@@ -27293,9 +27293,7 @@ Actual: ${actualChecksum}`);
     if (attestResult === 0) {
       info("Attestation verified: binary provenance confirmed");
     } else {
-      warning(
-        "Attestation verification failed or unavailable \u2014 binary integrity relies on checksum only"
-      );
+      throw new Error("Attestation verification failed \u2014 binary provenance could not be confirmed");
     }
     await exec("chmod", ["+x", binaryDest]);
     await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
