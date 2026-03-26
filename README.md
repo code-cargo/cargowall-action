@@ -1,7 +1,4 @@
 # CargoWall GitHub Action
-
-> ⚠️ **Warning:** The CodeCargo API is under active development and not yet finalized. Breaking changes may occur. Set `offline: true` to disable API communication if you don't need platform integration.
-
 [![CI](https://github.com/code-cargo/cargowall-action/actions/workflows/test.yml/badge.svg)](https://github.com/code-cargo/cargowall-action/actions/workflows/test.yml)
 [![Check dist](https://github.com/code-cargo/cargowall-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/code-cargo/cargowall-action/actions/workflows/check-dist.yml)
 [![License](https://img.shields.io/github/license/code-cargo/cargowall-action)](LICENSE)

@@ -9,6 +9,8 @@ jobs:
   check-dist:
     name: Check dist/ is up to date
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
