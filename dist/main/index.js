@@ -20816,7 +20816,7 @@ var require_satisfies = __commonJS({
   "node_modules/semver/functions/satisfies.js"(exports2, module2) {
     "use strict";
     var Range = require_range();
-    var satisfies = (version, range, options) => {
+    var satisfies2 = (version, range, options) => {
       try {
         range = new Range(range, options);
       } catch (er) {
@@ -20824,7 +20824,7 @@ var require_satisfies = __commonJS({
       }
       return range.test(version);
     };
-    module2.exports = satisfies;
+    module2.exports = satisfies2;
   }
 });
 
@@ -20979,7 +20979,7 @@ var require_outside = __commonJS({
     var Comparator = require_comparator();
     var { ANY } = Comparator;
     var Range = require_range();
-    var satisfies = require_satisfies();
+    var satisfies2 = require_satisfies();
     var gt = require_gt();
     var lt = require_lt();
     var lte = require_lte();
@@ -21006,7 +21006,7 @@ var require_outside = __commonJS({
         default:
           throw new TypeError('Must provide a hilo val of "<" or ">"');
       }
-      if (satisfies(version, range, options)) {
+      if (satisfies2(version, range, options)) {
         return false;
       }
       for (let i = 0; i < range.set.length; ++i) {
@@ -21078,7 +21078,7 @@ var require_intersects = __commonJS({
 var require_simplify = __commonJS({
   "node_modules/semver/ranges/simplify.js"(exports2, module2) {
     "use strict";
-    var satisfies = require_satisfies();
+    var satisfies2 = require_satisfies();
     var compare = require_compare();
     module2.exports = (versions, range, options) => {
       const set = [];
@@ -21086,7 +21086,7 @@ var require_simplify = __commonJS({
       let prev = null;
       const v = versions.sort((a, b) => compare(a, b, options));
       for (const version of v) {
-        const included = satisfies(version, range, options);
+        const included = satisfies2(version, range, options);
         if (included) {
           prev = version;
           if (!first) {
@@ -21131,7 +21131,7 @@ var require_subset = __commonJS({
     var Range = require_range();
     var Comparator = require_comparator();
     var { ANY } = Comparator;
-    var satisfies = require_satisfies();
+    var satisfies2 = require_satisfies();
     var compare = require_compare();
     var subset = (sub, dom, options = {}) => {
       if (sub === dom) {
@@ -21200,14 +21200,14 @@ var require_subset = __commonJS({
         }
       }
       for (const eq of eqSet) {
-        if (gt && !satisfies(eq, String(gt), options)) {
+        if (gt && !satisfies2(eq, String(gt), options)) {
           return null;
         }
-        if (lt && !satisfies(eq, String(lt), options)) {
+        if (lt && !satisfies2(eq, String(lt), options)) {
           return null;
         }
         for (const c of dom) {
-          if (!satisfies(eq, String(c), options)) {
+          if (!satisfies2(eq, String(c), options)) {
             return false;
           }
         }
@@ -21234,7 +21234,7 @@ var require_subset = __commonJS({
             if (higher === c && higher !== gt) {
               return false;
             }
-          } else if (gt.operator === ">=" && !satisfies(gt.semver, String(c), options)) {
+          } else if (gt.operator === ">=" && !satisfies2(gt.semver, String(c), options)) {
             return false;
           }
         }
@@ -21249,7 +21249,7 @@ var require_subset = __commonJS({
             if (lower === c && lower !== lt) {
               return false;
             }
-          } else if (lt.operator === "<=" && !satisfies(lt.semver, String(c), options)) {
+          } else if (lt.operator === "<=" && !satisfies2(lt.semver, String(c), options)) {
             return false;
           }
         }
@@ -21319,7 +21319,7 @@ var require_semver2 = __commonJS({
     var coerce = require_coerce();
     var Comparator = require_comparator();
     var Range = require_range();
-    var satisfies = require_satisfies();
+    var satisfies2 = require_satisfies();
     var toComparators = require_to_comparators();
     var maxSatisfying = require_max_satisfying();
     var minSatisfying = require_min_satisfying();
@@ -21357,7 +21357,7 @@ var require_semver2 = __commonJS({
       coerce,
       Comparator,
       Range,
-      satisfies,
+      satisfies: satisfies2,
       toComparators,
       maxSatisfying,
       minSatisfying,
@@ -27282,6 +27282,21 @@ Actual: ${actualChecksum}`);
     } else {
       error("Could not download checksums \u2014 binary integrity is NOT verified. Set binary-path to use a local binary instead.");
     }
+    info("Verifying artifact attestation...");
+    const attestResult = await exec("gh", [
+      "attestation",
+      "verify",
+      binaryDest,
+      "--repo",
+      repo
+    ], { ignoreReturnCode: true, env: ghEnv });
+    if (attestResult === 0) {
+      info("Attestation verified: binary provenance confirmed");
+    } else {
+      warning(
+        "Attestation verification failed or unavailable \u2014 binary integrity relies on checksum only"
+      );
+    }
     await exec("chmod", ["+x", binaryDest]);
     await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
     info(`Installed cargowall to ${INSTALL_DIR}/${BINARY_NAME}`);
@@ -27319,7 +27334,9 @@ async function resolveLatestVersion(repo, githubToken, includePrerelease) {
   if (tags.length === 0) {
     throw new Error("No releases found");
   }
-  let candidates = tags.filter((t) => semver.valid(t));
+  const versionRange = `~${1}.${0}.0`;
+  let candidates = tags.filter((t) => semver.valid(t) && semver.satisfies(t, versionRange, { includePrerelease: true }));
+  info(`Resolving latest cargowall v${1}.${0}.x release`);
   if (!includePrerelease) {
     const stable = candidates.filter((t) => !semver.prerelease(t));
     if (stable.length > 0) {

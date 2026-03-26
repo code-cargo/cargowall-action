@@ -7,6 +7,9 @@ import * as os from 'os'
 import * as path from 'path'
 import * as semver from 'semver'
 
+declare const CARGOWALL_ACTION_MAJOR: number
+declare const CARGOWALL_ACTION_MINOR: number
+
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
 
@@ -151,6 +154,23 @@ async function downloadAndInstall(version: string): Promise<void> {
       core.error('Could not download checksums — binary integrity is NOT verified. Set binary-path to use a local binary instead.')
     }
 
+    // Verify GitHub artifact attestation
+    core.info('Verifying artifact attestation...')
+    const attestResult = await exec.exec('gh', [
+      'attestation', 'verify', binaryDest,
+      '--repo', repo
+    ], { ignoreReturnCode: true, env: ghEnv })
+
+
+    if (attestResult === 0) {
+      core.info('Attestation verified: binary provenance confirmed')
+    } else {
+      // fail this once we have v1.0.0 released on code-cargo/cargowall (will be immutable with attestation)
+      core.warning(
+        'Attestation verification failed or unavailable — binary integrity relies on checksum only'
+      )
+    }
+
     // Install binary
     await exec.exec('chmod', ['+x', binaryDest])
     await exec.exec('sudo', ['mv', binaryDest, path.join(INSTALL_DIR, BINARY_NAME)])
@@ -199,8 +219,10 @@ async function resolveLatestVersion(
     throw new Error('No releases found')
   }
 
-  // Filter to valid semver tags
-  let candidates = tags.filter(t => semver.valid(t))
+  // Filter to valid semver tags within the same major.minor version as this action (patch floats)
+  const versionRange = `~${CARGOWALL_ACTION_MAJOR}.${CARGOWALL_ACTION_MINOR}.0`
+  let candidates = tags.filter(t => semver.valid(t) && semver.satisfies(t, versionRange, { includePrerelease: true }))
+  core.info(`Resolving latest cargowall v${CARGOWALL_ACTION_MAJOR}.${CARGOWALL_ACTION_MINOR}.x release`)
 
   // Filter out pre-releases unless requested
   if (!includePrerelease) {
