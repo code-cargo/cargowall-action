@@ -12,11 +12,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Update major version tag
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           MAJOR=$(echo "$TAG" | grep -oP '^v\d+')
+          if [ -z "$MAJOR" ]; then
+            echo "Error: failed to extract major version from tag '$TAG'. Expected format 'v<major>.<minor>.<patch>'." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"          
           git tag -fa "$MAJOR" -m "Update $MAJOR to $TAG"
           git push origin "$MAJOR" --force
