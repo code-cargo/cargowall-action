@@ -21633,7 +21633,7 @@ Actual: ${actualChecksum}`);
         info("Checksum verified");
       }
     } else {
-      error("Could not download checksums \u2014 binary integrity is NOT verified. Set binary-path to use a local binary instead.");
+      warning("Could not download checksums \u2014 attestation verification will still be enforced");
     }
     info("Verifying artifact attestation...");
     const attestResult = await exec("gh", [

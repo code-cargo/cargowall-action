@@ -140,7 +140,7 @@ async function downloadAndInstall(): Promise<void> {
         core.info('Checksum verified')
       }
     } else {
-      core.error('Could not download checksums — binary integrity is NOT verified. Set binary-path to use a local binary instead.')
+      core.warning('Could not download checksums — attestation verification will still be enforced')
     }
 
     // Verify GitHub artifact attestation
