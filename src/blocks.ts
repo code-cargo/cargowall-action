@@ -1,6 +1,5 @@
-import { promises as fs, createReadStream } from 'fs'
+import { promises as fs } from 'fs'
 import * as path from 'path'
-import { createInterface } from 'readline'
 
 export const TIMESTAMP_REGEX = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/
 
@@ -19,20 +18,21 @@ export function parseBlockFilename(file: string): string | null {
 
 /**
  * Read the sub-second timestamp from the first line of a block file.
- * Only reads the first line rather than the entire file.
+ * Only reads the first 256 bytes — enough for a timestamp line.
  * Returns the ISO timestamp string, or null if not found/readable.
  */
 export async function readBlockTimestamp(filePath: string): Promise<string | null> {
-  const rl = createInterface({ input: createReadStream(filePath, { encoding: 'utf8' }) })
+  const fh = await fs.open(filePath, 'r')
   try {
-    for await (const line of rl) {
-      if (!line) return null
-      const match = line.match(TIMESTAMP_REGEX)
-      return match ? match[1] : null
-    }
-    return null // empty file
+    const buf = Buffer.alloc(256)
+    const { bytesRead } = await fh.read(buf, 0, 256, 0)
+    if (bytesRead === 0) return null
+    const firstLine = buf.toString('utf8', 0, bytesRead).split('\n')[0] || ''
+    if (!firstLine) return null
+    const match = firstLine.match(TIMESTAMP_REGEX)
+    return match ? match[1] : null
   } finally {
-    rl.close()
+    await fh.close()
   }
 }
 

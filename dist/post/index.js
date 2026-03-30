@@ -25191,7 +25191,6 @@ var path5 = __toESM(require("path"));
 // src/blocks.ts
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
-var import_readline = require("readline");
 var TIMESTAMP_REGEX = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/;
 function parseBlockFilename(file) {
   const dotIdx = file.lastIndexOf(".");
@@ -25201,16 +25200,17 @@ function parseBlockFilename(file) {
   return base.substring(underIdx + 1);
 }
 async function readBlockTimestamp(filePath) {
-  const rl = (0, import_readline.createInterface)({ input: (0, import_fs4.createReadStream)(filePath, { encoding: "utf8" }) });
+  const fh = await import_fs4.promises.open(filePath, "r");
   try {
-    for await (const line of rl) {
-      if (!line) return null;
-      const match = line.match(TIMESTAMP_REGEX);
-      return match ? match[1] : null;
-    }
-    return null;
+    const buf = Buffer.alloc(256);
+    const { bytesRead } = await fh.read(buf, 0, 256, 0);
+    if (bytesRead === 0) return null;
+    const firstLine = buf.toString("utf8", 0, bytesRead).split("\n")[0] || "";
+    if (!firstLine) return null;
+    const match = firstLine.match(TIMESTAMP_REGEX);
+    return match ? match[1] : null;
   } finally {
-    rl.close();
+    await fh.close();
   }
 }
 async function scanBlocksDir(blocksDir) {
@@ -25345,7 +25345,6 @@ async function generateSummary() {
         const content = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
         const lines = content.trim().split("\n").filter(Boolean).length;
         if (lines > 0) {
-          await new Promise((resolve2) => setTimeout(resolve2, 1e3));
           break;
         }
         await new Promise((resolve2) => setTimeout(resolve2, 200));

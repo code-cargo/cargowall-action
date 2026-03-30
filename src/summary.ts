@@ -91,9 +91,8 @@ export async function generateSummary(): Promise<void> {
         const content = await fs.readFile(STEP_TIMESTAMPS_FILE, 'utf8').catch(() => '')
         const lines = content.trim().split('\n').filter(Boolean).length
         if (lines > 0) {
-          // The watcher captured its first entry. Give it 1s more to sweep the
-          // remaining block files (~10 polls at 100ms interval).
-          await new Promise(resolve => setTimeout(resolve, 1000))
+          // The watcher has been running since the start of the setup step (~8-10s).
+          // By now it has already swept all existing block files. Proceed immediately.
           break
         }
         await new Promise(resolve => setTimeout(resolve, 200))
