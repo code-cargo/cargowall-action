@@ -25191,6 +25191,7 @@ var path5 = __toESM(require("path"));
 // src/blocks.ts
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
+var import_readline = require("readline");
 var TIMESTAMP_REGEX = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/;
 function parseBlockFilename(file) {
   const dotIdx = file.lastIndexOf(".");
@@ -25200,11 +25201,17 @@ function parseBlockFilename(file) {
   return base.substring(underIdx + 1);
 }
 async function readBlockTimestamp(filePath) {
-  const content = await import_fs4.promises.readFile(filePath, "utf8");
-  const firstLine = content.split("\n")[0] || "";
-  if (!firstLine) return null;
-  const match = firstLine.match(TIMESTAMP_REGEX);
-  return match ? match[1] : null;
+  const rl = (0, import_readline.createInterface)({ input: (0, import_fs4.createReadStream)(filePath, { encoding: "utf8" }) });
+  try {
+    for await (const line of rl) {
+      if (!line) return null;
+      const match = line.match(TIMESTAMP_REGEX);
+      return match ? match[1] : null;
+    }
+    return null;
+  } finally {
+    rl.close();
+  }
 }
 async function scanBlocksDir(blocksDir) {
   const results = [];
@@ -25332,7 +25339,7 @@ async function generateSummary() {
         info(`GitHub API step fetch failed: ${error}`);
       }
     }
-    if (!apiSteps) {
+    if (!apiSteps && getState("watcher-pid")) {
       const deadline = Date.now() + 2e3;
       while (Date.now() < deadline) {
         const content = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
@@ -25476,10 +25483,10 @@ function enhanceApiStepsWithDiag(apiSteps, diag) {
     info("No _diag timestamps available, using API steps as-is");
     return apiSteps;
   }
+  const tsById = new Map(diag.tsEntries.map((e) => [e.id, e.ts]));
   const stepTimestamps = [];
   for (const [stepId, name] of diag.planSteps) {
-    const entry = diag.tsEntries.find((e) => e.id === stepId);
-    stepTimestamps.push({ name, ts: entry ? entry.ts : null });
+    stepTimestamps.push({ name, ts: tsById.get(stepId) ?? null });
   }
   if (stepTimestamps.length === 0) return apiSteps;
   const result = [...apiSteps.map((s) => ({ ...s }))];
@@ -25511,17 +25518,19 @@ function enhanceApiStepsWithDiag(apiSteps, diag) {
 }
 function buildStepsFromDiag(diag) {
   if (diag.tsEntries.length === 0) return [];
-  const idToName = /* @__PURE__ */ new Map();
   const planIds = diag.planSteps.map(([id]) => id);
-  for (let i = 0; i < planIds.length && i < diag.executedNames.length; i++) {
-    idToName.set(planIds[i], diag.executedNames[i]);
+  const watcherIds = new Set(diag.tsEntries.map((e) => e.id));
+  const executedPlanIds = planIds.filter((id) => watcherIds.has(id));
+  const idToName = /* @__PURE__ */ new Map();
+  for (let i = 0; i < executedPlanIds.length && i < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i]);
   }
   const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
   const planSet = diag.planStepIds;
   const firstPlanIdx = allSorted.findIndex((e) => planSet.has(e.id));
   if (firstPlanIdx < 0) return [];
   const relevant = allSorted.slice(firstPlanIdx);
-  const postNames = diag.executedNames.slice(planIds.length);
+  const postNames = diag.executedNames.slice(executedPlanIds.length);
   let postIdx = 0;
   const steps = [];
   for (let i = 0; i < relevant.length; i++) {

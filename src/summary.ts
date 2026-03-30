@@ -82,7 +82,7 @@ export async function generateSummary(): Promise<void> {
     // that the API round-trip provides. Wait for the watcher to have actually
     // captured data. Block files get cleaned up during the run, so the watcher
     // must capture timestamps in real-time — we can't read them after the fact.
-    if (!apiSteps) {
+    if (!apiSteps && core.getState('watcher-pid')) {
       // Without the API call, there's no natural delay for the watcher.
       // Poll the watcher output file until it has entries, with a 2s timeout
       // to handle slow Node.js cold starts on some runners.
@@ -297,10 +297,10 @@ function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEnt
 
   // Build ordered list of (name, sub-second timestamp) from plan steps + watcher
   // Preserve null entries for steps without watcher data to maintain positional alignment
+  const tsById = new Map(diag.tsEntries.map(e => [e.id, e.ts]))
   const stepTimestamps: Array<{ name: string; ts: string | null }> = []
   for (const [stepId, name] of diag.planSteps) {
-    const entry = diag.tsEntries.find(e => e.id === stepId)
-    stepTimestamps.push({ name, ts: entry ? entry.ts : null })
+    stepTimestamps.push({ name, ts: tsById.get(stepId) ?? null })
   }
 
   if (stepTimestamps.length === 0) return apiSteps
@@ -352,12 +352,19 @@ function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEnt
 function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   if (diag.tsEntries.length === 0) return []
 
-  // Build a stepId → display name mapping for plan steps.
-  // Plan step IDs are in execution order. Worker log names are in the same order.
-  const idToName = new Map<string, string>()
+  // Build a stepId → display name mapping.
+  // The plan has IDs for ALL steps (including skipped ones with `if:` conditions).
+  // The Worker log only has names for steps that ACTUALLY EXECUTED.
+  // The watcher only has entries for steps that ran (block files are only created
+  // for executed steps). So we zip plan IDs that have watcher entries (= executed)
+  // with Worker log names (= also executed, same order).
   const planIds = diag.planSteps.map(([id]) => id)
-  for (let i = 0; i < planIds.length && i < diag.executedNames.length; i++) {
-    idToName.set(planIds[i], diag.executedNames[i])
+  const watcherIds = new Set(diag.tsEntries.map(e => e.id))
+  const executedPlanIds = planIds.filter(id => watcherIds.has(id))
+
+  const idToName = new Map<string, string>()
+  for (let i = 0; i < executedPlanIds.length && i < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i])
   }
 
   // Sort all entries by timestamp
@@ -371,9 +378,8 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   const relevant = allSorted.slice(firstPlanIdx)
 
   // Name post steps from the Worker log.
-  // The executed names list has main step names followed by post step names.
-  // Post step names start after the last plan step name.
-  const postNames: string[] = diag.executedNames.slice(planIds.length)
+  // The executed names list has executed main step names followed by post step names.
+  const postNames: string[] = diag.executedNames.slice(executedPlanIds.length)
   let postIdx = 0
 
   const steps: StepEntry[] = []
