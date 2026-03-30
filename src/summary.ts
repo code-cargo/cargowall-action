@@ -347,48 +347,40 @@ function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEnt
 function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   if (diag.tsEntries.length === 0) return []
 
-  // Filter out entries from before the watcher started.
-  // The watcher picks up pre-existing block files (e.g. checkout) whose timestamps
-  // predate CW. Block files for the CW setup step get rewritten during setup,
-  // so their timestamps are after the watcher start — they pass the filter.
-  const watcherStart = core.getState('watcher-start')
-  const entries = watcherStart
-    ? diag.tsEntries.filter(e => e.ts >= watcherStart)
-    : diag.tsEntries
-
-  if (entries.length === 0) return []
+  // Find where CW starts in the executed names list.
+  // The start step saved the name of the step it ran in.
+  const cwStepName = core.getState('cw-step-name')
+  const cwNameIdx = cwStepName ? diag.executedNames.indexOf(cwStepName) : 0
+  const nameOffset = cwNameIdx >= 0 ? cwNameIdx : 0
 
   // Build a stepId → display name mapping.
   // The plan has IDs for ALL steps (including skipped ones with `if:` conditions).
   // The Worker log only has names for steps that ACTUALLY EXECUTED.
-  // Filter plan IDs to those with watcher entries (= executed + after CW start).
+  // Filter plan IDs to those with watcher entries (= executed).
   const planIds = diag.planSteps.map(([id]) => id)
-  const entryIds = new Set(entries.map(e => e.id))
-  const executedPlanIds = planIds.filter(id => entryIds.has(id))
+  const watcherIds = new Set(diag.tsEntries.map(e => e.id))
+  const executedPlanIds = planIds.filter(id => watcherIds.has(id))
 
+  // Map IDs to names, starting from the CW step in the executed names list.
   const idToName = new Map<string, string>()
-  // The Worker log's first N names correspond to main steps. Steps before CW
-  // (like checkout) appear in the Worker log but not in executedPlanIds (filtered out).
-  // Offset the names to skip pre-CW steps.
-  const preCwStepCount = planIds.filter(id => !entryIds.has(id)).length
-  for (let i = 0; i < executedPlanIds.length && (i + preCwStepCount) < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i + preCwStepCount])
+  for (let i = 0; i < executedPlanIds.length && (i + nameOffset) < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i + nameOffset])
   }
 
-  // Sort entries by timestamp
-  const allSorted = [...entries].sort((a, b) => a.ts.localeCompare(b.ts))
+  // Sort all entries by timestamp
+  const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts))
 
-  // Skip non-plan entries before the first plan step (bookends).
-  // Keep plan steps + post steps (after the last plan step).
-  const planSet = diag.planStepIds
-  const firstPlanIdx = allSorted.findIndex(e => planSet.has(e.id))
-  if (firstPlanIdx < 0) return []
-  const relevant = allSorted.slice(firstPlanIdx)
+  // Find the CW step in the sorted entries and start from there.
+  // The CW step ID is the first executedPlanId that maps to cwStepName.
+  const cwStepId = cwStepName ? [...idToName.entries()].find(([, name]) => name === cwStepName)?.[0] : null
+  const startIdx = cwStepId ? allSorted.findIndex(e => e.id === cwStepId) : allSorted.findIndex(e => diag.planStepIds.has(e.id))
+  if (startIdx < 0) return []
+  const relevant = allSorted.slice(startIdx)
 
   // Name post steps from the Worker log.
-  // Post step names come after all main step names (including pre-CW ones).
-  const totalMainSteps = preCwStepCount + executedPlanIds.length
-  const postNames: string[] = diag.executedNames.slice(totalMainSteps)
+  // Post step names come after all main step names.
+  const mainNameCount = nameOffset + executedPlanIds.length
+  const postNames: string[] = diag.executedNames.slice(mainNameCount)
   let postIdx = 0
 
   const steps: StepEntry[] = []

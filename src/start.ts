@@ -65,6 +65,14 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
         await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
         core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
 
+        // Save the current step name so the post step knows where CW started.
+        // The Worker log has a "Processing step" entry for our step by now.
+        const { parseExecutedSteps } = await import('./diag')
+        const executedSoFar = await parseExecutedSteps(diagDir)
+        if (executedSoFar.length > 0) {
+          core.saveState('cw-step-name', executedSoFar[executedSoFar.length - 1])
+        }
+
         // Spawn watcher as detached node process
         const blocksDir = path.join(diagDir, 'blocks')
         const watcherScript = path.join(__dirname, '..', 'watcher', 'index.js')
@@ -75,7 +83,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
         watcher.unref()
         if (watcher.pid) {
           core.saveState('watcher-pid', String(watcher.pid))
-          core.saveState('watcher-start', new Date().toISOString())
           core.info(`Blocks watcher started (PID: ${watcher.pid})`)
         }
       }

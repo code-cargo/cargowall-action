@@ -25515,24 +25515,23 @@ function enhanceApiStepsWithDiag(apiSteps, diag) {
 }
 function buildStepsFromDiag(diag) {
   if (diag.tsEntries.length === 0) return [];
-  const watcherStart = getState("watcher-start");
-  const entries = watcherStart ? diag.tsEntries.filter((e) => e.ts >= watcherStart) : diag.tsEntries;
-  if (entries.length === 0) return [];
+  const cwStepName = getState("cw-step-name");
+  const cwNameIdx = cwStepName ? diag.executedNames.indexOf(cwStepName) : 0;
+  const nameOffset = cwNameIdx >= 0 ? cwNameIdx : 0;
   const planIds = diag.planSteps.map(([id]) => id);
-  const entryIds = new Set(entries.map((e) => e.id));
-  const executedPlanIds = planIds.filter((id) => entryIds.has(id));
+  const watcherIds = new Set(diag.tsEntries.map((e) => e.id));
+  const executedPlanIds = planIds.filter((id) => watcherIds.has(id));
   const idToName = /* @__PURE__ */ new Map();
-  const preCwStepCount = planIds.filter((id) => !entryIds.has(id)).length;
-  for (let i = 0; i < executedPlanIds.length && i + preCwStepCount < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i + preCwStepCount]);
+  for (let i = 0; i < executedPlanIds.length && i + nameOffset < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i + nameOffset]);
   }
-  const allSorted = [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
-  const planSet = diag.planStepIds;
-  const firstPlanIdx = allSorted.findIndex((e) => planSet.has(e.id));
-  if (firstPlanIdx < 0) return [];
-  const relevant = allSorted.slice(firstPlanIdx);
-  const totalMainSteps = preCwStepCount + executedPlanIds.length;
-  const postNames = diag.executedNames.slice(totalMainSteps);
+  const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
+  const cwStepId = cwStepName ? [...idToName.entries()].find(([, name]) => name === cwStepName)?.[0] : null;
+  const startIdx = cwStepId ? allSorted.findIndex((e) => e.id === cwStepId) : allSorted.findIndex((e) => diag.planStepIds.has(e.id));
+  if (startIdx < 0) return [];
+  const relevant = allSorted.slice(startIdx);
+  const mainNameCount = nameOffset + executedPlanIds.length;
+  const postNames = diag.executedNames.slice(mainNameCount);
   let postIdx = 0;
   const steps = [];
   for (let i = 0; i < relevant.length; i++) {
