@@ -37,8 +37,7 @@ export async function generateSummary(): Promise<void> {
     // --- Try GitHub API first (needs actions: read) ---
     // This also gives the watcher more time to poll before we kill it.
     let apiSteps: StepEntry[] | null = null
-    const skipActionsApi = core.getInput('skip-actions-api') === 'true'
-    if (token && runId && !skipActionsApi) {
+    if (token && runId) {
       try {
         core.info('Fetching step timing from GitHub API...')
         const octokit = github.getOctokit(token)
@@ -83,18 +82,20 @@ export async function generateSummary(): Promise<void> {
     // captured data. Block files get cleaned up during the run, so the watcher
     // must capture timestamps in real-time — we can't read them after the fact.
     if (!apiSteps) {
-      // Poll the watcher output file until it has entries, with a timeout.
-      // The watcher needs time for Node.js cold start + at least one poll cycle.
+      // Without the API call, there's no natural delay for the watcher.
+      // Poll the watcher output file until it has entries, with a 2s timeout
+      // to handle slow Node.js cold starts on some runners.
       const deadline = Date.now() + 2000
       while (Date.now() < deadline) {
         const content = await fs.readFile(STEP_TIMESTAMPS_FILE, 'utf8').catch(() => '')
         const lines = content.trim().split('\n').filter(Boolean).length
         if (lines > 0) {
-          // Give the watcher more time to capture remaining blocks (including post steps)
+          // The watcher captured its first entry. Give it 1s more to sweep the
+          // remaining block files (~10 polls at 100ms interval).
           await new Promise(resolve => setTimeout(resolve, 1000))
           break
         }
-        await new Promise(resolve => setTimeout(resolve, 50))
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
 
@@ -249,7 +250,7 @@ async function collectDiagData(): Promise<DiagData> {
     tsEntries = tsContent.trim().split('\n').filter(Boolean)
       .map(line => JSON.parse(line) as { id: string; ts: string })
 
-    const diagDir = core.getState('diag-dir') || await findDiagDir().catch(() => null)
+    const diagDir = core.getState('diag-dir') || await findDiagDir()
 
     core.info(`Step plan: ${planStepIds.size} steps, watcher timestamps: ${tsEntries.length}`)
 

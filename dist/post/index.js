@@ -25297,8 +25297,7 @@ async function generateSummary() {
     const token = getInput("github-token");
     const runId = context2.runId;
     let apiSteps = null;
-    const skipActionsApi = getInput("skip-actions-api") === "true";
-    if (token && runId && !skipActionsApi) {
+    if (token && runId) {
       try {
         info("Fetching step timing from GitHub API...");
         const octokit = getOctokit(token);
@@ -25341,7 +25340,7 @@ async function generateSummary() {
           await new Promise((resolve2) => setTimeout(resolve2, 1e3));
           break;
         }
-        await new Promise((resolve2) => setTimeout(resolve2, 50));
+        await new Promise((resolve2) => setTimeout(resolve2, 200));
       }
     }
     const diagData = await collectDiagData();
@@ -25446,7 +25445,7 @@ ${watcherLog.trimEnd()}`);
     let tsEntries = [];
     const tsContent = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
     tsEntries = tsContent.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-    const diagDir = getState("diag-dir") || await findDiagDir().catch(() => null);
+    const diagDir = getState("diag-dir") || await findDiagDir();
     info(`Step plan: ${planStepIds.size} steps, watcher timestamps: ${tsEntries.length}`);
     if (diagDir) {
       try {

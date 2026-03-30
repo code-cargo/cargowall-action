@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import * as path from 'path'
-import { parseBlockFilename, readBlockTimestamp } from './blocks'
+import { parseBlockFilename, TIMESTAMP_REGEX } from './blocks'
 
 const blocksDir = process.argv[2]
 const outputFile = process.argv[3]
@@ -28,15 +28,18 @@ async function poll() {
       }
 
       try {
-        const ts = await readBlockTimestamp(path.join(blocksDir, file))
-        if (ts === null && !(await fs.readFile(path.join(blocksDir, file), 'utf8'))) {
+        // Read file once, then decide: empty → retry, has content → parse or give up
+        const content = await fs.readFile(path.join(blocksDir, file), 'utf8')
+        const firstLine = content.split('\n')[0] || ''
+        if (!firstLine) {
           // File exists but is empty — retry next poll (runner hasn't written yet)
           continue
         }
         seen.add(file)
-        if (ts) {
-          log(`timestamp: stepId=${stepId} ts=${ts}`)
-          await fs.appendFile(outputFile, JSON.stringify({ id: stepId, ts }) + '\n')
+        const match = firstLine.match(TIMESTAMP_REGEX)
+        if (match) {
+          log(`timestamp: stepId=${stepId} ts=${match[1]}`)
+          await fs.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + '\n')
         } else {
           log(`no timestamp match in ${file}`)
         }
@@ -50,6 +53,6 @@ async function poll() {
   }
 }
 
-// Poll every 50ms
-setInterval(poll, 50)
+// Poll every 100ms
+setInterval(poll, 100)
 poll()
