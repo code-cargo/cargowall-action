@@ -75,6 +75,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
         watcher.unref()
         if (watcher.pid) {
           core.saveState('watcher-pid', String(watcher.pid))
+          core.saveState('watcher-start', new Date().toISOString())
           core.info(`Blocks watcher started (PID: ${watcher.pid})`)
         }
       }

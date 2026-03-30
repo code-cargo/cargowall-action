@@ -25344,9 +25344,7 @@ async function generateSummary() {
       while (Date.now() < deadline) {
         const content = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
         const lines = content.trim().split("\n").filter(Boolean).length;
-        if (lines > 0) {
-          break;
-        }
+        if (lines > 0) break;
         await new Promise((resolve2) => setTimeout(resolve2, 200));
       }
     }
@@ -25517,19 +25515,24 @@ function enhanceApiStepsWithDiag(apiSteps, diag) {
 }
 function buildStepsFromDiag(diag) {
   if (diag.tsEntries.length === 0) return [];
+  const watcherStart = getState("watcher-start");
+  const entries = watcherStart ? diag.tsEntries.filter((e) => e.ts >= watcherStart) : diag.tsEntries;
+  if (entries.length === 0) return [];
   const planIds = diag.planSteps.map(([id]) => id);
-  const watcherIds = new Set(diag.tsEntries.map((e) => e.id));
-  const executedPlanIds = planIds.filter((id) => watcherIds.has(id));
+  const entryIds = new Set(entries.map((e) => e.id));
+  const executedPlanIds = planIds.filter((id) => entryIds.has(id));
   const idToName = /* @__PURE__ */ new Map();
-  for (let i = 0; i < executedPlanIds.length && i < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i]);
+  const preCwStepCount = planIds.filter((id) => !entryIds.has(id)).length;
+  for (let i = 0; i < executedPlanIds.length && i + preCwStepCount < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i + preCwStepCount]);
   }
-  const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
+  const allSorted = [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
   const planSet = diag.planStepIds;
   const firstPlanIdx = allSorted.findIndex((e) => planSet.has(e.id));
   if (firstPlanIdx < 0) return [];
   const relevant = allSorted.slice(firstPlanIdx);
-  const postNames = diag.executedNames.slice(executedPlanIds.length);
+  const totalMainSteps = preCwStepCount + executedPlanIds.length;
+  const postNames = diag.executedNames.slice(totalMainSteps);
   let postIdx = 0;
   const steps = [];
   for (let i = 0; i < relevant.length; i++) {

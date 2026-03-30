@@ -90,11 +90,7 @@ export async function generateSummary(): Promise<void> {
       while (Date.now() < deadline) {
         const content = await fs.readFile(STEP_TIMESTAMPS_FILE, 'utf8').catch(() => '')
         const lines = content.trim().split('\n').filter(Boolean).length
-        if (lines > 0) {
-          // The watcher has been running since the start of the setup step (~8-10s).
-          // By now it has already swept all existing block files. Proceed immediately.
-          break
-        }
+        if (lines > 0) break
         await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
@@ -351,25 +347,38 @@ function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEnt
 function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   if (diag.tsEntries.length === 0) return []
 
+  // Filter out entries from before the watcher started.
+  // The watcher picks up pre-existing block files (e.g. checkout) whose timestamps
+  // predate CW. Block files for the CW setup step get rewritten during setup,
+  // so their timestamps are after the watcher start — they pass the filter.
+  const watcherStart = core.getState('watcher-start')
+  const entries = watcherStart
+    ? diag.tsEntries.filter(e => e.ts >= watcherStart)
+    : diag.tsEntries
+
+  if (entries.length === 0) return []
+
   // Build a stepId → display name mapping.
   // The plan has IDs for ALL steps (including skipped ones with `if:` conditions).
   // The Worker log only has names for steps that ACTUALLY EXECUTED.
-  // The watcher only has entries for steps that ran (block files are only created
-  // for executed steps). So we zip plan IDs that have watcher entries (= executed)
-  // with Worker log names (= also executed, same order).
+  // Filter plan IDs to those with watcher entries (= executed + after CW start).
   const planIds = diag.planSteps.map(([id]) => id)
-  const watcherIds = new Set(diag.tsEntries.map(e => e.id))
-  const executedPlanIds = planIds.filter(id => watcherIds.has(id))
+  const entryIds = new Set(entries.map(e => e.id))
+  const executedPlanIds = planIds.filter(id => entryIds.has(id))
 
   const idToName = new Map<string, string>()
-  for (let i = 0; i < executedPlanIds.length && i < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i])
+  // The Worker log's first N names correspond to main steps. Steps before CW
+  // (like checkout) appear in the Worker log but not in executedPlanIds (filtered out).
+  // Offset the names to skip pre-CW steps.
+  const preCwStepCount = planIds.filter(id => !entryIds.has(id)).length
+  for (let i = 0; i < executedPlanIds.length && (i + preCwStepCount) < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i + preCwStepCount])
   }
 
-  // Sort all entries by timestamp
-  const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts))
+  // Sort entries by timestamp
+  const allSorted = [...entries].sort((a, b) => a.ts.localeCompare(b.ts))
 
-  // Skip "Set up job" bookend (before the first plan step — CW not running).
+  // Skip non-plan entries before the first plan step (bookends).
   // Keep plan steps + post steps (after the last plan step).
   const planSet = diag.planStepIds
   const firstPlanIdx = allSorted.findIndex(e => planSet.has(e.id))
@@ -377,8 +386,9 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   const relevant = allSorted.slice(firstPlanIdx)
 
   // Name post steps from the Worker log.
-  // The executed names list has executed main step names followed by post step names.
-  const postNames: string[] = diag.executedNames.slice(executedPlanIds.length)
+  // Post step names come after all main step names (including pre-CW ones).
+  const totalMainSteps = preCwStepCount + executedPlanIds.length
+  const postNames: string[] = diag.executedNames.slice(totalMainSteps)
   let postIdx = 0
 
   const steps: StepEntry[] = []

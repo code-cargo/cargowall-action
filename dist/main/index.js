@@ -25771,6 +25771,7 @@ async function start() {
         watcher.unref();
         if (watcher.pid) {
           saveState("watcher-pid", String(watcher.pid));
+          saveState("watcher-start", (/* @__PURE__ */ new Date()).toISOString());
           info(`Blocks watcher started (PID: ${watcher.pid})`);
         }
       }
