@@ -25536,7 +25536,7 @@ function buildStepsFromDiag(diag) {
   const steps = [];
   for (let i = 0; i < relevant.length; i++) {
     const entry = relevant[i];
-    const isPlan = planSet.has(entry.id);
+    const isPlan = diag.planStepIds.has(entry.id);
     let name;
     if (isPlan) {
       name = idToName.get(entry.id) || `Step ${steps.length + 1}`;

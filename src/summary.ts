@@ -386,7 +386,7 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   const steps: StepEntry[] = []
   for (let i = 0; i < relevant.length; i++) {
     const entry = relevant[i]
-    const isPlan = planSet.has(entry.id)
+    const isPlan = diag.planStepIds.has(entry.id)
 
     let name: string
     if (isPlan) {
