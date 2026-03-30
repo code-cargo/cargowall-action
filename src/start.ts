@@ -52,6 +52,37 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   core.startGroup('Starting CargoWall Firewall')
 
+  // Start the block file watcher as early as possible.
+  // Block files get cleaned up during the run, so the watcher must capture
+  // timestamps in real-time. Starting it before binary download gives it
+  // the full setup duration (~8-10s) to capture earlier steps' block files.
+  try {
+    const diagDir = await findDiagDir()
+    if (diagDir) {
+      core.saveState('diag-dir', diagDir)
+      const stepPlan = await parseJobPlan(diagDir)
+      if (Object.keys(stepPlan).length > 0) {
+        await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
+        core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
+
+        // Spawn watcher as detached node process
+        const blocksDir = path.join(diagDir, 'blocks')
+        const watcherScript = path.join(__dirname, '..', 'watcher', 'index.js')
+        const watcher = spawn('node', [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
+          detached: true,
+          stdio: 'ignore',
+        })
+        watcher.unref()
+        if (watcher.pid) {
+          core.saveState('watcher-pid', String(watcher.pid))
+          core.info(`Blocks watcher started (PID: ${watcher.pid})`)
+        }
+      }
+    }
+  } catch (err) {
+    core.info(`Sub-second timestamp setup: ${err}`)
+  }
+
   // Auto-detect DNS upstream before we overwrite resolv.conf
   const dnsResult = await detectDnsUpstream(core.getInput('dns-upstream'))
   const dnsUpstream = dnsResult.primary
@@ -238,33 +269,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // Also write PID file for compatibility
   await fs.writeFile('/tmp/cargowall.pid', String(pid))
-
-  // --- Sub-second step timestamp collection ---
-  try {
-    const diagDir = await findDiagDir()
-    if (diagDir) {
-      const stepPlan = await parseJobPlan(diagDir)
-      if (Object.keys(stepPlan).length > 0) {
-        await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
-        core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
-
-        // Spawn watcher as detached node process
-        const blocksDir = path.join(diagDir, 'blocks')
-        const watcherScript = path.join(__dirname, '..', 'watcher', 'index.js')
-        const watcher = spawn('node', [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
-          detached: true,
-          stdio: 'ignore',
-        })
-        watcher.unref()
-        if (watcher.pid) {
-          core.saveState('watcher-pid', String(watcher.pid))
-          core.info(`Blocks watcher started (PID: ${watcher.pid})`)
-        }
-      }
-    }
-  } catch (err) {
-    core.info(`Sub-second timestamp setup: ${err}`)
-  }
 
   core.endGroup()
 

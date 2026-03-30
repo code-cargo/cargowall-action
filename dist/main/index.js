@@ -25754,6 +25754,30 @@ async function start() {
   const allowExistingConnections = getInput("allow-existing-connections") !== "false";
   const auditSummary = getInput("audit-summary") !== "false";
   startGroup("Starting CargoWall Firewall");
+  try {
+    const diagDir = await findDiagDir();
+    if (diagDir) {
+      saveState("diag-dir", diagDir);
+      const stepPlan = await parseJobPlan(diagDir);
+      if (Object.keys(stepPlan).length > 0) {
+        await import_fs6.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
+        info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`);
+        const blocksDir = path6.join(diagDir, "blocks");
+        const watcherScript = path6.join(__dirname, "..", "watcher", "index.js");
+        const watcher = (0, import_child_process.spawn)("node", [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
+          detached: true,
+          stdio: "ignore"
+        });
+        watcher.unref();
+        if (watcher.pid) {
+          saveState("watcher-pid", String(watcher.pid));
+          info(`Blocks watcher started (PID: ${watcher.pid})`);
+        }
+      }
+    }
+  } catch (err) {
+    info(`Sub-second timestamp setup: ${err}`);
+  }
   const dnsResult = await detectDnsUpstream(getInput("dns-upstream"));
   const dnsUpstream = dnsResult.primary;
   const args = ["start", "--github-action", `--dns-upstream=${dnsUpstream}`];
@@ -25888,29 +25912,6 @@ async function start() {
   setOutput("supported", "true");
   saveState("cargowall-pid", String(pid));
   await import_fs6.promises.writeFile("/tmp/cargowall.pid", String(pid));
-  try {
-    const diagDir = await findDiagDir();
-    if (diagDir) {
-      const stepPlan = await parseJobPlan(diagDir);
-      if (Object.keys(stepPlan).length > 0) {
-        await import_fs6.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
-        info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`);
-        const blocksDir = path6.join(diagDir, "blocks");
-        const watcherScript = path6.join(__dirname, "..", "watcher", "index.js");
-        const watcher = (0, import_child_process.spawn)("node", [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
-          detached: true,
-          stdio: "ignore"
-        });
-        watcher.unref();
-        if (watcher.pid) {
-          saveState("watcher-pid", String(watcher.pid));
-          info(`Blocks watcher started (PID: ${watcher.pid})`);
-        }
-      }
-    }
-  } catch (err) {
-    info(`Sub-second timestamp setup: ${err}`);
-  }
   endGroup();
   notice("CargoWall firewall is active. Network egress is being filtered.");
   if (debug2) {

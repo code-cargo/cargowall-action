@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import * as path from 'path'
+import { parseBlockFilename, readBlockTimestamp } from './blocks'
 
 const blocksDir = process.argv[2]
 const outputFile = process.argv[3]
@@ -11,7 +12,6 @@ async function log(msg: string) {
 }
 
 const seen = new Set<string>()
-const tsRegex = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/
 
 log(`watcher started: blocks=${blocksDir} output=${outputFile}`)
 
@@ -21,31 +21,24 @@ async function poll() {
     for (const file of files) {
       if (seen.has(file)) continue
 
-      // Extract step ID from filename: {jobId}_{stepId}.{page}
-      const dotIdx = file.lastIndexOf('.')
-      const base = dotIdx >= 0 ? file.substring(0, dotIdx) : file
-      const underIdx = base.indexOf('_')
-      if (underIdx < 0) {
+      const stepId = parseBlockFilename(file)
+      if (!stepId) {
         seen.add(file)
         continue
       }
-      const stepId = base.substring(underIdx + 1)
 
-      // Read first line for sub-second timestamp
       try {
-        const content = await fs.readFile(path.join(blocksDir, file), 'utf8')
-        const firstLine = content.split('\n')[0] || ''
-        if (!firstLine) {
+        const ts = await readBlockTimestamp(path.join(blocksDir, file))
+        if (ts === null && !(await fs.readFile(path.join(blocksDir, file), 'utf8'))) {
           // File exists but is empty — retry next poll (runner hasn't written yet)
           continue
         }
         seen.add(file)
-        const match = firstLine.match(tsRegex)
-        if (match) {
-          log(`timestamp: stepId=${stepId} ts=${match[1]}`)
-          await fs.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + '\n')
+        if (ts) {
+          log(`timestamp: stepId=${stepId} ts=${ts}`)
+          await fs.appendFile(outputFile, JSON.stringify({ id: stepId, ts }) + '\n')
         } else {
-          log(`no timestamp match in ${file}: ${firstLine.substring(0, 80)}`)
+          log(`no timestamp match in ${file}`)
         }
       } catch (err) {
         // File may have been deleted or not yet readable — retry next poll
@@ -57,6 +50,6 @@ async function poll() {
   }
 }
 
-// Poll every 200ms
-setInterval(poll, 200)
+// Poll every 50ms
+setInterval(poll, 50)
 poll()
