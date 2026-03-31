@@ -7,8 +7,11 @@ import { scanBlocksDir } from './blocks'
  * Returns the path or null if not found.
  */
 export async function findDiagDir(): Promise<string | null> {
-  // Check known paths first
+  // Check known paths first. The versioned path (e.g. cached/2.333.1/_diag) takes
+  // priority — some runner images have a cached/_diag without blocks/.
+  const versionedCandidates = await findVersionedDiagDirs()
   const candidates = [
+    ...versionedCandidates,
     '/home/runner/actions-runner/cached/_diag',
     '/home/runner/actions-runner/_diag',
   ]
@@ -33,6 +36,20 @@ export async function findDiagDir(): Promise<string | null> {
   } catch { /* continue */ }
 
   return null
+}
+
+/**
+ * Find versioned _diag directories like /home/runner/actions-runner/cached/2.333.1/_diag.
+ */
+async function findVersionedDiagDirs(): Promise<string[]> {
+  const results: string[] = []
+  try {
+    const entries = await fs.readdir('/home/runner/actions-runner/cached', { withFileTypes: true })
+    for (const e of entries.filter(e => e.isDirectory() && /^\d/.test(e.name))) {
+      results.push(path.join('/home/runner/actions-runner/cached', e.name, '_diag'))
+    }
+  } catch { /* continue */ }
+  return results
 }
 
 /**

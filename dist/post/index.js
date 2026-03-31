@@ -25255,7 +25255,9 @@ async function scanBlocksDir(blocksDir) {
 
 // src/diag.ts
 async function findDiagDir() {
+  const versionedCandidates = await findVersionedDiagDirs();
   const candidates = [
+    ...versionedCandidates,
     "/home/runner/actions-runner/cached/_diag",
     "/home/runner/actions-runner/_diag"
   ];
@@ -25279,6 +25281,17 @@ async function findDiagDir() {
   } catch {
   }
   return null;
+}
+async function findVersionedDiagDirs() {
+  const results = [];
+  try {
+    const entries = await import_fs5.promises.readdir("/home/runner/actions-runner/cached", { withFileTypes: true });
+    for (const e of entries.filter((e2) => e2.isDirectory() && /^\d/.test(e2.name))) {
+      results.push(path5.join("/home/runner/actions-runner/cached", e.name, "_diag"));
+    }
+  } catch {
+  }
+  return results;
 }
 async function scanBlocks(diagDir) {
   return scanBlocksDir(path5.join(diagDir, "blocks"));
