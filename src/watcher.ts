@@ -37,15 +37,17 @@ async function poll() {
             // File exists but is empty — retry next poll (runner hasn't written yet)
             continue
           }
-          seen.add(file)
           const firstLine = buf.toString('utf8', 0, bytesRead).split('\n')[0] || ''
           const match = firstLine.match(TIMESTAMP_REGEX)
           if (match) {
+            seen.add(file)
             seenStepIds.add(stepId)
             log(`timestamp: stepId=${stepId} ts=${match[1]}`)
             await fs.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + '\n')
           } else {
-            log(`no timestamp match in ${file}`)
+            // No match — runner may still be writing the first line.
+            // Don't add to seen so we retry on the next poll.
+            log(`no timestamp match in ${file}, will retry`)
           }
         } finally {
           await fh.close()

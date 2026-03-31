@@ -21427,6 +21427,9 @@ function getInput(name, options) {
   }
   return val.trim();
 }
+function isDebug() {
+  return process.env["RUNNER_DEBUG"] === "1";
+}
 function debug(message) {
   issueCommand("debug", {}, message);
 }
@@ -25482,7 +25485,10 @@ ${watcherLog.trimEnd()}`);
     let executedNames = [];
     if (diagDir) {
       executedNames = await parseExecutedSteps(diagDir);
-      info(`Worker log executed steps: ${executedNames.length} (${executedNames.join(", ")})`);
+      info(`Worker log executed steps: ${executedNames.length}`);
+      if (isDebug()) {
+        debug(`Worker log executed step names: ${executedNames.join(", ")}`);
+      }
     }
     return { planStepIds, planSteps, tsEntries, executedNames };
   } catch (err) {

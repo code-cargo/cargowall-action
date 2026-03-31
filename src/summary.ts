@@ -284,7 +284,10 @@ async function collectDiagData(): Promise<DiagData> {
     let executedNames: string[] = []
     if (diagDir) {
       executedNames = await parseExecutedSteps(diagDir)
-      core.info(`Worker log executed steps: ${executedNames.length} (${executedNames.join(', ')})`)
+      core.info(`Worker log executed steps: ${executedNames.length}`)
+      if (core.isDebug()) {
+        core.debug(`Worker log executed step names: ${executedNames.join(', ')}`)
+      }
     }
 
     return { planStepIds, planSteps, tsEntries, executedNames }

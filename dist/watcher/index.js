@@ -66,15 +66,15 @@ async function poll() {
           if (bytesRead === 0) {
             continue;
           }
-          seen.add(file);
           const firstLine = buf.toString("utf8", 0, bytesRead).split("\n")[0] || "";
           const match = firstLine.match(TIMESTAMP_REGEX);
           if (match) {
+            seen.add(file);
             seenStepIds.add(stepId);
             log(`timestamp: stepId=${stepId} ts=${match[1]}`);
             await import_fs.promises.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + "\n");
           } else {
-            log(`no timestamp match in ${file}`);
+            log(`no timestamp match in ${file}, will retry`);
           }
         } finally {
           await fh.close();
