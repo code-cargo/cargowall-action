@@ -37,8 +37,11 @@ export async function generateSummary(): Promise<void> {
     // --- Try GitHub API first (needs actions: read) ---
     // This also gives the watcher more time to poll before we kill it.
     let apiSteps: StepEntry[] | null = null
-    if (token && runId) {
+    let apiAttempted = false
+    const skipApi = process.env.CARGOWALL_SKIP_ACTIONS_API === 'true'
+    if (token && runId && !skipApi) {
       try {
+        apiAttempted = true
         core.info('Fetching step timing from GitHub API...')
         const octokit = github.getOctokit(token)
         const { data } = await octokit.rest.actions.listJobsForWorkflowRun({
@@ -81,7 +84,7 @@ export async function generateSummary(): Promise<void> {
     // that the API round-trip provides. Wait for the watcher to have actually
     // captured data. Block files get cleaned up during the run, so the watcher
     // must capture timestamps in real-time — we can't read them after the fact.
-    if (!apiSteps && core.getState('watcher-pid')) {
+    if (!apiAttempted && core.getState('watcher-pid')) {
       // Without the API call, there's no natural delay for the watcher.
       // Poll the watcher output file until it has entries, with a 2s timeout
       // to handle slow Node.js cold starts on some runners.
@@ -235,15 +238,25 @@ async function collectDiagData(): Promise<DiagData> {
 
     // Read step plan (stepId → name mapping, and ID set for classification)
     const planContent = await fs.readFile(STEP_PLAN_FILE, 'utf8').catch(() => '{}')
-    const stepPlan: Record<string, string> = JSON.parse(planContent)
+    let stepPlan: Record<string, string> = {}
+    try {
+      stepPlan = JSON.parse(planContent)
+    } catch (e) {
+      core.info(`Step plan JSON parse failed, continuing without plan: ${e}`)
+    }
     const planSteps = Object.entries(stepPlan)
     const planStepIds = new Set(Object.keys(stepPlan))
 
     // Read watcher timestamps (stepId → sub-second ts)
-    let tsEntries: Array<{ id: string; ts: string }> = []
+    const tsEntries: Array<{ id: string; ts: string }> = []
     const tsContent = await fs.readFile(STEP_TIMESTAMPS_FILE, 'utf8').catch(() => '')
-    tsEntries = tsContent.trim().split('\n').filter(Boolean)
-      .map(line => JSON.parse(line) as { id: string; ts: string })
+    for (const line of tsContent.trim().split('\n').filter(Boolean)) {
+      try {
+        tsEntries.push(JSON.parse(line) as { id: string; ts: string })
+      } catch {
+        core.info(`Skipping malformed timestamp line: ${line.substring(0, 80)}`)
+      }
+    }
 
     const diagDir = core.getState('diag-dir') || await findDiagDir()
 
@@ -257,7 +270,7 @@ async function collectDiagData(): Promise<DiagData> {
         const scanned = await scanBlocks(diagDir)
         const missed = scanned.filter(e => !watcherIds.has(e.id))
         if (missed.length > 0) {
-          tsEntries = [...tsEntries, ...missed]
+          tsEntries.push(...missed)
           core.info(`Block scan found ${missed.length} entries watcher missed`)
         }
       } catch { /* ignore */ }
@@ -372,7 +385,15 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   // Find the CW step in the sorted entries and start from there.
   // The CW step ID is the first executedPlanId that maps to cwStepName.
   const cwStepId = cwStepName ? [...idToName.entries()].find(([, name]) => name === cwStepName)?.[0] : null
-  const startIdx = cwStepId ? allSorted.findIndex(e => e.id === cwStepId) : allSorted.findIndex(e => diag.planStepIds.has(e.id))
+  let startIdx: number
+  if (cwStepId) {
+    startIdx = allSorted.findIndex(e => e.id === cwStepId)
+  } else if (diag.planStepIds.size > 0) {
+    startIdx = allSorted.findIndex(e => diag.planStepIds.has(e.id))
+  } else {
+    // No plan data — start from the first timestamp entry
+    startIdx = 0
+  }
   if (startIdx < 0) return []
   const relevant = allSorted.slice(startIdx)
 
@@ -388,7 +409,13 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
     const isPlan = diag.planStepIds.has(entry.id)
 
     let name: string
-    if (isPlan) {
+    if (diag.planStepIds.size === 0) {
+      // No plan data — use executed names by position
+      const nameIdx = nameOffset + i
+      name = nameIdx < diag.executedNames.length
+        ? diag.executedNames[nameIdx]
+        : `Step ${steps.length + 1}`
+    } else if (isPlan) {
       name = idToName.get(entry.id) || `Step ${steps.length + 1}`
     } else {
       name = postIdx < postNames.length ? postNames[postIdx] : `Post step ${postIdx + 1}`

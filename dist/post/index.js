@@ -25304,8 +25304,11 @@ async function generateSummary() {
     const token = getInput("github-token");
     const runId = context2.runId;
     let apiSteps = null;
-    if (token && runId) {
+    let apiAttempted = false;
+    const skipApi = process.env.CARGOWALL_SKIP_ACTIONS_API === "true";
+    if (token && runId && !skipApi) {
       try {
+        apiAttempted = true;
         info("Fetching step timing from GitHub API...");
         const octokit = getOctokit(token);
         const { data } = await octokit.rest.actions.listJobsForWorkflowRun({
@@ -25338,7 +25341,7 @@ async function generateSummary() {
         info(`GitHub API step fetch failed: ${error}`);
       }
     }
-    if (!apiSteps && getState("watcher-pid")) {
+    if (!apiAttempted && getState("watcher-pid")) {
       const deadline = Date.now() + 2e3;
       while (Date.now() < deadline) {
         const content = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
@@ -25443,12 +25446,23 @@ async function collectDiagData() {
     if (watcherLog) info(`Watcher log:
 ${watcherLog.trimEnd()}`);
     const planContent = await import_fs6.promises.readFile(STEP_PLAN_FILE, "utf8").catch(() => "{}");
-    const stepPlan = JSON.parse(planContent);
+    let stepPlan = {};
+    try {
+      stepPlan = JSON.parse(planContent);
+    } catch (e) {
+      info(`Step plan JSON parse failed, continuing without plan: ${e}`);
+    }
     const planSteps = Object.entries(stepPlan);
     const planStepIds = new Set(Object.keys(stepPlan));
-    let tsEntries = [];
+    const tsEntries = [];
     const tsContent = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
-    tsEntries = tsContent.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    for (const line of tsContent.trim().split("\n").filter(Boolean)) {
+      try {
+        tsEntries.push(JSON.parse(line));
+      } catch {
+        info(`Skipping malformed timestamp line: ${line.substring(0, 80)}`);
+      }
+    }
     const diagDir = getState("diag-dir") || await findDiagDir();
     info(`Step plan: ${planStepIds.size} steps, watcher timestamps: ${tsEntries.length}`);
     if (diagDir) {
@@ -25457,7 +25471,7 @@ ${watcherLog.trimEnd()}`);
         const scanned = await scanBlocks(diagDir);
         const missed = scanned.filter((e) => !watcherIds.has(e.id));
         if (missed.length > 0) {
-          tsEntries = [...tsEntries, ...missed];
+          tsEntries.push(...missed);
           info(`Block scan found ${missed.length} entries watcher missed`);
         }
       } catch {
@@ -25526,7 +25540,14 @@ function buildStepsFromDiag(diag) {
   }
   const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
   const cwStepId = cwStepName ? [...idToName.entries()].find(([, name]) => name === cwStepName)?.[0] : null;
-  const startIdx = cwStepId ? allSorted.findIndex((e) => e.id === cwStepId) : allSorted.findIndex((e) => diag.planStepIds.has(e.id));
+  let startIdx;
+  if (cwStepId) {
+    startIdx = allSorted.findIndex((e) => e.id === cwStepId);
+  } else if (diag.planStepIds.size > 0) {
+    startIdx = allSorted.findIndex((e) => diag.planStepIds.has(e.id));
+  } else {
+    startIdx = 0;
+  }
   if (startIdx < 0) return [];
   const relevant = allSorted.slice(startIdx);
   const mainNameCount = nameOffset + executedPlanIds.length;
@@ -25537,7 +25558,10 @@ function buildStepsFromDiag(diag) {
     const entry = relevant[i];
     const isPlan = diag.planStepIds.has(entry.id);
     let name;
-    if (isPlan) {
+    if (diag.planStepIds.size === 0) {
+      const nameIdx = nameOffset + i;
+      name = nameIdx < diag.executedNames.length ? diag.executedNames[nameIdx] : `Step ${steps.length + 1}`;
+    } else if (isPlan) {
       name = idToName.get(entry.id) || `Step ${steps.length + 1}`;
     } else {
       name = postIdx < postNames.length ? postNames[postIdx] : `Post step ${postIdx + 1}`;

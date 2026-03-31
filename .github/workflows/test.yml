@@ -9,13 +9,58 @@ on:
 
 
 jobs:
-  test-basic:
+  test-basic-actions-read:
     name: Basic Functionality (Actions Read)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
       actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup CargoWall
+        uses: ./
+        with:
+          offline: 'true'
+          allowed-hosts: |
+            github.com
+            githubusercontent.com
+            api.github.com
+
+      - name: Test allowed connection (github.com)
+        run: |
+          curl -sf --max-time 10 https://github.com > /dev/null
+          echo "Successfully connected to github.com"
+
+      - name: Test allowed connection (api.github.com)
+        run: |
+          curl -sf --max-time 10 https://api.github.com > /dev/null
+          echo "Successfully connected to api.github.com"
+
+      - name: Test blocked connection (example.com)
+        run: |
+          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
+            echo "ERROR: example.com should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked example.com"
+
+      - name: Test blocked connection (httpbin.org)
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked httpbin.org"
+
+  test-basic-no-actions-read:
+    name: Basic Functionality (No Actions Read)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGOWALL_SKIP_ACTIONS_API: 'true'
     steps:
       - uses: actions/checkout@v6
 

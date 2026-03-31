@@ -58,18 +58,24 @@ async function poll() {
         continue;
       }
       try {
-        const content = await import_fs.promises.readFile(path.join(blocksDir, file), "utf8");
-        const firstLine = content.split("\n")[0] || "";
-        if (!firstLine) {
-          continue;
-        }
-        seen.add(file);
-        const match = firstLine.match(TIMESTAMP_REGEX);
-        if (match) {
-          log(`timestamp: stepId=${stepId} ts=${match[1]}`);
-          await import_fs.promises.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + "\n");
-        } else {
-          log(`no timestamp match in ${file}`);
+        const fh = await import_fs.promises.open(path.join(blocksDir, file), "r");
+        try {
+          const buf = Buffer.alloc(256);
+          const { bytesRead } = await fh.read(buf, 0, 256, 0);
+          if (bytesRead === 0) {
+            continue;
+          }
+          seen.add(file);
+          const firstLine = buf.toString("utf8", 0, bytesRead).split("\n")[0] || "";
+          const match = firstLine.match(TIMESTAMP_REGEX);
+          if (match) {
+            log(`timestamp: stepId=${stepId} ts=${match[1]}`);
+            await import_fs.promises.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + "\n");
+          } else {
+            log(`no timestamp match in ${file}`);
+          }
+        } finally {
+          await fh.close();
         }
       } catch (err) {
         log(`read error for ${file}: ${err}`);
