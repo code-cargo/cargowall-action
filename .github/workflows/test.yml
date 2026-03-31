@@ -28,15 +28,21 @@ jobs:
             githubusercontent.com
             api.github.com
 
+      - run: find /home/runner/actions-runner -name "_diag" -type d 2>/dev/null; find /home/runner/actions-runner -name "blocks" -type d 2>/dev/null
+
       - name: Test allowed connection (github.com)
         run: |
           curl -sf --max-time 10 https://github.com > /dev/null
           echo "Successfully connected to github.com"
 
+      - run: find /home/runner/actions-runner -name "_diag" -type d 2>/dev/null; find /home/runner/actions-runner -name "blocks" -type d 2>/dev/null
+
       - name: Test allowed connection (api.github.com)
         run: |
           curl -sf --max-time 10 https://api.github.com > /dev/null
           echo "Successfully connected to api.github.com"
+
+      - run: find /home/runner/actions-runner -name "_diag" -type d 2>/dev/null; find /home/runner/actions-runner -name "blocks" -type d 2>/dev/null
 
       - name: Test blocked connection (example.com)
         run: |
@@ -46,6 +52,8 @@ jobs:
           fi
           echo "Correctly blocked example.com"
 
+      - run: find /home/runner/actions-runner -name "_diag" -type d 2>/dev/null; find /home/runner/actions-runner -name "blocks" -type d 2>/dev/null
+        
       - name: Test blocked connection (httpbin.org)
         run: |
           if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
@@ -53,6 +61,8 @@ jobs:
             exit 1
           fi
           echo "Correctly blocked httpbin.org"
+
+      - run: find /home/runner/actions-runner -name "_diag" -type d 2>/dev/null; find /home/runner/actions-runner -name "blocks" -type d 2>/dev/null
 
   test-basic-no-actions-read:
     name: Basic Functionality (No Actions Read)
