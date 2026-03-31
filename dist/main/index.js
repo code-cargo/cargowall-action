@@ -5,15 +5,8 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -1071,14 +1064,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path8 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path7 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path8 && path8[0] !== "/") {
-          path8 = `/${path8}`;
+        if (path7 && path7[0] !== "/") {
+          path7 = `/${path7}`;
         }
-        return new URL(`${origin}${path8}`);
+        return new URL(`${origin}${path7}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1529,39 +1522,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin }
+          request: { method, path: path7, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path8);
+        debuglog("sending request to %s %s/%s", method, origin, path7);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin },
+          request: { method, path: path7, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path8,
+          path7,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin }
+          request: { method, path: path7, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path8);
+        debuglog("trailers received from %s %s/%s", method, origin, path7);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin },
+          request: { method, path: path7, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path8,
+          path7,
           error2.message
         );
       });
@@ -1610,9 +1603,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path8, origin }
+            request: { method, path: path7, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path8);
+          debuglog("sending request to %s %s/%s", method, origin, path7);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1675,7 +1668,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path8,
+        path: path7,
         method,
         body,
         headers,
@@ -1690,11 +1683,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path8 !== "string") {
+        if (typeof path7 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path8[0] !== "/" && !(path8.startsWith("http://") || path8.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path7[0] !== "/" && !(path7.startsWith("http://") || path7.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path8)) {
+        } else if (invalidPathRegex.test(path7)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1760,7 +1753,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path8, query) : path8;
+        this.path = query ? buildURL(path7, query) : path7;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -6279,7 +6272,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path8, host, upgrade, blocking, reset } = request2;
+      const { method, path: path7, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6345,7 +6338,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path8} HTTP/1.1\r
+      let header = `${method} ${path7} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -6871,7 +6864,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path8, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path7, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -6938,7 +6931,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path8;
+      headers[HTTP2_HEADER_PATH] = path7;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7291,9 +7284,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path8 = search ? `${pathname}${search}` : pathname;
+        const path7 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path8;
+        this.opts.path = path7;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -8527,10 +8520,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path8 = "/",
+          path: path7 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path8;
+        opts.path = origin + path7;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -10451,20 +10444,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path8) {
-      if (typeof path8 !== "string") {
-        return path8;
+    function safeUrl(path7) {
+      if (typeof path7 !== "string") {
+        return path7;
       }
-      const pathSegments = path8.split("?");
+      const pathSegments = path7.split("?");
       if (pathSegments.length !== 2) {
-        return path8;
+        return path7;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path8, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path8);
+    function matchKey(mockDispatch2, { path: path7, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path7);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10486,7 +10479,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path8 }) => matchValue(safeUrl(path8), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path7 }) => matchValue(safeUrl(path7), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10524,9 +10517,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path8, method, body, headers, query } = opts;
+      const { path: path7, method, body, headers, query } = opts;
       return {
-        path: path8,
+        path: path7,
         method,
         body,
         headers,
@@ -10989,10 +10982,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path8, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path7, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path8,
+            Path: path7,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -15873,9 +15866,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path8) {
-      for (let i = 0; i < path8.length; ++i) {
-        const code = path8.charCodeAt(i);
+    function validateCookiePath(path7) {
+      for (let i = 0; i < path7.length; ++i) {
+        const code = path7.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -18515,11 +18508,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path8 = opts.path;
+          let path7 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path8 = `/${path8}`;
+            path7 = `/${path7}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path8);
+          url = new URL(util.parseOrigin(url).origin + path7);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -19455,172 +19448,6 @@ var require_fast_content_type_parse = __commonJS({
     module2.exports.parse = parse2;
     module2.exports.safeParse = safeParse2;
     module2.exports.defaultContentType = defaultContentType;
-  }
-});
-
-// src/blocks.ts
-function parseBlockFilename(file) {
-  const dotIdx = file.lastIndexOf(".");
-  const base = dotIdx >= 0 ? file.substring(0, dotIdx) : file;
-  const underIdx = base.indexOf("_");
-  if (underIdx < 0) return null;
-  return base.substring(underIdx + 1);
-}
-async function readBlockTimestamp(filePath) {
-  const fh = await import_fs5.promises.open(filePath, "r");
-  try {
-    const buf = Buffer.alloc(256);
-    const { bytesRead } = await fh.read(buf, 0, 256, 0);
-    if (bytesRead === 0) return null;
-    const firstLine = buf.toString("utf8", 0, bytesRead).split("\n")[0] || "";
-    if (!firstLine) return null;
-    const match = firstLine.match(TIMESTAMP_REGEX);
-    return match ? match[1] : null;
-  } finally {
-    await fh.close();
-  }
-}
-async function scanBlocksDir(blocksDir) {
-  const results = [];
-  const seenSteps = /* @__PURE__ */ new Set();
-  const files = (await import_fs5.promises.readdir(blocksDir)).sort();
-  for (const file of files) {
-    const stepId = parseBlockFilename(file);
-    if (!stepId || seenSteps.has(stepId)) continue;
-    try {
-      const ts = await readBlockTimestamp(path5.join(blocksDir, file));
-      if (ts) {
-        seenSteps.add(stepId);
-        results.push({ id: stepId, ts });
-      }
-    } catch {
-    }
-  }
-  return results;
-}
-var import_fs5, path5, TIMESTAMP_REGEX;
-var init_blocks = __esm({
-  "src/blocks.ts"() {
-    "use strict";
-    import_fs5 = require("fs");
-    path5 = __toESM(require("path"));
-    TIMESTAMP_REGEX = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/;
-  }
-});
-
-// src/diag.ts
-var diag_exports = {};
-__export(diag_exports, {
-  findDiagDir: () => findDiagDir,
-  parseExecutedSteps: () => parseExecutedSteps,
-  parseJobPlan: () => parseJobPlan,
-  scanBlocks: () => scanBlocks
-});
-async function findDiagDir() {
-  const candidates = [
-    "/home/runner/actions-runner/cached/_diag",
-    "/home/runner/actions-runner/_diag"
-  ];
-  for (const candidate of candidates) {
-    try {
-      await import_fs6.promises.access(candidate);
-      return candidate;
-    } catch {
-    }
-  }
-  try {
-    const entries = await import_fs6.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
-    for (const e of entries.filter((e2) => e2.isDirectory())) {
-      const candidate = path6.join("/home/runner/actions-runner", e.name, "_diag");
-      try {
-        await import_fs6.promises.access(candidate);
-        return candidate;
-      } catch {
-      }
-    }
-  } catch {
-  }
-  return null;
-}
-async function parseJobPlan(diagDir) {
-  const stepIdToName = {};
-  const files = await import_fs6.promises.readdir(diagDir);
-  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
-  if (workerLogFiles.length === 0) return stepIdToName;
-  const workerContent = await import_fs6.promises.readFile(
-    path6.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
-    "utf8"
-  );
-  const workerLines = workerContent.split("\n");
-  const planStart = workerLines.findIndex((l) => /"steps"\s*:\s*\[/.test(l));
-  if (planStart < 0) return stepIdToName;
-  let bracketDepth = 0;
-  let planJson = "";
-  let started = false;
-  for (let i = planStart; i < workerLines.length && i < planStart + 500; i++) {
-    const line = workerLines[i];
-    if (!started && line.includes('"steps"')) {
-      planJson = "{";
-      started = true;
-    }
-    if (started) {
-      planJson += line + "\n";
-      bracketDepth += (line.match(/\[/g) || []).length - (line.match(/\]/g) || []).length;
-      if (bracketDepth <= 0 && started) {
-        planJson += "}";
-        break;
-      }
-    }
-  }
-  const stepsIdx = planJson.indexOf('"steps"');
-  if (stepsIdx > 1) {
-    planJson = "{ " + planJson.substring(stepsIdx);
-  }
-  try {
-    const parsed = JSON.parse(planJson);
-    if (Array.isArray(parsed.steps)) {
-      for (const step of parsed.steps) {
-        if (step.id && (step.displayName || step.name)) {
-          stepIdToName[step.id] = step.displayName || step.name;
-        }
-      }
-      return stepIdToName;
-    }
-  } catch {
-  }
-  const stepRegex = /"id"\s*:\s*"([^"]+)"[\s\S]*?"(?:displayName|name)"\s*:\s*"([^"]+)"/g;
-  let match;
-  while ((match = stepRegex.exec(planJson)) !== null) {
-    stepIdToName[match[1]] = match[2];
-  }
-  return stepIdToName;
-}
-async function scanBlocks(diagDir) {
-  return scanBlocksDir(path6.join(diagDir, "blocks"));
-}
-async function parseExecutedSteps(diagDir) {
-  const files = await import_fs6.promises.readdir(diagDir);
-  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
-  if (workerLogFiles.length === 0) return [];
-  const workerContent = await import_fs6.promises.readFile(
-    path6.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
-    "utf8"
-  );
-  const names = [];
-  const regex = /Processing step: DisplayName='([^']+)'/g;
-  let match;
-  while ((match = regex.exec(workerContent)) !== null) {
-    names.push(match[1]);
-  }
-  return names;
-}
-var import_fs6, path6;
-var init_diag = __esm({
-  "src/diag.ts"() {
-    "use strict";
-    import_fs6 = require("fs");
-    path6 = __toESM(require("path"));
-    init_blocks();
   }
 });
 
@@ -21945,8 +21772,8 @@ var Context = class {
       if ((0, import_fs3.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs3.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path8 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path8} does not exist${import_os3.EOL}`);
+        const path7 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path7} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -25624,9 +25451,9 @@ var context2 = new Context();
 
 // src/start.ts
 var import_child_process = require("child_process");
+var import_fs6 = require("fs");
 var import_fs7 = require("fs");
-var import_fs8 = require("fs");
-var path7 = __toESM(require("path"));
+var path6 = __toESM(require("path"));
 
 // src/dns.ts
 var import_fs4 = require("fs");
@@ -25802,8 +25629,106 @@ async function detectDnsUpstream(userInput) {
   return { primary: fallback, all: [fallback], source: "fallback" };
 }
 
+// src/diag.ts
+var import_fs5 = require("fs");
+var path5 = __toESM(require("path"));
+async function findDiagDir() {
+  const candidates = [
+    "/home/runner/actions-runner/cached/_diag",
+    "/home/runner/actions-runner/_diag"
+  ];
+  for (const candidate of candidates) {
+    try {
+      await import_fs5.promises.access(candidate);
+      return candidate;
+    } catch {
+    }
+  }
+  try {
+    const entries = await import_fs5.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
+    for (const e of entries.filter((e2) => e2.isDirectory())) {
+      const candidate = path5.join("/home/runner/actions-runner", e.name, "_diag");
+      try {
+        await import_fs5.promises.access(candidate);
+        return candidate;
+      } catch {
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+async function parseJobPlan(diagDir) {
+  const stepIdToName = {};
+  const files = await import_fs5.promises.readdir(diagDir);
+  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
+  if (workerLogFiles.length === 0) return stepIdToName;
+  const workerContent = await import_fs5.promises.readFile(
+    path5.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
+    "utf8"
+  );
+  const workerLines = workerContent.split("\n");
+  const planStart = workerLines.findIndex((l) => /"steps"\s*:\s*\[/.test(l));
+  if (planStart < 0) return stepIdToName;
+  let bracketDepth = 0;
+  let planJson = "";
+  let started = false;
+  for (let i = planStart; i < workerLines.length && i < planStart + 500; i++) {
+    const line = workerLines[i];
+    if (!started && line.includes('"steps"')) {
+      planJson = "{";
+      started = true;
+    }
+    if (started) {
+      planJson += line + "\n";
+      bracketDepth += (line.match(/\[/g) || []).length - (line.match(/\]/g) || []).length;
+      if (bracketDepth <= 0 && started) {
+        planJson += "}";
+        break;
+      }
+    }
+  }
+  const stepsIdx = planJson.indexOf('"steps"');
+  if (stepsIdx > 1) {
+    planJson = "{ " + planJson.substring(stepsIdx);
+  }
+  try {
+    const parsed = JSON.parse(planJson);
+    if (Array.isArray(parsed.steps)) {
+      for (const step of parsed.steps) {
+        if (step.id && (step.displayName || step.name)) {
+          stepIdToName[step.id] = step.displayName || step.name;
+        }
+      }
+      return stepIdToName;
+    }
+  } catch {
+  }
+  const stepRegex = /"id"\s*:\s*"([^"]+)"[\s\S]*?"(?:displayName|name)"\s*:\s*"([^"]+)"/g;
+  let match;
+  while ((match = stepRegex.exec(planJson)) !== null) {
+    stepIdToName[match[1]] = match[2];
+  }
+  return stepIdToName;
+}
+async function parseExecutedSteps(diagDir) {
+  const files = await import_fs5.promises.readdir(diagDir);
+  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
+  if (workerLogFiles.length === 0) return [];
+  const workerContent = await import_fs5.promises.readFile(
+    path5.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
+    "utf8"
+  );
+  const names = [];
+  const regex = /Processing step: DisplayName='([^']+)'/g;
+  let match;
+  while ((match = regex.exec(workerContent)) !== null) {
+    names.push(match[1]);
+  }
+  return names;
+}
+
 // src/start.ts
-init_diag();
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
 var READY_FILE = "/tmp/cargowall-ready";
@@ -25852,21 +25777,23 @@ async function start() {
       try {
         const stepPlan = await parseJobPlan(diagDir);
         if (Object.keys(stepPlan).length > 0) {
-          await import_fs7.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
+          await import_fs6.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
           info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`);
-          const { parseExecutedSteps: parseExecutedSteps2 } = await Promise.resolve().then(() => (init_diag(), diag_exports));
-          const executedSoFar = await parseExecutedSteps2(diagDir);
-          if (executedSoFar.length > 0) {
-            saveState("cw-step-name", executedSoFar[executedSoFar.length - 1]);
-          }
         } else {
           info("Step plan is empty or unavailable; proceeding without mapped steps.");
         }
       } catch (planErr) {
         info(`Unable to parse step plan: ${planErr}`);
       }
-      const blocksDir = path7.join(diagDir, "blocks");
-      const watcherScript = path7.join(__dirname, "..", "watcher", "index.js");
+      try {
+        const executedSoFar = await parseExecutedSteps(diagDir);
+        if (executedSoFar.length > 0) {
+          saveState("cw-step-name", executedSoFar[executedSoFar.length - 1]);
+        }
+      } catch {
+      }
+      const blocksDir = path6.join(diagDir, "blocks");
+      const watcherScript = path6.join(__dirname, "..", "watcher", "index.js");
       const watcher = (0, import_child_process.spawn)("node", [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
         detached: true,
         stdio: "ignore"
@@ -25933,7 +25860,7 @@ async function start() {
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   try {
-    await import_fs7.promises.access("/etc/resolv.conf");
+    await import_fs6.promises.access("/etc/resolv.conf");
     await exec("sudo", ["cp", "/etc/resolv.conf", RESOLV_CONF_BACKUP]);
     info("Backed up /etc/resolv.conf");
   } catch {
@@ -25954,14 +25881,14 @@ async function start() {
     ...githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts },
     ...azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }
   };
-  const logFd = (0, import_fs8.openSync)(CARGOWALL_LOG, "w");
+  const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env
   });
   child2.unref();
-  (0, import_fs8.closeSync)(logFd);
+  (0, import_fs7.closeSync)(logFd);
   const pid = child2.pid;
   if (!pid) {
     throw new Error("Failed to start cargowall process");
@@ -25971,7 +25898,7 @@ async function start() {
   info("Waiting for cargowall to initialize...");
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      await import_fs7.promises.access(READY_FILE);
+      await import_fs6.promises.access(READY_FILE);
       info("CargoWall is ready");
       break;
     } catch {
@@ -25996,7 +25923,7 @@ async function start() {
     await sleep(1e3);
   }
   try {
-    await import_fs7.promises.access(READY_FILE);
+    await import_fs6.promises.access(READY_FILE);
   } catch {
     error("Timeout waiting for cargowall to be ready");
     await showLastLog();
@@ -26013,7 +25940,7 @@ async function start() {
   }
   setOutput("supported", "true");
   saveState("cargowall-pid", String(pid));
-  await import_fs7.promises.writeFile("/tmp/cargowall.pid", String(pid));
+  await import_fs6.promises.writeFile("/tmp/cargowall.pid", String(pid));
   endGroup();
   notice("CargoWall firewall is active. Network egress is being filtered.");
   if (debug2) {
@@ -26028,7 +25955,7 @@ async function start() {
 }
 async function restoreDns() {
   try {
-    await import_fs7.promises.access(RESOLV_CONF_BACKUP);
+    await import_fs6.promises.access(RESOLV_CONF_BACKUP);
     await exec("sudo", ["cp", RESOLV_CONF_BACKUP, "/etc/resolv.conf"]);
   } catch {
   }

@@ -89,6 +89,6 @@ async function poll() {
 }
 async function startPolling() {
   await poll();
-  setTimeout(startPolling, 100);
+  setTimeout(startPolling, 200);
 }
 startPolling();

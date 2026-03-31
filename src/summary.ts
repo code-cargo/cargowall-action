@@ -35,13 +35,16 @@ export async function generateSummary(): Promise<void> {
     const runId = github.context.runId
 
     // --- Try GitHub API first (needs actions: read) ---
-    // This also gives the watcher more time to poll before we kill it.
+    // The API round-trip also gives the watcher natural delay to capture data.
     let apiSteps: StepEntry[] | null = null
-    let apiAttempted = false
+    // Tracks whether an API call was made (even if it failed). Used to decide
+    // whether the watcher needs an explicit wait: if the API was called, the
+    // round-trip already provided enough delay; if skipped, we must wait.
+    let apiCallMade = false
     const skipApi = process.env.CARGOWALL_SKIP_ACTIONS_API === 'true'
     if (token && runId && !skipApi) {
       try {
-        apiAttempted = true
+        apiCallMade = true
         core.info('Fetching step timing from GitHub API...')
         const octokit = github.getOctokit(token)
         const { data } = await octokit.rest.actions.listJobsForWorkflowRun({
@@ -80,14 +83,10 @@ export async function generateSummary(): Promise<void> {
       }
     }
 
-    // If we didn't make an API call, the watcher hasn't had the natural delay
-    // that the API round-trip provides. Wait for the watcher to have actually
-    // captured data. Block files get cleaned up during the run, so the watcher
-    // must capture timestamps in real-time — we can't read them after the fact.
-    if (!apiAttempted && core.getState('watcher-pid')) {
-      // Without the API call, there's no natural delay for the watcher.
-      // Poll the watcher output file until it has entries, with a 2s timeout
-      // to handle slow Node.js cold starts on some runners.
+    // When the API call was skipped entirely (no token, or CARGOWALL_SKIP_ACTIONS_API),
+    // the watcher hasn't had the natural delay that the API round-trip provides.
+    // Wait briefly for the watcher to capture data before we kill it.
+    if (!apiCallMade && core.getState('watcher-pid')) {
       const deadline = Date.now() + 2000
       while (Date.now() < deadline) {
         const content = await fs.readFile(STEP_TIMESTAMPS_FILE, 'utf8').catch(() => '')
@@ -141,7 +140,12 @@ export async function generateSummary(): Promise<void> {
       }
       summaryArgs.push('--mode', effectiveMode)
       summaryArgs.push('--default-action', 'deny')
-      summaryArgs.push('--job-status', jobStatus)
+      // Only pass job-status when the API provided it. Without the API,
+      // jobStatus defaults to 'success' which would be a lie for failed jobs.
+      // Omitting it lets the Go binary send UNSPECIFIED (proto value 0).
+      if (apiSteps) {
+        summaryArgs.push('--job-status', jobStatus)
+      }
 
       // Get OIDC token for API authentication
       try {

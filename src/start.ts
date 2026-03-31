@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import { closeSync, openSync } from 'fs'
 import * as path from 'path'
 import { detectDnsUpstream } from './dns'
-import { findDiagDir, parseJobPlan } from './diag'
+import { findDiagDir, parseExecutedSteps, parseJobPlan } from './diag'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -67,18 +67,23 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
         if (Object.keys(stepPlan).length > 0) {
           await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
           core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
-
-          // Save the current step name so the post step knows where CW started.
-          const { parseExecutedSteps } = await import('./diag')
-          const executedSoFar = await parseExecutedSteps(diagDir)
-          if (executedSoFar.length > 0) {
-            core.saveState('cw-step-name', executedSoFar[executedSoFar.length - 1])
-          }
         } else {
           core.info('Step plan is empty or unavailable; proceeding without mapped steps.')
         }
       } catch (planErr) {
         core.info(`Unable to parse step plan: ${planErr}`)
+      }
+
+      // Save the current step name so the post step knows where CW started.
+      // This must run regardless of whether the plan parsed successfully,
+      // because buildStepsFromDiag needs it even without a plan.
+      try {
+        const executedSoFar = await parseExecutedSteps(diagDir)
+        if (executedSoFar.length > 0) {
+          core.saveState('cw-step-name', executedSoFar[executedSoFar.length - 1])
+        }
+      } catch {
+        // Worker log may not be available yet — not critical
       }
 
       // Spawn watcher as detached node process.

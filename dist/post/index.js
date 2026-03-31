@@ -25304,11 +25304,11 @@ async function generateSummary() {
     const token = getInput("github-token");
     const runId = context2.runId;
     let apiSteps = null;
-    let apiAttempted = false;
+    let apiCallMade = false;
     const skipApi = process.env.CARGOWALL_SKIP_ACTIONS_API === "true";
     if (token && runId && !skipApi) {
       try {
-        apiAttempted = true;
+        apiCallMade = true;
         info("Fetching step timing from GitHub API...");
         const octokit = getOctokit(token);
         const { data } = await octokit.rest.actions.listJobsForWorkflowRun({
@@ -25341,7 +25341,7 @@ async function generateSummary() {
         info(`GitHub API step fetch failed: ${error}`);
       }
     }
-    if (!apiAttempted && getState("watcher-pid")) {
+    if (!apiCallMade && getState("watcher-pid")) {
       const deadline = Date.now() + 2e3;
       while (Date.now() < deadline) {
         const content = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
@@ -25380,7 +25380,9 @@ async function generateSummary() {
       }
       summaryArgs.push("--mode", effectiveMode);
       summaryArgs.push("--default-action", "deny");
-      summaryArgs.push("--job-status", jobStatus);
+      if (apiSteps) {
+        summaryArgs.push("--job-status", jobStatus);
+      }
       try {
         const audience = getInput("api-audience") || "codecargo";
         const idToken = await getIDToken(audience);

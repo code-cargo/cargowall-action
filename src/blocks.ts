@@ -38,7 +38,7 @@ export async function readBlockTimestamp(filePath: string): Promise<string | nul
 
 /**
  * Scan a blocks directory and return all step timestamps.
- * Returns one entry per unique step ID (first file encountered after lexicographic sort).
+ * Returns one entry per unique step ID (first file encountered per step ID after lexicographic sort).
  */
 export async function scanBlocksDir(blocksDir: string): Promise<Array<{ id: string; ts: string }>> {
   const results: Array<{ id: string; ts: string }> = []
