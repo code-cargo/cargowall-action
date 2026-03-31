@@ -25554,7 +25554,7 @@ function buildStepsFromDiag(diag) {
   } else if (diag.planStepIds.size > 0) {
     startIdx = allSorted.findIndex((e) => diag.planStepIds.has(e.id));
   } else {
-    startIdx = 0;
+    startIdx = Math.min(nameOffset, allSorted.length - 1);
   }
   if (startIdx < 0) return [];
   const relevant = allSorted.slice(startIdx);

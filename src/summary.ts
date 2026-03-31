@@ -398,8 +398,9 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   } else if (diag.planStepIds.size > 0) {
     startIdx = allSorted.findIndex(e => diag.planStepIds.has(e.id))
   } else {
-    // No plan data — start from the first timestamp entry
-    startIdx = 0
+    // No plan data — align timestamps with the same offset used for executed names.
+    // This skips timestamps for steps that ran before CargoWall started.
+    startIdx = Math.min(nameOffset, allSorted.length - 1)
   }
   if (startIdx < 0) return []
   const relevant = allSorted.slice(startIdx)
