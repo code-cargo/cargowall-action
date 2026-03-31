@@ -151,7 +151,6 @@ For complex configurations, use a JSON or YAML config file:
 | `include-prerelease`         | Include pre-release versions when resolving "latest"                              | `false`                                        |
 | `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)   | `https://app.codecargo.com`                    |
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)              | `false`                                        |
-| `api-audience`               | OIDC audience for CodeCargo API authentication                                    | `codecargo`                                    |
 
 ## Outputs
 

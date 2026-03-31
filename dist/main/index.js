@@ -25853,8 +25853,7 @@ async function start() {
     args.push(`--api-url=${apiUrl}`);
     args.push(`--job-key=${context2.job}`);
     try {
-      const audience = getInput("api-audience") || "codecargo";
-      const idToken = await getIDToken(audience);
+      const idToken = await getIDToken("codecargo");
       args.push(`--token=${idToken}`);
     } catch (error2) {
       warning(`Failed to get OIDC token for policy fetch: ${error2}. Falling back to env/file config.`);

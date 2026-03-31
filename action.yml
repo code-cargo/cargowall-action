@@ -69,9 +69,6 @@ inputs:
   offline:
     description: 'Skip all CodeCargo API communication (audit upload and policy fetch)'
     default: 'false'
-  api-audience:
-    description: 'OIDC audience for CodeCargo API authentication'
-    default: 'codecargo'
 
 outputs:
   supported:

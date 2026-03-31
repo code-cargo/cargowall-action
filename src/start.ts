@@ -146,8 +146,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     args.push(`--api-url=${apiUrl}`)
     args.push(`--job-key=${github.context.job}`)
     try {
-      const audience = core.getInput('api-audience') || 'codecargo'
-      const idToken = await core.getIDToken(audience)
+      const idToken = await core.getIDToken('codecargo')
       args.push(`--token=${idToken}`)
     } catch (error) {
       core.warning(`Failed to get OIDC token for policy fetch: ${error}. Falling back to env/file config.`)
