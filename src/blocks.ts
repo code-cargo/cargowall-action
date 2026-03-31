@@ -13,7 +13,8 @@ export function parseBlockFilename(file: string): string | null {
   const base = dotIdx >= 0 ? file.substring(0, dotIdx) : file
   const underIdx = base.indexOf('_')
   if (underIdx < 0) return null
-  return base.substring(underIdx + 1)
+  const stepId = base.substring(underIdx + 1)
+  return stepId || null
 }
 
 /**

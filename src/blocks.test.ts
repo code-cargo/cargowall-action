@@ -18,9 +18,12 @@ describe('parseBlockFilename', () => {
     expect(parseBlockFilename('nounderscorehere.0')).toBeNull()
   })
 
-  it('returns null for no dot (no page)', () => {
-    // Still extracts — the dot is for page number, absence just means base = full filename
+  it('extracts step ID when there is no dot (no page)', () => {
     expect(parseBlockFilename('job_step')).toBe('step')
+  })
+
+  it('returns null for empty step ID after underscore', () => {
+    expect(parseBlockFilename('job_.0')).toBeNull()
   })
 
   it('handles multiple pages', () => {
