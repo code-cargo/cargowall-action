@@ -22316,7 +22316,7 @@ var JSONStringify = (value, replacer, space) => {
   const convertedToCustomJSON = originalStringify(
     value,
     (key, value2) => {
-      const isNoise = typeof value2 === "string" && Boolean(value2.match(noiseValue));
+      const isNoise = typeof value2 === "string" && noiseValue.test(value2);
       if (isNoise) return value2.toString() + "n";
       if (typeof value2 === "bigint") return value2.toString() + "n";
       if (typeof replacer === "function") return replacer(key, value2);
@@ -22332,11 +22332,28 @@ var JSONStringify = (value, replacer, space) => {
   const denoisedJSON = processedJSON.replace(noiseStringify, "$1$2$3");
   return denoisedJSON;
 };
-var isContextSourceSupported = () => JSON.parse("1", (_, __, context3) => !!context3 && context3.source === "1");
+var featureCache = /* @__PURE__ */ new Map();
+var isContextSourceSupported = () => {
+  const parseFingerprint = JSON.parse.toString();
+  if (featureCache.has(parseFingerprint)) {
+    return featureCache.get(parseFingerprint);
+  }
+  try {
+    const result = JSON.parse(
+      "1",
+      (_, __, context3) => !!context3?.source && context3.source === "1"
+    );
+    featureCache.set(parseFingerprint, result);
+    return result;
+  } catch {
+    featureCache.set(parseFingerprint, false);
+    return false;
+  }
+};
 var convertMarkedBigIntsReviver = (key, value, context3, userReviver) => {
-  const isCustomFormatBigInt = typeof value === "string" && value.match(customFormat);
+  const isCustomFormatBigInt = typeof value === "string" && customFormat.test(value);
   if (isCustomFormatBigInt) return BigInt(value.slice(0, -1));
-  const isNoiseValue = typeof value === "string" && value.match(noiseValue);
+  const isNoiseValue = typeof value === "string" && noiseValue.test(value);
   if (isNoiseValue) return value.slice(0, -1);
   if (typeof userReviver !== "function") return value;
   return userReviver(key, value, context3);
@@ -22362,7 +22379,7 @@ var JSONParse = (text, reviver) => {
     stringsOrLargeNumbers,
     (text2, digits, fractional, exponential) => {
       const isString = text2[0] === '"';
-      const isNoise = isString && Boolean(text2.match(noiseValueWithQuotes));
+      const isNoise = isString && noiseValueWithQuotes.test(text2);
       if (isNoise) return text2.substring(0, text2.length - 1) + 'n"';
       const isFractionalOrExponential = fractional || exponential;
       const isLessThanMaxSafeInt = digits && (digits.length < MAX_DIGITS || digits.length === MAX_DIGITS && digits <= MAX_INT);
