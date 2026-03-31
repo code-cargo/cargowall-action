@@ -93,13 +93,23 @@ describe('scanBlocksDir', () => {
     expect(results.find(r => r.id === 'stepB')?.ts).toBe('2026-03-30T10:00:01.200Z')
   })
 
-  it('deduplicates by step ID — uses first page (sorted)', async () => {
+  it('deduplicates by step ID — uses earliest timestamp across pages', async () => {
     await fs.writeFile(path.join(tmpDir, 'job_step1.0'), '2026-03-30T10:00:00.000Z first page\n')
     await fs.writeFile(path.join(tmpDir, 'job_step1.1'), '2026-03-30T10:00:05.000Z later page\n')
 
     const results = await scanBlocksDir(tmpDir)
     expect(results).toHaveLength(1)
     expect(results[0].ts).toBe('2026-03-30T10:00:00.000Z')
+  })
+
+  it('handles numeric page sort correctly (.10 vs .2)', async () => {
+    // .10 sorts before .2 lexicographically, but .2 has the earlier timestamp
+    await fs.writeFile(path.join(tmpDir, 'job_step1.10'), '2026-03-30T10:00:50.000Z page 10\n')
+    await fs.writeFile(path.join(tmpDir, 'job_step1.2'), '2026-03-30T10:00:02.000Z page 2\n')
+
+    const results = await scanBlocksDir(tmpDir)
+    expect(results).toHaveLength(1)
+    expect(results[0].ts).toBe('2026-03-30T10:00:02.000Z')
   })
 
   it('skips files without underscore', async () => {

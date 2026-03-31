@@ -149,8 +149,7 @@ export async function generateSummary(): Promise<void> {
 
       // Get OIDC token for API authentication
       try {
-        const audience = core.getInput('api-audience') || 'codecargo'
-        const idToken = await core.getIDToken(audience)
+        const idToken = await core.getIDToken('codecargo')
         summaryArgs.push('--token', idToken)
       } catch (error) {
         core.warning(
@@ -372,42 +371,55 @@ export function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   const cwNameIdx = cwStepName ? diag.executedNames.indexOf(cwStepName) : 0
   const nameOffset = cwNameIdx >= 0 ? cwNameIdx : 0
 
-  // Build a stepId → display name mapping.
-  // The plan has IDs for ALL steps (including skipped ones with `if:` conditions).
-  // The Worker log only has names for steps that ACTUALLY EXECUTED.
-  // Filter plan IDs to those with watcher entries (= executed), then skip
-  // pre-CW IDs so the mapping aligns with the CW-onward names.
   const planIds = diag.planSteps.map(([id]) => id)
   const watcherIds = new Set(diag.tsEntries.map(e => e.id))
-  const allExecutedPlanIds = planIds.filter(id => watcherIds.has(id))
 
-  // The first `nameOffset` executed plan IDs are pre-CW steps — skip them.
-  const executedPlanIds = allExecutedPlanIds.slice(nameOffset)
+  // CW-onward plan IDs that have watcher entries (= actually executed after CW start).
+  // Skipped steps (if: condition) won't have watcher entries, so they're excluded.
+  const executedPlanIds = planIds.slice(nameOffset).filter(id => watcherIds.has(id))
 
-  // Map CW-onward IDs to CW-onward names (1:1 positional alignment).
+  // Map executed IDs to names. The name offset is the position of the first
+  // executed plan ID in the full plan — this correctly skips pre-CW names AND
+  // any CW-onward plan steps that are missing from the watcher (e.g. the CW
+  // step itself if its block file was cleaned up).
+  const firstExecPlanIdx = executedPlanIds.length > 0
+    ? planIds.indexOf(executedPlanIds[0])
+    : nameOffset
   const idToName = new Map<string, string>()
-  for (let i = 0; i < executedPlanIds.length && (i + nameOffset) < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i + nameOffset])
+  for (let i = 0; i < executedPlanIds.length && (i + firstExecPlanIdx) < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i + firstExecPlanIdx])
   }
 
   // Sort all entries by timestamp
   const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts))
 
   // Find the CW step in the sorted entries and start from there.
-  const cwStepId = executedPlanIds.length > 0 ? executedPlanIds[0] : null
-  let startIdx: number
-  if (cwStepId) {
-    startIdx = allSorted.findIndex(e => e.id === cwStepId)
-  } else if (diag.planStepIds.size > 0) {
-    startIdx = allSorted.findIndex(e => diag.planStepIds.has(e.id))
+  // Use the plan position directly (planIds[nameOffset]) rather than executedPlanIds[0],
+  // because if the CW step's block was cleaned up, executedPlanIds[0] would be the
+  // NEXT step, causing misalignment.
+  const cwPlanId = nameOffset < planIds.length ? planIds[nameOffset] : null
+  let startIdx = -1
+  if (cwPlanId && watcherIds.has(cwPlanId)) {
+    startIdx = allSorted.findIndex(e => e.id === cwPlanId)
   } else {
-    startIdx = Math.min(nameOffset, allSorted.length - 1)
+    // CW step missing from watcher — find next plan step after it that has an entry
+    for (let i = nameOffset + 1; i < planIds.length; i++) {
+      if (watcherIds.has(planIds[i])) {
+        startIdx = allSorted.findIndex(e => e.id === planIds[i])
+        break
+      }
+    }
+  }
+  if (startIdx < 0) {
+    startIdx = diag.planStepIds.size > 0
+      ? allSorted.findIndex(e => diag.planStepIds.has(e.id))
+      : Math.min(nameOffset, allSorted.length - 1)
   }
   if (startIdx < 0) return []
   const relevant = allSorted.slice(startIdx)
 
   // Name post steps from the Worker log.
-  // Post step names come after all main step names (pre-CW + CW-onward).
+  // Post step names come after all main step names.
   const mainNameCount = nameOffset + executedPlanIds.length
   const postNames: string[] = diag.executedNames.slice(mainNameCount)
   let postIdx = 0
