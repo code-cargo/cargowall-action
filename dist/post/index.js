@@ -25502,12 +25502,21 @@ ${watcherLog.trimEnd()}`);
     info(`Step plan: ${planStepIds.size} steps, watcher timestamps: ${tsEntries.length}`);
     if (diagDir) {
       try {
-        const watcherIds = new Set(tsEntries.map((e) => e.id));
+        const byId = new Map(tsEntries.map((e) => [e.id, e]));
         const scanned = await scanBlocks(diagDir);
-        const missed = scanned.filter((e) => !watcherIds.has(e.id));
-        if (missed.length > 0) {
-          tsEntries.push(...missed);
-          info(`Block scan found ${missed.length} entries watcher missed`);
+        let added = 0;
+        for (const s of scanned) {
+          const existing = byId.get(s.id);
+          if (!existing) {
+            tsEntries.push(s);
+            byId.set(s.id, s);
+            added++;
+          } else if (s.ts < existing.ts) {
+            existing.ts = s.ts;
+          }
+        }
+        if (added > 0) {
+          info(`Block scan found ${added} entries watcher missed`);
         }
       } catch {
       }

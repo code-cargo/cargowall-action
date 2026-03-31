@@ -265,16 +265,26 @@ async function collectDiagData(): Promise<DiagData> {
 
     core.info(`Step plan: ${planStepIds.size} steps, watcher timestamps: ${tsEntries.length}`)
 
-    // Scan remaining block files for entries the watcher missed (e.g. post steps).
-    // Block files get cleaned up aggressively, so scan immediately — no delay.
+    // Merge block scan results with watcher data. The scan picks up entries the
+    // watcher missed (e.g. post steps) and may also find earlier timestamps for
+    // steps where the watcher captured a later page first (readdir order varies).
     if (diagDir) {
       try {
-        const watcherIds = new Set(tsEntries.map(e => e.id))
+        const byId = new Map(tsEntries.map(e => [e.id, e]))
         const scanned = await scanBlocks(diagDir)
-        const missed = scanned.filter(e => !watcherIds.has(e.id))
-        if (missed.length > 0) {
-          tsEntries.push(...missed)
-          core.info(`Block scan found ${missed.length} entries watcher missed`)
+        let added = 0
+        for (const s of scanned) {
+          const existing = byId.get(s.id)
+          if (!existing) {
+            tsEntries.push(s)
+            byId.set(s.id, s)
+            added++
+          } else if (s.ts < existing.ts) {
+            existing.ts = s.ts
+          }
+        }
+        if (added > 0) {
+          core.info(`Block scan found ${added} entries watcher missed`)
         }
       } catch { /* ignore */ }
     }
