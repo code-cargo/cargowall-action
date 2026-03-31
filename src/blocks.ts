@@ -38,26 +38,25 @@ export async function readBlockTimestamp(filePath: string): Promise<string | nul
 
 /**
  * Scan a blocks directory and return all step timestamps.
- * Returns one entry per unique step ID, using the earliest timestamp found across all pages.
+ * Returns one entry per unique step ID (first file encountered per step ID after lexicographic sort).
  */
 export async function scanBlocksDir(blocksDir: string): Promise<Array<{ id: string; ts: string }>> {
-  const earliest = new Map<string, string>()
+  const results: Array<{ id: string; ts: string }> = []
+  const seenSteps = new Set<string>()
 
-  const files = await fs.readdir(blocksDir)
+  const files = (await fs.readdir(blocksDir)).sort()
   for (const file of files) {
     const stepId = parseBlockFilename(file)
-    if (!stepId) continue
+    if (!stepId || seenSteps.has(stepId)) continue
 
     try {
       const ts = await readBlockTimestamp(path.join(blocksDir, file))
       if (ts) {
-        const current = earliest.get(stepId)
-        if (!current || ts < current) {
-          earliest.set(stepId, ts)
-        }
+        seenSteps.add(stepId)
+        results.push({ id: stepId, ts })
       }
     } catch { /* skip unreadable files */ }
   }
 
-  return [...earliest.entries()].map(([id, ts]) => ({ id, ts }))
+  return results
 }

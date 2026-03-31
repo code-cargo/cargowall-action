@@ -25234,23 +25234,22 @@ async function readBlockTimestamp(filePath) {
   }
 }
 async function scanBlocksDir(blocksDir) {
-  const earliest = /* @__PURE__ */ new Map();
-  const files = await import_fs4.promises.readdir(blocksDir);
+  const results = [];
+  const seenSteps = /* @__PURE__ */ new Set();
+  const files = (await import_fs4.promises.readdir(blocksDir)).sort();
   for (const file of files) {
     const stepId = parseBlockFilename(file);
-    if (!stepId) continue;
+    if (!stepId || seenSteps.has(stepId)) continue;
     try {
       const ts = await readBlockTimestamp(path4.join(blocksDir, file));
       if (ts) {
-        const current = earliest.get(stepId);
-        if (!current || ts < current) {
-          earliest.set(stepId, ts);
-        }
+        seenSteps.add(stepId);
+        results.push({ id: stepId, ts });
       }
     } catch {
     }
   }
-  return [...earliest.entries()].map(([id, ts]) => ({ id, ts }));
+  return results;
 }
 
 // src/diag.ts
@@ -25405,7 +25404,8 @@ async function generateSummary() {
         summaryArgs.push("--job-status", jobStatus);
       }
       try {
-        const idToken = await getIDToken("codecargo");
+        const audience = getInput("api-audience") || "codecargo";
+        const idToken = await getIDToken(audience);
         summaryArgs.push("--token", idToken);
       } catch (error) {
         warning(
@@ -25558,27 +25558,21 @@ function buildStepsFromDiag(diag) {
   const nameOffset = cwNameIdx >= 0 ? cwNameIdx : 0;
   const planIds = diag.planSteps.map(([id]) => id);
   const watcherIds = new Set(diag.tsEntries.map((e) => e.id));
-  const executedPlanIds = planIds.slice(nameOffset).filter((id) => watcherIds.has(id));
-  const firstExecPlanIdx = executedPlanIds.length > 0 ? planIds.indexOf(executedPlanIds[0]) : nameOffset;
+  const allExecutedPlanIds = planIds.filter((id) => watcherIds.has(id));
+  const executedPlanIds = allExecutedPlanIds.slice(nameOffset);
   const idToName = /* @__PURE__ */ new Map();
-  for (let i = 0; i < executedPlanIds.length && i + firstExecPlanIdx < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i + firstExecPlanIdx]);
+  for (let i = 0; i < executedPlanIds.length && i + nameOffset < diag.executedNames.length; i++) {
+    idToName.set(executedPlanIds[i], diag.executedNames[i + nameOffset]);
   }
   const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
-  const cwPlanId = nameOffset < planIds.length ? planIds[nameOffset] : null;
-  let startIdx = -1;
-  if (cwPlanId && watcherIds.has(cwPlanId)) {
-    startIdx = allSorted.findIndex((e) => e.id === cwPlanId);
+  const cwStepId = executedPlanIds.length > 0 ? executedPlanIds[0] : null;
+  let startIdx;
+  if (cwStepId) {
+    startIdx = allSorted.findIndex((e) => e.id === cwStepId);
+  } else if (diag.planStepIds.size > 0) {
+    startIdx = allSorted.findIndex((e) => diag.planStepIds.has(e.id));
   } else {
-    for (let i = nameOffset + 1; i < planIds.length; i++) {
-      if (watcherIds.has(planIds[i])) {
-        startIdx = allSorted.findIndex((e) => e.id === planIds[i]);
-        break;
-      }
-    }
-  }
-  if (startIdx < 0) {
-    startIdx = diag.planStepIds.size > 0 ? allSorted.findIndex((e) => diag.planStepIds.has(e.id)) : Math.min(nameOffset, allSorted.length - 1);
+    startIdx = Math.min(nameOffset, allSorted.length - 1);
   }
   if (startIdx < 0) return [];
   const relevant = allSorted.slice(startIdx);

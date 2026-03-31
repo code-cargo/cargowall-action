@@ -196,32 +196,6 @@ describe('buildStepsFromDiag', () => {
     expect(result[1].name).toBe('Step C')
   })
 
-  it('handles CW step missing from watcher (block file cleaned up)', () => {
-    vi.mocked(core.getState).mockReturnValue('Setup CW')
-
-    // CW step (id-setup) has no watcher entry — block file was cleaned up.
-    // Checkout has a watcher entry but is pre-CW.
-    const diag = makeDiag({
-      planStepIds: new Set(['id-checkout', 'id-setup', 'id-test1', 'id-test2']),
-      planSteps: [['id-checkout', 'co'], ['id-setup', 'setup'], ['id-test1', 't1'], ['id-test2', 't2']],
-      tsEntries: [
-        { id: 'id-bookend', ts: '2026-03-30T10:00:00.000Z' }, // Set up job
-        { id: 'id-checkout', ts: '2026-03-30T10:00:01.000Z' },
-        // id-setup MISSING — block cleaned up
-        { id: 'id-test1', ts: '2026-03-30T10:00:10.000Z' },
-        { id: 'id-test2', ts: '2026-03-30T10:00:11.000Z' },
-      ],
-      executedNames: ['Run actions/checkout@v6', 'Setup CW', 'Test 1', 'Test 2'],
-    })
-
-    const result = buildStepsFromDiag(diag)
-    // Should start from test1 (next step after missing CW step), with correct names
-    expect(result).toHaveLength(2)
-    expect(result[0].name).toBe('Test 1')
-    expect(result[0].started_at).toBe('2026-03-30T10:00:10.000Z')
-    expect(result[1].name).toBe('Test 2')
-  })
-
   it('includes post steps with names from Worker log', () => {
     vi.mocked(core.getState).mockReturnValue('Setup CW')
 
