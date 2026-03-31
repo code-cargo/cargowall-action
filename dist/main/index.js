@@ -25849,26 +25849,32 @@ async function start() {
     const diagDir = await findDiagDir();
     if (diagDir) {
       saveState("diag-dir", diagDir);
-      const stepPlan = await parseJobPlan(diagDir);
-      if (Object.keys(stepPlan).length > 0) {
-        await import_fs7.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
-        info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`);
-        const { parseExecutedSteps: parseExecutedSteps2 } = await Promise.resolve().then(() => (init_diag(), diag_exports));
-        const executedSoFar = await parseExecutedSteps2(diagDir);
-        if (executedSoFar.length > 0) {
-          saveState("cw-step-name", executedSoFar[executedSoFar.length - 1]);
+      try {
+        const stepPlan = await parseJobPlan(diagDir);
+        if (Object.keys(stepPlan).length > 0) {
+          await import_fs7.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
+          info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`);
+          const { parseExecutedSteps: parseExecutedSteps2 } = await Promise.resolve().then(() => (init_diag(), diag_exports));
+          const executedSoFar = await parseExecutedSteps2(diagDir);
+          if (executedSoFar.length > 0) {
+            saveState("cw-step-name", executedSoFar[executedSoFar.length - 1]);
+          }
+        } else {
+          info("Step plan is empty or unavailable; proceeding without mapped steps.");
         }
-        const blocksDir = path7.join(diagDir, "blocks");
-        const watcherScript = path7.join(__dirname, "..", "watcher", "index.js");
-        const watcher = (0, import_child_process.spawn)("node", [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
-          detached: true,
-          stdio: "ignore"
-        });
-        watcher.unref();
-        if (watcher.pid) {
-          saveState("watcher-pid", String(watcher.pid));
-          info(`Blocks watcher started (PID: ${watcher.pid})`);
-        }
+      } catch (planErr) {
+        info(`Unable to parse step plan: ${planErr}`);
+      }
+      const blocksDir = path7.join(diagDir, "blocks");
+      const watcherScript = path7.join(__dirname, "..", "watcher", "index.js");
+      const watcher = (0, import_child_process.spawn)("node", [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
+        detached: true,
+        stdio: "ignore"
+      });
+      watcher.unref();
+      if (watcher.pid) {
+        saveState("watcher-pid", String(watcher.pid));
+        info(`Blocks watcher started (PID: ${watcher.pid})`);
       }
     }
   } catch (err) {

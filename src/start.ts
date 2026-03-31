@@ -60,31 +60,40 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     const diagDir = await findDiagDir()
     if (diagDir) {
       core.saveState('diag-dir', diagDir)
-      const stepPlan = await parseJobPlan(diagDir)
-      if (Object.keys(stepPlan).length > 0) {
-        await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
-        core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
 
-        // Save the current step name so the post step knows where CW started.
-        // The Worker log has a "Processing step" entry for our step by now.
-        const { parseExecutedSteps } = await import('./diag')
-        const executedSoFar = await parseExecutedSteps(diagDir)
-        if (executedSoFar.length > 0) {
-          core.saveState('cw-step-name', executedSoFar[executedSoFar.length - 1])
-        }
+      // Try to parse and persist the step plan if available
+      try {
+        const stepPlan = await parseJobPlan(diagDir)
+        if (Object.keys(stepPlan).length > 0) {
+          await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
+          core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
 
-        // Spawn watcher as detached node process
-        const blocksDir = path.join(diagDir, 'blocks')
-        const watcherScript = path.join(__dirname, '..', 'watcher', 'index.js')
-        const watcher = spawn('node', [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
-          detached: true,
-          stdio: 'ignore',
-        })
-        watcher.unref()
-        if (watcher.pid) {
-          core.saveState('watcher-pid', String(watcher.pid))
-          core.info(`Blocks watcher started (PID: ${watcher.pid})`)
+          // Save the current step name so the post step knows where CW started.
+          const { parseExecutedSteps } = await import('./diag')
+          const executedSoFar = await parseExecutedSteps(diagDir)
+          if (executedSoFar.length > 0) {
+            core.saveState('cw-step-name', executedSoFar[executedSoFar.length - 1])
+          }
+        } else {
+          core.info('Step plan is empty or unavailable; proceeding without mapped steps.')
         }
+      } catch (planErr) {
+        core.info(`Unable to parse step plan: ${planErr}`)
+      }
+
+      // Spawn watcher as detached node process.
+      // Must run whenever diagDir exists so timestamps are available
+      // even if the step plan is empty or could not be parsed.
+      const blocksDir = path.join(diagDir, 'blocks')
+      const watcherScript = path.join(__dirname, '..', 'watcher', 'index.js')
+      const watcher = spawn('node', [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      watcher.unref()
+      if (watcher.pid) {
+        core.saveState('watcher-pid', String(watcher.pid))
+        core.info(`Blocks watcher started (PID: ${watcher.pid})`)
       }
     }
   } catch (err) {

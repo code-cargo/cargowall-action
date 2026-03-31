@@ -12,6 +12,7 @@ async function log(msg: string) {
 }
 
 const seen = new Set<string>()
+const seenStepIds = new Set<string>()
 
 log(`watcher started: blocks=${blocksDir} output=${outputFile}`)
 
@@ -22,7 +23,7 @@ async function poll() {
       if (seen.has(file)) continue
 
       const stepId = parseBlockFilename(file)
-      if (!stepId) {
+      if (!stepId || seenStepIds.has(stepId)) {
         seen.add(file)
         continue
       }
@@ -40,6 +41,7 @@ async function poll() {
           const firstLine = buf.toString('utf8', 0, bytesRead).split('\n')[0] || ''
           const match = firstLine.match(TIMESTAMP_REGEX)
           if (match) {
+            seenStepIds.add(stepId)
             log(`timestamp: stepId=${stepId} ts=${match[1]}`)
             await fs.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + '\n')
           } else {
@@ -58,6 +60,10 @@ async function poll() {
   }
 }
 
-// Poll every 100ms
-setInterval(poll, 100)
-poll()
+// Poll every 100ms in a non-reentrant loop
+async function startPolling() {
+  await poll()
+  setTimeout(startPolling, 100)
+}
+
+startPolling()
