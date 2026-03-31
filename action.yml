@@ -72,6 +72,9 @@ inputs:
   api-audience:
     description: 'OIDC audience for CodeCargo API authentication'
     default: 'codecargo'
+  skip-actions-api:
+    description: 'Skip the GitHub Actions API call for step timing (for testing _diag-only fallback)'
+    default: 'false'
 
 outputs:
   supported:

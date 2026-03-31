@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import * as path from 'path'
+import { scanBlocksDir } from './blocks'
 
 /**
  * Find the runner's _diag directory which contains Worker logs and blocks/.
@@ -104,4 +105,40 @@ export async function parseJobPlan(diagDir: string): Promise<Record<string, stri
   }
 
   return stepIdToName
+}
+
+/**
+ * Scan the blocks directory for step timestamps.
+ * Used to pick up entries the watcher missed (e.g. post steps that appeared
+ * after the watcher's last poll). Only recent block files survive cleanup.
+ */
+export async function scanBlocks(diagDir: string): Promise<Array<{ id: string; ts: string }>> {
+  return scanBlocksDir(path.join(diagDir, 'blocks'))
+}
+
+/**
+ * Parse the Worker log for runtime step execution entries to get ALL step names
+ * including post steps (which are not in the job plan).
+ * Scans for "Processing step: DisplayName='<name>'" lines written by the runner's
+ * Trace.Info for every step as it executes.
+ * Returns an ordered list of display names in execution order.
+ */
+export async function parseExecutedSteps(diagDir: string): Promise<string[]> {
+  const files = await fs.readdir(diagDir)
+  const workerLogFiles = files.filter(f => f.startsWith('Worker_')).sort()
+  if (workerLogFiles.length === 0) return []
+
+  const workerContent = await fs.readFile(
+    path.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
+    'utf8'
+  )
+
+  const names: string[] = []
+  const regex = /Processing step: DisplayName='([^']+)'/g
+  let match
+  while ((match = regex.exec(workerContent)) !== null) {
+    names.push(match[1])
+  }
+
+  return names
 }

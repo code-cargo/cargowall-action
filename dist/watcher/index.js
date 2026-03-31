@@ -25,6 +25,18 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 // src/watcher.ts
 var import_fs = require("fs");
 var path = __toESM(require("path"));
+
+// src/blocks.ts
+var TIMESTAMP_REGEX = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/;
+function parseBlockFilename(file) {
+  const dotIdx = file.lastIndexOf(".");
+  const base = dotIdx >= 0 ? file.substring(0, dotIdx) : file;
+  const underIdx = base.indexOf("_");
+  if (underIdx < 0) return null;
+  return base.substring(underIdx + 1);
+}
+
+// src/watcher.ts
 var blocksDir = process.argv[2];
 var outputFile = process.argv[3];
 var logFile = "/tmp/cargowall-watcher.log";
@@ -34,21 +46,17 @@ async function log(msg) {
   });
 }
 var seen = /* @__PURE__ */ new Set();
-var tsRegex = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/;
 log(`watcher started: blocks=${blocksDir} output=${outputFile}`);
 async function poll() {
   try {
     const files = await import_fs.promises.readdir(blocksDir);
     for (const file of files) {
       if (seen.has(file)) continue;
-      const dotIdx = file.lastIndexOf(".");
-      const base = dotIdx >= 0 ? file.substring(0, dotIdx) : file;
-      const underIdx = base.indexOf("_");
-      if (underIdx < 0) {
+      const stepId = parseBlockFilename(file);
+      if (!stepId) {
         seen.add(file);
         continue;
       }
-      const stepId = base.substring(underIdx + 1);
       try {
         const content = await import_fs.promises.readFile(path.join(blocksDir, file), "utf8");
         const firstLine = content.split("\n")[0] || "";
@@ -56,12 +64,12 @@ async function poll() {
           continue;
         }
         seen.add(file);
-        const match = firstLine.match(tsRegex);
+        const match = firstLine.match(TIMESTAMP_REGEX);
         if (match) {
           log(`timestamp: stepId=${stepId} ts=${match[1]}`);
           await import_fs.promises.appendFile(outputFile, JSON.stringify({ id: stepId, ts: match[1] }) + "\n");
         } else {
-          log(`no timestamp match in ${file}: ${firstLine.substring(0, 80)}`);
+          log(`no timestamp match in ${file}`);
         }
       } catch (err) {
         log(`read error for ${file}: ${err}`);
@@ -71,5 +79,5 @@ async function poll() {
     log(`readdir error: ${err}`);
   }
 }
-setInterval(poll, 200);
+setInterval(poll, 100);
 poll();
