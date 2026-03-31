@@ -10,7 +10,7 @@ const STEP_PLAN_FILE = '/tmp/cargowall-step-plan.json'
 const STEP_TIMESTAMPS_FILE = '/tmp/cargowall-step-timestamps.jsonl'
 const WATCHER_LOG_FILE = '/tmp/cargowall-watcher.log'
 
-type StepEntry = { name: string; started_at: string | null; completed_at: string | null }
+export type StepEntry = { name: string; started_at: string | null; completed_at: string | null }
 
 export async function generateSummary(): Promise<void> {
   // Check if audit log exists and has content
@@ -216,7 +216,7 @@ export async function generateSummary(): Promise<void> {
   core.endGroup()
 }
 
-interface DiagData {
+export interface DiagData {
   planStepIds: Set<string>
   planSteps: Array<[string, string]> // [stepId, name][] in plan order
   tsEntries: Array<{ id: string; ts: string }>
@@ -303,7 +303,7 @@ async function collectDiagData(): Promise<DiagData> {
  * _diag watcher timestamps replace the API's second-precision timestamps where available.
  * This is the same approach as the original code — API is authoritative for names, _diag for timing.
  */
-function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEntry[] {
+export function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEntry[] {
   if (diag.tsEntries.length === 0) {
     core.info('No _diag timestamps available, using API steps as-is')
     return apiSteps
@@ -363,7 +363,7 @@ function enhanceApiStepsWithDiag(apiSteps: StepEntry[], diag: DiagData): StepEnt
  * Timing comes from the watcher (sub-second precision).
  * The step plan is used to identify which watcher entries are main steps vs bookends.
  */
-function buildStepsFromDiag(diag: DiagData): StepEntry[] {
+export function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   if (diag.tsEntries.length === 0) return []
 
   // Find where CW starts in the executed names list.
@@ -375,12 +375,16 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   // Build a stepId → display name mapping.
   // The plan has IDs for ALL steps (including skipped ones with `if:` conditions).
   // The Worker log only has names for steps that ACTUALLY EXECUTED.
-  // Filter plan IDs to those with watcher entries (= executed).
+  // Filter plan IDs to those with watcher entries (= executed), then skip
+  // pre-CW IDs so the mapping aligns with the CW-onward names.
   const planIds = diag.planSteps.map(([id]) => id)
   const watcherIds = new Set(diag.tsEntries.map(e => e.id))
-  const executedPlanIds = planIds.filter(id => watcherIds.has(id))
+  const allExecutedPlanIds = planIds.filter(id => watcherIds.has(id))
 
-  // Map IDs to names, starting from the CW step in the executed names list.
+  // The first `nameOffset` executed plan IDs are pre-CW steps — skip them.
+  const executedPlanIds = allExecutedPlanIds.slice(nameOffset)
+
+  // Map CW-onward IDs to CW-onward names (1:1 positional alignment).
   const idToName = new Map<string, string>()
   for (let i = 0; i < executedPlanIds.length && (i + nameOffset) < diag.executedNames.length; i++) {
     idToName.set(executedPlanIds[i], diag.executedNames[i + nameOffset])
@@ -390,23 +394,20 @@ function buildStepsFromDiag(diag: DiagData): StepEntry[] {
   const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts))
 
   // Find the CW step in the sorted entries and start from there.
-  // The CW step ID is the first executedPlanId that maps to cwStepName.
-  const cwStepId = cwStepName ? [...idToName.entries()].find(([, name]) => name === cwStepName)?.[0] : null
+  const cwStepId = executedPlanIds.length > 0 ? executedPlanIds[0] : null
   let startIdx: number
   if (cwStepId) {
     startIdx = allSorted.findIndex(e => e.id === cwStepId)
   } else if (diag.planStepIds.size > 0) {
     startIdx = allSorted.findIndex(e => diag.planStepIds.has(e.id))
   } else {
-    // No plan data — align timestamps with the same offset used for executed names.
-    // This skips timestamps for steps that ran before CargoWall started.
     startIdx = Math.min(nameOffset, allSorted.length - 1)
   }
   if (startIdx < 0) return []
   const relevant = allSorted.slice(startIdx)
 
   // Name post steps from the Worker log.
-  // Post step names come after all main step names.
+  // Post step names come after all main step names (pre-CW + CW-onward).
   const mainNameCount = nameOffset + executedPlanIds.length
   const postNames: string[] = diag.executedNames.slice(mainNameCount)
   let postIdx = 0

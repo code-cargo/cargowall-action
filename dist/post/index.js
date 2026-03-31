@@ -25541,13 +25541,14 @@ function buildStepsFromDiag(diag) {
   const nameOffset = cwNameIdx >= 0 ? cwNameIdx : 0;
   const planIds = diag.planSteps.map(([id]) => id);
   const watcherIds = new Set(diag.tsEntries.map((e) => e.id));
-  const executedPlanIds = planIds.filter((id) => watcherIds.has(id));
+  const allExecutedPlanIds = planIds.filter((id) => watcherIds.has(id));
+  const executedPlanIds = allExecutedPlanIds.slice(nameOffset);
   const idToName = /* @__PURE__ */ new Map();
   for (let i = 0; i < executedPlanIds.length && i + nameOffset < diag.executedNames.length; i++) {
     idToName.set(executedPlanIds[i], diag.executedNames[i + nameOffset]);
   }
   const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
-  const cwStepId = cwStepName ? [...idToName.entries()].find(([, name]) => name === cwStepName)?.[0] : null;
+  const cwStepId = executedPlanIds.length > 0 ? executedPlanIds[0] : null;
   let startIdx;
   if (cwStepId) {
     startIdx = allSorted.findIndex((e) => e.id === cwStepId);
