@@ -37,8 +37,7 @@ export async function generateSummary(): Promise<void> {
     // --- Try GitHub API first (needs actions: read) ---
     // This also gives the watcher more time to poll before we kill it.
     let apiSteps: StepEntry[] | null = null
-    const skipActionsApi = core.getInput('skip-actions-api') === 'true'
-    if (token && runId && !skipActionsApi) {
+    if (token && runId) {
       try {
         core.info('Fetching step timing from GitHub API...')
         const octokit = github.getOctokit(token)

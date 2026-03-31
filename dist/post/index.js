@@ -25304,8 +25304,7 @@ async function generateSummary() {
     const token = getInput("github-token");
     const runId = context2.runId;
     let apiSteps = null;
-    const skipActionsApi = getInput("skip-actions-api") === "true";
-    if (token && runId && !skipActionsApi) {
+    if (token && runId) {
       try {
         info("Fetching step timing from GitHub API...");
         const octokit = getOctokit(token);
