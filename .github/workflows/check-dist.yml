@@ -31,17 +31,4 @@ jobs:
             exit 1
           fi
           echo "dist/ is up to date"
-
-      - name: Debug job context
-        run: |
-          echo "check_run_id=${{ job.check_run_id }}"
-          echo "--- env vars with job/check ---"
-          env | grep -iE "check_run|job_id" || echo "none found"
-          echo "--- _diag Worker log snippets ---"
-          DIAG=$(find /home/runner/actions-runner -name "_diag" -type d 2>/dev/null | head -1)
-          if [ -n "$DIAG" ]; then
-            echo "diag dir: $DIAG"
-            ls -la "$DIAG"/Worker_* 2>/dev/null
-            echo "--- first 200 lines of latest Worker log ---"
-            cat "$DIAG"/Worker_*.log | head -200
-          fi
+          

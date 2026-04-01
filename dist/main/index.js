@@ -25886,6 +25886,8 @@ async function start() {
   if (githubServiceHosts) info(`  GitHub service hosts: ${githubServiceHosts}`);
   if (azureInfraHosts) info(`  Azure infra hosts: ${azureInfraHosts}`);
   if (configFile) info(`  Config file: ${configFile}`);
+  const jobId = getInput("job-id");
+  if (jobId) info(`  Job ID (check_run_id): ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   try {
