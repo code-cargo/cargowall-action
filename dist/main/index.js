@@ -25887,7 +25887,7 @@ async function start() {
   if (azureInfraHosts) info(`  Azure infra hosts: ${azureInfraHosts}`);
   if (configFile) info(`  Config file: ${configFile}`);
   const jobId = getInput("job-id");
-  if (jobId) info(`  Job ID (check_run_id): ${jobId}`);
+  if (jobId) info(`  Job run ID: ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   try {

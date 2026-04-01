@@ -171,7 +171,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (azureInfraHosts) core.info(`  Azure infra hosts: ${azureInfraHosts}`)
   if (configFile) core.info(`  Config file: ${configFile}`)
   const jobId = core.getInput('job-id')
-  if (jobId) core.info(`  Job ID (check_run_id): ${jobId}`)
+  if (jobId) core.info(`  Job run ID: ${jobId}`)
   core.info(`  Sudo lockdown: ${sudoLockdown}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
 

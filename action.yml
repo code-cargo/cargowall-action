@@ -70,7 +70,7 @@ inputs:
     description: 'Skip all CodeCargo API communication (audit upload and policy fetch)'
     default: 'false'
   job-id:
-    description: 'The check run ID of the current job (auto-detected)'
+    description: 'The check run ID of the current job (populated from the workflow context by default; override if needed)'
     default: ${{ job.check_run_id }}
 
 outputs:
