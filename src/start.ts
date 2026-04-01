@@ -170,6 +170,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (githubServiceHosts) core.info(`  GitHub service hosts: ${githubServiceHosts}`)
   if (azureInfraHosts) core.info(`  Azure infra hosts: ${azureInfraHosts}`)
   if (configFile) core.info(`  Config file: ${configFile}`)
+  const jobId = core.getInput('job-id')
+  if (jobId) core.info(`  Job ID (check_run_id): ${jobId}`)
   core.info(`  Sudo lockdown: ${sudoLockdown}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
 
