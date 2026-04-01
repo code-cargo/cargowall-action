@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    steps:
+    steps:      
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
@@ -31,3 +31,5 @@ jobs:
             exit 1
           fi
           echo "dist/ is up to date"
+
+      - run: env | sort
