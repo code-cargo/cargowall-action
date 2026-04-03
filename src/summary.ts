@@ -130,14 +130,7 @@ export async function generateSummary(): Promise<void> {
       summaryArgs.push('--job-name', currentJobName)
       const jobId = core.getInput('job-id')
       if (jobId) {
-        let helpOutput = ''
-        await exec.exec('cargowall', ['summary', '--help'], {
-          ignoreReturnCode: true, silent: true,
-          listeners: { stdout: (data: Buffer) => { helpOutput += data.toString() } }
-        })
-        if (helpOutput.includes('job-run-id')) {
-          summaryArgs.push('--job-run-id', jobId)
-        }
+        summaryArgs.push('--job-run-id', jobId)
       }
 
       // Prefer the effective mode written by the Go binary (which may have

@@ -21513,7 +21513,7 @@ var os6 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.0.1-rc.0";
+var CARGOWALL_VERSION = "v1.0.1";
 async function setup() {
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const binaryPath = getInput("binary-path");

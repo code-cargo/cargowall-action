@@ -25409,17 +25409,7 @@ async function generateSummary() {
       summaryArgs.push("--job-name", currentJobName);
       const jobId = getInput("job-id");
       if (jobId) {
-        let helpOutput = "";
-        await exec("cargowall", ["summary", "--help"], {
-          ignoreReturnCode: true,
-          silent: true,
-          listeners: { stdout: (data) => {
-            helpOutput += data.toString();
-          } }
-        });
-        if (helpOutput.includes("job-run-id")) {
-          summaryArgs.push("--job-run-id", jobId);
-        }
+        summaryArgs.push("--job-run-id", jobId);
       }
       let effectiveMode = getInput("mode") || "enforce";
       try {
