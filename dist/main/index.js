@@ -21513,7 +21513,7 @@ var os6 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.0.0";
+var CARGOWALL_VERSION = "v1.0.1";
 async function setup() {
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const binaryPath = getInput("binary-path");
@@ -25886,6 +25886,8 @@ async function start() {
   if (githubServiceHosts) info(`  GitHub service hosts: ${githubServiceHosts}`);
   if (azureInfraHosts) info(`  Azure infra hosts: ${azureInfraHosts}`);
   if (configFile) info(`  Config file: ${configFile}`);
+  const jobId = getInput("job-id");
+  if (jobId) info(`  Job run ID: ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   try {

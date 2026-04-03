@@ -7,7 +7,7 @@ import * as path from 'path'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
-const CARGOWALL_VERSION = 'v1.0.0'
+const CARGOWALL_VERSION = 'v1.0.1'
 
 export async function setup(): Promise<boolean> {
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'

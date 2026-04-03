@@ -25407,6 +25407,10 @@ async function generateSummary() {
       summaryArgs.push("--api-url", apiUrl);
       summaryArgs.push("--job-key", context2.job);
       summaryArgs.push("--job-name", currentJobName);
+      const jobId = getInput("job-id");
+      if (jobId) {
+        summaryArgs.push("--job-run-id", jobId);
+      }
       let effectiveMode = getInput("mode") || "enforce";
       try {
         const modeFromFile = (await import_fs6.promises.readFile("/tmp/cargowall-mode", "utf8")).trim();
@@ -25425,7 +25429,7 @@ async function generateSummary() {
         warning(
           `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
         );
-        for (const flag of ["--api-url", "--job-key", "--job-name", "--mode", "--default-action", "--job-status"]) {
+        for (const flag of ["--api-url", "--job-key", "--job-name", "--job-run-id", "--mode", "--default-action", "--job-status"]) {
           const idx = summaryArgs.findIndex((a) => a === flag);
           if (idx !== -1) summaryArgs.splice(idx, 2);
         }

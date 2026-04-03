@@ -128,6 +128,10 @@ export async function generateSummary(): Promise<void> {
       summaryArgs.push('--api-url', apiUrl)
       summaryArgs.push('--job-key', github.context.job)
       summaryArgs.push('--job-name', currentJobName)
+      const jobId = core.getInput('job-id')
+      if (jobId) {
+        summaryArgs.push('--job-run-id', jobId)
+      }
 
       // Prefer the effective mode written by the Go binary (which may have
       // been overridden by the SaaS policy) over the static Action input.
@@ -156,7 +160,7 @@ export async function generateSummary(): Promise<void> {
           `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
         )
         // Remove API-related args so the binary doesn't attempt an unauthenticated push
-        for (const flag of ['--api-url', '--job-key', '--job-name', '--mode', '--default-action', '--job-status']) {
+        for (const flag of ['--api-url', '--job-key', '--job-name', '--job-run-id', '--mode', '--default-action', '--job-status']) {
           const idx = summaryArgs.findIndex(a => a === flag)
           if (idx !== -1) summaryArgs.splice(idx, 2) // remove flag and its value
         }
