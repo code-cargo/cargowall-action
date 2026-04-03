@@ -112,12 +112,11 @@ jobs:
       - name: Setup CargoWall with strict hosts
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
             app.codecargo.com
             github.com
             api.github.com
-
-
 
       - name: Test allowed DNS query
         run: |
@@ -153,6 +152,7 @@ jobs:
       - name: Setup CargoWall with CIDR rules
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           allowed-cidrs: |
             "140.82.112.0/20"  # GitHub's IP range
           allowed-hosts: |
@@ -178,6 +178,7 @@ jobs:
         id: cargowall
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
             app.codecargo.com
             github.com
@@ -200,6 +201,7 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
             github.com
             app.codecargo.com
@@ -238,6 +240,7 @@ jobs:
       - name: Setup CargoWall with sudo lockdown
         uses: ./
         with:
+          api-url: https://app.dev.codecargo.dev
           allowed-hosts: |
             app.codecargo.com
             github.com
