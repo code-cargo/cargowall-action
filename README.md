@@ -15,6 +15,7 @@ For concepts, architecture, and platform capabilities, see the [main CargoWall r
 - **eBPF-based filtering**: Uses kernel-level filtering for high performance and reliability
 - **Hostname filtering**: Allow/deny based on domain names
   - Subdomains are automatically allowed (i.e. `github.com` would also allow `api.github.com`)
+  - Wildcard patterns: `*` matches exactly one DNS label, `**` matches one or more DNS labels (e.g. `*.example.com` matches `api.example.com`; `**.example.com` also matches `us.east.example.com`)
 - **CIDR filtering**: Allow/deny based on IP address ranges
 - **DNS tunneling prevention**: Blocks DNS queries for non-allowed domains
 - **Docker support**: Automatically configures Docker containers to respect firewall rules
@@ -63,6 +64,23 @@ jobs:
 ```
 
 > **Note:** The action connects to the [CodeCargo platform](https://www.codecargo.com) by default. For full integration, your job needs these permissions: `id-token: write` (OIDC authentication), `actions: read` (correlate network events to steps), and `contents: read`. If `id-token: write` is not granted, the action will warn and continue without API integration. Set `offline: true` to skip API communication entirely.
+
+### With Wildcard Patterns
+
+Use `*` to match a single DNS label and `**` to match multiple labels:
+
+```yaml
+- uses: code-cargo/cargowall-action@v1
+  with:
+    allowed-hosts: |
+      *.github.com
+      **.ubuntu.com
+      registry.npmjs.org
+```
+
+In this example:
+- `*.github.com` allows `api.github.com` but not `github.com` or `a.b.github.com`
+- `**.ubuntu.com` allows `archive.ubuntu.com`, `us.archive.ubuntu.com`, and any depth of subdomain
 
 ### With Docker Support
 
@@ -133,7 +151,7 @@ For complex configurations, use a JSON or YAML config file:
 | Input                        | Description                                                                       | Default                                        |
 |------------------------------|-----------------------------------------------------------------------------------|------------------------------------------------|
 | `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                         | `enforce`                                      |
-| `allowed-hosts`              | Allowed hostnames, one per line (auto matches subdomains)                         |                                                |
+| `allowed-hosts`              | Allowed hostnames, one per line (auto matches subdomains, supports `*` and `**` wildcards) |                                                |
 | `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                 |                                                |
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line)                 | See [defaults](#automatically-allowed-traffic) |
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line)           | See [defaults](#automatically-allowed-traffic) |

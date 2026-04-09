@@ -283,25 +283,25 @@ jobs:
         with:
           offline: 'true'
           allowed-hosts: |
-            **.docker.com
+            **.ubuntu.com
 
-      - name: Test allowed connection (production.cloudflare.docker.com matches **.docker.com)
+      - name: Test allowed connection 2 labels deep (us.archive.ubuntu.com matches **.ubuntu.com)
         run: |
-          curl -sf --max-time 10 https://production.cloudflare.docker.com > /dev/null
-          echo "Successfully connected to production.cloudflare.docker.com via **.docker.com wildcard (2 labels deep)"
+          curl -s --max-time 10 http://us.archive.ubuntu.com > /dev/null
+          echo "Successfully connected to us.archive.ubuntu.com via **.ubuntu.com wildcard (2 labels deep)"
 
-      - name: Test allowed connection (www.docker.com matches **.docker.com)
+      - name: Test allowed connection 1 label deep (archive.ubuntu.com matches **.ubuntu.com)
         run: |
-          curl -sf --max-time 10 https://www.docker.com > /dev/null
-          echo "Successfully connected to www.docker.com via **.docker.com wildcard (1 label deep)"
+          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          echo "Successfully connected to archive.ubuntu.com via **.ubuntu.com wildcard (1 label deep)"
 
-      - name: Test bare domain not matched (docker.com should not match **.docker.com)
+      - name: Test bare domain not matched (ubuntu.com should not match **.ubuntu.com)
         run: |
-          if curl -sf --max-time 5 https://docker.com > /dev/null 2>&1; then
-            echo "ERROR: docker.com should not match **.docker.com (requires one or more labels)"
+          if curl -sf --max-time 5 https://ubuntu.com > /dev/null 2>&1; then
+            echo "ERROR: ubuntu.com should not match **.ubuntu.com (requires one or more labels)"
             exit 1
           fi
-          echo "Correctly blocked docker.com (not matched by **.docker.com)"
+          echo "Correctly blocked ubuntu.com (not matched by **.ubuntu.com)"
 
       - name: Test blocked connection (httpbin.org)
         run: |
@@ -327,17 +327,19 @@ jobs:
           offline: 'true'
           allowed-hosts: |
             *.ubuntu.com
-            **.docker.com
 
       - name: Test single-label wildcard (archive.ubuntu.com via *.ubuntu.com)
         run: |
           curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
           echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com"
 
-      - name: Test globstar wildcard (production.cloudflare.docker.com via **.docker.com)
+      - name: Test globstar wildcard (us.archive.ubuntu.com via **.ubuntu.com should fail - not in rules)
         run: |
-          curl -sf --max-time 10 https://production.cloudflare.docker.com > /dev/null
-          echo "Successfully connected to production.cloudflare.docker.com via **.docker.com (2 labels deep)"
+          if curl -s --max-time 5 http://us.archive.ubuntu.com > /dev/null 2>&1; then
+            echo "ERROR: us.archive.ubuntu.com should be blocked (*.ubuntu.com only matches 1 label)"
+            exit 1
+          fi
+          echo "Correctly blocked us.archive.ubuntu.com (*.ubuntu.com does not match 2 labels deep)"
 
       - name: Test blocked connection (httpbin.org)
         run: |
