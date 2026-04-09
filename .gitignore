@@ -9,6 +9,7 @@ Thumbs.db
 .idea/
 .vscode/
 .claude
+.omc
 
 # Logs
 *.log

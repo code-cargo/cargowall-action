@@ -225,6 +225,129 @@ jobs:
             echo 'Correctly blocked example.com inside container'
           " || echo "Container test completed"
 
+  test-single-label-wildcard:
+    name: Single-Label Wildcard (*)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup CargoWall with single-label wildcard
+        uses: ./
+        with:
+          offline: 'true'
+          allowed-hosts: |
+            *.ubuntu.com
+
+      - name: Test allowed connection (archive.ubuntu.com matches *.ubuntu.com)
+        run: |
+          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com wildcard"
+
+      - name: Test allowed connection (security.ubuntu.com matches *.ubuntu.com)
+        run: |
+          curl -sf --max-time 10 https://security.ubuntu.com > /dev/null
+          echo "Successfully connected to security.ubuntu.com via *.ubuntu.com wildcard"
+
+      - name: Test bare domain not matched (ubuntu.com should not match *.ubuntu.com)
+        run: |
+          if curl -sf --max-time 5 https://ubuntu.com > /dev/null 2>&1; then
+            echo "ERROR: ubuntu.com should not match *.ubuntu.com (requires exactly one label)"
+            exit 1
+          fi
+          echo "Correctly blocked ubuntu.com (not matched by *.ubuntu.com)"
+
+      - name: Test blocked connection (httpbin.org)
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked httpbin.org"
+
+  test-globstar-wildcard:
+    name: Globstar Wildcard (**)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup CargoWall with globstar wildcard
+        uses: ./
+        with:
+          offline: 'true'
+          allowed-hosts: |
+            **.ubuntu.com
+
+      - name: Test allowed connection (archive.ubuntu.com matches **.ubuntu.com)
+        run: |
+          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          echo "Successfully connected to archive.ubuntu.com via **.ubuntu.com wildcard"
+
+      - name: Test bare domain not matched (ubuntu.com should not match **.ubuntu.com)
+        run: |
+          if curl -sf --max-time 5 https://ubuntu.com > /dev/null 2>&1; then
+            echo "ERROR: ubuntu.com should not match **.ubuntu.com (requires one or more labels)"
+            exit 1
+          fi
+          echo "Correctly blocked ubuntu.com (not matched by **.ubuntu.com)"
+
+      - name: Test blocked connection (httpbin.org)
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked httpbin.org"
+
+  test-mixed-wildcards:
+    name: Mixed Wildcard Rules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup CargoWall with mixed wildcards and exact hosts
+        uses: ./
+        with:
+          offline: 'true'
+          allowed-hosts: |
+            github.com
+            *.ubuntu.com
+            **.docker.com
+
+      - name: Test exact match (github.com)
+        run: |
+          curl -sf --max-time 10 https://github.com > /dev/null
+          echo "Successfully connected to github.com via exact match"
+
+      - name: Test single-label wildcard (archive.ubuntu.com via *.ubuntu.com)
+        run: |
+          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com"
+
+      - name: Test globstar wildcard (www.docker.com via **.docker.com)
+        run: |
+          curl -sf --max-time 10 https://www.docker.com > /dev/null
+          echo "Successfully connected to www.docker.com via **.docker.com"
+
+      - name: Test blocked connection (httpbin.org)
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked httpbin.org"
+
   test-sudo-lockdown:
     name: Sudo Lockdown
     runs-on: ubuntu-latest
