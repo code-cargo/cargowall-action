@@ -10,7 +10,8 @@
     "@actions/core": "^3.0.0",
     "@actions/exec": "^3.0.0",
     "@actions/github": "^9.0.0",
-    "@actions/io": "^3.0.2"
+    "@actions/io": "^3.0.2",
+    "vite": "^8.0.8"
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
