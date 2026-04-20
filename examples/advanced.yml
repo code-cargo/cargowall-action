@@ -9,14 +9,16 @@ jobs:
   build-with-config-file:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      # Use a JSON config file for complex rules
+      # Use a JSON config file for complex rules (note in this case you would have to load after checkout)
       - uses: code-cargo/cargowall-action@v1
         with:
           config-file: .github/cargowall.json
           fail-on-unsupported: true
           debug: true
+
+
 
       - name: Build application
         run: |
@@ -26,8 +28,6 @@ jobs:
   build-with-docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       # CargoWall automatically configures Docker DNS
       # so hostname filtering works inside containers
       - uses: code-cargo/cargowall-action@v1
@@ -41,6 +41,8 @@ jobs:
             ghcr.io
             pkg.github.com
             registry.npmjs.org
+
+      - uses: actions/checkout@v4
 
       # Docker builds work with hostname filtering
       - name: Build Docker image
@@ -70,8 +72,6 @@ jobs:
   self-hosted-example:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-
       # Self-hosted runners have full eBPF support
       - uses: code-cargo/cargowall-action@v1
         with:
@@ -81,6 +81,8 @@ jobs:
             10.0.0.0/8
             192.168.0.0/16
           fail-on-unsupported: true
+
+      - uses: actions/checkout@v6
 
       - name: Build with internal dependencies
         run: |
