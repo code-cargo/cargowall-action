@@ -9,14 +9,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       # Enable network egress filtering
       - uses: code-cargo/cargowall-action@v1
         with:
           allowed-hosts: |
             registry.npmjs.org
             cloudflare.com
+
+      - uses: actions/checkout@v6
 
       # Your build steps - only allowed hosts can be reached
       - name: Setup Node.js

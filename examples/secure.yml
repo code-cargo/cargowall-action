@@ -9,8 +9,6 @@ jobs:
   secure-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       # Maximum security: enable sudo lockdown to prevent
       # subsequent steps from disabling the firewall
       - uses: code-cargo/cargowall-action@v1
@@ -23,6 +21,8 @@ jobs:
           sudo-allow-commands: |
             /usr/bin/apt-get
             /usr/bin/docker
+
+      - uses: actions/checkout@v6
 
       # Package installation works via allowed commands
       - name: Install system dependencies
@@ -53,12 +53,12 @@ jobs:
   verify-security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: code-cargo/cargowall-action@v1
         with:
           allowed-hosts: "github.com"
           sudo-lockdown: true
+
+      - uses: actions/checkout@v6
 
       # Verify that bypass attempts are blocked
       - name: Verify iptables is blocked
