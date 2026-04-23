@@ -25382,6 +25382,13 @@ var CARGOWALL_LOG2 = "/tmp/cargowall.log";
 var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
 var STEP_TIMESTAMPS_FILE = "/tmp/cargowall-step-timestamps.jsonl";
 var WATCHER_LOG_FILE = "/tmp/cargowall-watcher.log";
+function shouldCallActionsApi(args) {
+  if (!args.token) return false;
+  if (!args.runId) return false;
+  if (args.skipInput === "true") return false;
+  if (args.skipEnv === "true") return false;
+  return true;
+}
 async function generateSummary() {
   try {
     const stat2 = await import_fs6.promises.stat(AUDIT_LOG);
@@ -25402,8 +25409,13 @@ async function generateSummary() {
     const runId = context2.runId;
     let apiSteps = null;
     let apiCallMade = false;
-    const skipApi = getInput("skip-actions-api") === "true" || process.env.CARGOWALL_SKIP_ACTIONS_API === "true";
-    if (token && runId && !skipApi) {
+    const callApi = shouldCallActionsApi({
+      token,
+      runId,
+      skipInput: getInput("skip-actions-api"),
+      skipEnv: process.env.CARGOWALL_SKIP_ACTIONS_API
+    });
+    if (callApi) {
       try {
         apiCallMade = true;
         info("Fetching step timing from GitHub API...");

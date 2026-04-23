@@ -12,6 +12,24 @@ const WATCHER_LOG_FILE = '/tmp/cargowall-watcher.log'
 
 export type StepEntry = { name: string; started_at: string | null; completed_at: string | null }
 
+// Decide whether to call the GitHub Actions REST API for step-name/job-status
+// enrichment. Pure / IO-free so it can be unit-tested. Returns true only when
+// a token and runId are available AND neither the `skip-actions-api` input
+// nor the `CARGOWALL_SKIP_ACTIONS_API` env var is set to 'true'. Either flag
+// is sufficient to skip — the env var remains as a power-user override.
+export function shouldCallActionsApi(args: {
+  token: string
+  runId: number
+  skipInput: string
+  skipEnv: string | undefined
+}): boolean {
+  if (!args.token) return false
+  if (!args.runId) return false
+  if (args.skipInput === 'true') return false
+  if (args.skipEnv === 'true') return false
+  return true
+}
+
 export async function generateSummary(): Promise<void> {
   // Check if audit log exists and has content
   try {
@@ -41,9 +59,13 @@ export async function generateSummary(): Promise<void> {
     // whether the watcher needs an explicit wait: if the API was called, the
     // round-trip already provided enough delay; if skipped, we must wait.
     let apiCallMade = false
-    const skipApi = core.getInput('skip-actions-api') === 'true'
-      || process.env.CARGOWALL_SKIP_ACTIONS_API === 'true'
-    if (token && runId && !skipApi) {
+    const callApi = shouldCallActionsApi({
+      token,
+      runId,
+      skipInput: core.getInput('skip-actions-api'),
+      skipEnv: process.env.CARGOWALL_SKIP_ACTIONS_API,
+    })
+    if (callApi) {
       try {
         apiCallMade = true
         core.info('Fetching step timing from GitHub API...')

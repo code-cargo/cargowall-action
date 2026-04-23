@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { enhanceApiStepsWithDiag, buildStepsFromDiag, type DiagData, type StepEntry } from './summary'
+import { enhanceApiStepsWithDiag, buildStepsFromDiag, shouldCallActionsApi, type DiagData, type StepEntry } from './summary'
 
 // Mock @actions/core — buildStepsFromDiag calls core.getState and core.info
 vi.mock('@actions/core', () => ({
@@ -278,5 +278,44 @@ describe('buildStepsFromDiag', () => {
     const result = buildStepsFromDiag(diag)
     expect(result).toHaveLength(1)
     expect(result[0].name).toBe('Setup CW')
+  })
+})
+
+describe('shouldCallActionsApi', () => {
+  const baseArgs = {
+    token: 'tok',
+    runId: 123,
+    skipInput: 'false',
+    skipEnv: undefined as string | undefined,
+  }
+
+  it('returns true with token + runId and both skip flags off', () => {
+    expect(shouldCallActionsApi(baseArgs)).toBe(true)
+  })
+
+  it('returns false when token is empty', () => {
+    expect(shouldCallActionsApi({ ...baseArgs, token: '' })).toBe(false)
+  })
+
+  it('returns false when runId is 0', () => {
+    expect(shouldCallActionsApi({ ...baseArgs, runId: 0 })).toBe(false)
+  })
+
+  it('returns false when skip-actions-api input is "true" even with token present', () => {
+    expect(shouldCallActionsApi({ ...baseArgs, skipInput: 'true' })).toBe(false)
+  })
+
+  it('returns false when CARGOWALL_SKIP_ACTIONS_API env var is "true"', () => {
+    expect(shouldCallActionsApi({ ...baseArgs, skipEnv: 'true' })).toBe(false)
+  })
+
+  it('env var still skips when input is "false" (env override preserved)', () => {
+    expect(shouldCallActionsApi({ ...baseArgs, skipInput: 'false', skipEnv: 'true' })).toBe(false)
+  })
+
+  it('only the literal string "true" skips — other truthy-looking values do not', () => {
+    expect(shouldCallActionsApi({ ...baseArgs, skipInput: '1' })).toBe(true)
+    expect(shouldCallActionsApi({ ...baseArgs, skipInput: 'TRUE' })).toBe(true)
+    expect(shouldCallActionsApi({ ...baseArgs, skipEnv: 'yes' })).toBe(true)
   })
 })
