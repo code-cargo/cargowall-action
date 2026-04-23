@@ -25402,7 +25402,7 @@ async function generateSummary() {
     const runId = context2.runId;
     let apiSteps = null;
     let apiCallMade = false;
-    const skipApi = process.env.CARGOWALL_SKIP_ACTIONS_API === "true";
+    const skipApi = getInput("skip-actions-api") === "true" || process.env.CARGOWALL_SKIP_ACTIONS_API === "true";
     if (token && runId && !skipApi) {
       try {
         apiCallMade = true;

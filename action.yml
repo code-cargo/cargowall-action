@@ -59,8 +59,11 @@ inputs:
   audit-summary:
     description: 'Generate audit summary in workflow summary (requires mode: audit or enforce)'
     default: 'true'
+  skip-actions-api:
+    description: 'Skip the GitHub Actions API call used to enrich audit-summary step names and job status. Falls back to local _diag data. Set to true on installations near the per-repo rate limit (1,000 req/hr).'
+    default: 'false'
   github-token:
-    description: 'GitHub token for downloading the binary and fetching step timing in audit summary'
+    description: 'GitHub token for fetching step timing in audit summary'
     default: ${{ github.token }}
   api-url:
     description: 'CodeCargo API URL for audit upload and policy fetch (policy requires CodeCargo GitHub App installation). Requires permissions: id-token: write'

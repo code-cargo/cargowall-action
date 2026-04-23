@@ -1,13 +1,53 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import * as io from '@actions/io'
-import { promises as fs } from 'fs'
+import { HttpClient } from '@actions/http-client'
+import { createWriteStream, promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { pipeline } from 'stream/promises'
+import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
 const CARGOWALL_VERSION = 'v1.1.0'
+
+const http = new HttpClient('cargowall-action')
+
+// Download a release asset from the public GitHub CDN, streaming to disk.
+// Intentionally sends no Authorization header: release-asset URLs 302 to a
+// pre-signed objects.githubusercontent.com URL that rejects stray auth, and
+// staying anonymous keeps us off the installation REST rate limit.
+async function downloadAsset(url: string, dest: string): Promise<number> {
+  const attempt = async (): Promise<number> => {
+    const res = await http.get(url)
+    const status = res.message.statusCode ?? 0
+    if (status < 200 || status >= 300) {
+      res.message.resume()
+      return status
+    }
+    await pipeline(res.message, createWriteStream(dest))
+    return status
+  }
+
+  let status: number
+  try {
+    status = await attempt()
+  } catch {
+    await fs.unlink(dest).catch(() => {})
+    await sleep(500)
+    return attempt()
+  }
+  if (status >= 500) {
+    await fs.unlink(dest).catch(() => {})
+    await sleep(500)
+    return attempt()
+  }
+  if (status < 200 || status >= 300) {
+    await fs.unlink(dest).catch(() => {})
+  }
+  return status
+}
 
 export async function setup(): Promise<boolean> {
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'
@@ -86,83 +126,54 @@ async function downloadAndInstall(): Promise<void> {
   }
 
   const repo = 'code-cargo/cargowall'
-  const githubToken = core.getInput('github-token')
+  const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`
   core.info(`CargoWall version: ${CARGOWALL_VERSION}`)
 
   const binaryAsset = `cargowall-linux-${arch}`
   core.info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`)
 
-  // Download binary and checksums using gh CLI
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cargowall-'))
   const binaryDest = path.join(tempDir, BINARY_NAME)
 
   try {
-    const ghEnv = githubToken ? { ...process.env, GH_TOKEN: githubToken } : undefined
-    const dlResult = await exec.exec('gh', [
-      'release', 'download', CARGOWALL_VERSION,
-      '--repo', repo,
-      '--pattern', binaryAsset,
-      '--dir', tempDir
-    ], { ignoreReturnCode: true, env: ghEnv })
-    if (dlResult !== 0) {
-      throw new Error('Failed to download cargowall binary')
+    const binStatus = await downloadAsset(`${releaseBase}/${binaryAsset}`, binaryDest)
+    if (binStatus < 200 || binStatus >= 300) {
+      throw new Error(`Failed to download cargowall binary (HTTP ${binStatus})`)
     }
-    // gh downloads with the original asset name, rename to expected path
-    await fs.rename(path.join(tempDir, binaryAsset), binaryDest)
 
-    // Download checksum file
     const checksumDest = path.join(tempDir, 'checksums.txt')
-    const csResult = await exec.exec('gh', [
-      'release', 'download', CARGOWALL_VERSION,
-      '--repo', repo,
-      '--pattern', 'checksums.txt',
-      '--dir', tempDir
-    ], { ignoreReturnCode: true, silent: true, env: ghEnv })
+    const csStatus = await downloadAsset(`${releaseBase}/checksums.txt`, checksumDest)
+    if (csStatus < 200 || csStatus >= 300) {
+      throw new Error(`Failed to download checksums.txt (HTTP ${csStatus})`)
+    }
 
-    if (csResult === 0) {
-      core.info('Verifying checksum...')
-      const checksums = await fs.readFile(checksumDest, 'utf8')
-      const expectedLine = checksums.split('\n').find(l => l.includes(`cargowall-linux-${arch}`))
-      if (expectedLine) {
-        const expectedChecksum = expectedLine.trim().split(/\s+/)[0]
+    core.info('Verifying checksum...')
+    const checksums = await fs.readFile(checksumDest, 'utf8')
+    const expectedLine = checksums.split('\n').find(l => l.includes(binaryAsset))
+    if (!expectedLine) {
+      throw new Error(`No checksum entry for ${binaryAsset} in checksums.txt`)
+    }
+    const expectedChecksum = expectedLine.trim().split(/\s+/)[0]
 
-        let actualChecksum = ''
-        await exec.exec('sha256sum', [binaryDest], {
-          listeners: {
-            stdout: (data: Buffer) => { actualChecksum += data.toString() }
-          }
-        })
-        actualChecksum = actualChecksum.trim().split(/\s+/)[0]
-
-        if (expectedChecksum !== actualChecksum) {
-          throw new Error(`Checksum verification failed\nExpected: ${expectedChecksum}\nActual: ${actualChecksum}`)
-        }
-        core.info('Checksum verified')
+    let actualChecksum = ''
+    await exec.exec('sha256sum', [binaryDest], {
+      listeners: {
+        stdout: (data: Buffer) => { actualChecksum += data.toString() }
       }
-    } else {
-      core.warning('Could not download checksums — attestation verification will still be enforced')
+    })
+    actualChecksum = actualChecksum.trim().split(/\s+/)[0]
+
+    if (expectedChecksum !== actualChecksum) {
+      throw new Error(`Checksum verification failed\nExpected: ${expectedChecksum}\nActual: ${actualChecksum}`)
     }
+    core.info('Checksum verified')
 
-    // Verify GitHub artifact attestation
-    core.info('Verifying artifact attestation...')
-    const attestResult = await exec.exec('gh', [
-      'attestation', 'verify', binaryDest,
-      '--repo', repo
-    ], { ignoreReturnCode: true, env: ghEnv })
+    // TODO: re-add provenance verification via Sigstore bundle (see follow-up)
 
-
-    if (attestResult === 0) {
-      core.info('Attestation verified: binary provenance confirmed')
-    } else {
-      throw new Error('Attestation verification failed — binary provenance could not be confirmed')
-    }
-
-    // Install binary
     await exec.exec('chmod', ['+x', binaryDest])
     await exec.exec('sudo', ['mv', binaryDest, path.join(INSTALL_DIR, BINARY_NAME)])
     core.info(`Installed cargowall to ${INSTALL_DIR}/${BINARY_NAME}`)
   } finally {
-    // Clean up temp dir
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
   }
 

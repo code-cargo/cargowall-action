@@ -41,7 +41,8 @@ export async function generateSummary(): Promise<void> {
     // whether the watcher needs an explicit wait: if the API was called, the
     // round-trip already provided enough delay; if skipped, we must wait.
     let apiCallMade = false
-    const skipApi = process.env.CARGOWALL_SKIP_ACTIONS_API === 'true'
+    const skipApi = core.getInput('skip-actions-api') === 'true'
+      || process.env.CARGOWALL_SKIP_ACTIONS_API === 'true'
     if (token && runId && !skipApi) {
       try {
         apiCallMade = true

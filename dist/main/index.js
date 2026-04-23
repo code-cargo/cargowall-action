@@ -31,7 +31,7 @@ var require_tunnel = __commonJS({
     "use strict";
     var net = require("net");
     var tls = require("tls");
-    var http2 = require("http");
+    var http3 = require("http");
     var https2 = require("https");
     var events2 = require("events");
     var assert = require("assert");
@@ -42,12 +42,12 @@ var require_tunnel = __commonJS({
     exports2.httpsOverHttps = httpsOverHttps2;
     function httpOverHttp2(options) {
       var agent = new TunnelingAgent(options);
-      agent.request = http2.request;
+      agent.request = http3.request;
       return agent;
     }
     function httpsOverHttp2(options) {
       var agent = new TunnelingAgent(options);
-      agent.request = http2.request;
+      agent.request = http3.request;
       agent.createSocket = createSecureSocket;
       agent.defaultPort = 443;
       return agent;
@@ -68,7 +68,7 @@ var require_tunnel = __commonJS({
       var self = this;
       self.options = options || {};
       self.proxyOptions = self.options.proxy || {};
-      self.maxSockets = self.options.maxSockets || http2.Agent.defaultMaxSockets;
+      self.maxSockets = self.options.maxSockets || http3.Agent.defaultMaxSockets;
       self.requests = [];
       self.sockets = [];
       self.on("free", function onFree(socket, host, port, localAddress) {
@@ -6674,7 +6674,7 @@ var require_client_h2 = __commonJS({
   "node_modules/undici/lib/dispatcher/client-h2.js"(exports2, module2) {
     "use strict";
     var assert = require("node:assert");
-    var { pipeline } = require("node:stream");
+    var { pipeline: pipeline2 } = require("node:stream");
     var util = require_util();
     var {
       RequestContentLengthMismatchError,
@@ -6704,11 +6704,11 @@ var require_client_h2 = __commonJS({
     var kOpenStreams = /* @__PURE__ */ Symbol("open streams");
     var extractBody;
     var h2ExperimentalWarned = false;
-    var http2;
+    var http22;
     try {
-      http2 = require("node:http2");
+      http22 = require("node:http2");
     } catch {
-      http2 = { constants: {} };
+      http22 = { constants: {} };
     }
     var {
       constants: {
@@ -6720,7 +6720,7 @@ var require_client_h2 = __commonJS({
         HTTP2_HEADER_EXPECT,
         HTTP2_HEADER_STATUS
       }
-    } = http2;
+    } = http22;
     function parseH2Headers(headers) {
       const result = [];
       for (const [name, value] of Object.entries(headers)) {
@@ -6742,7 +6742,7 @@ var require_client_h2 = __commonJS({
           code: "UNDICI-H2"
         });
       }
-      const session = http2.connect(client[kUrl], {
+      const session = http22.connect(client[kUrl], {
         createConnection: () => socket,
         peerMaxConcurrentStreams: client[kMaxConcurrentStreams]
       });
@@ -7121,7 +7121,7 @@ var require_client_h2 = __commonJS({
     }
     function writeStream(abort, socket, expectsPayload, h2stream, body, client, request2, contentLength) {
       assert(contentLength !== 0 || client[kRunning] === 0, "stream body cannot be pipelined");
-      const pipe = pipeline(
+      const pipe = pipeline2(
         body,
         h2stream,
         (err) => {
@@ -7397,7 +7397,7 @@ var require_client = __commonJS({
     "use strict";
     var assert = require("node:assert");
     var net = require("node:net");
-    var http2 = require("node:http");
+    var http3 = require("node:http");
     var util = require_util();
     var { channels } = require_diagnostics();
     var Request = require_request();
@@ -7585,7 +7585,7 @@ var require_client = __commonJS({
         this[kUrl] = util.parseOrigin(url);
         this[kConnector] = connect2;
         this[kPipelining] = pipelining != null ? pipelining : 1;
-        this[kMaxHeadersSize] = maxHeaderSize || http2.maxHeaderSize;
+        this[kMaxHeadersSize] = maxHeaderSize || http3.maxHeaderSize;
         this[kKeepAliveDefaultTimeout] = keepAliveTimeout == null ? 4e3 : keepAliveTimeout;
         this[kKeepAliveMaxTimeout] = keepAliveMaxTimeout == null ? 6e5 : keepAliveMaxTimeout;
         this[kKeepAliveTimeoutThreshold] = keepAliveTimeoutThreshold == null ? 2e3 : keepAliveTimeoutThreshold;
@@ -10111,7 +10111,7 @@ var require_api_pipeline = __commonJS({
         util.destroy(ret, err);
       }
     };
-    function pipeline(opts, handler2) {
+    function pipeline2(opts, handler2) {
       try {
         const pipelineHandler = new PipelineHandler(opts, handler2);
         this.dispatch({ ...opts, body: pipelineHandler.req }, pipelineHandler);
@@ -10120,7 +10120,7 @@ var require_api_pipeline = __commonJS({
         return new PassThrough().destroy(err);
       }
     }
-    module2.exports = pipeline;
+    module2.exports = pipeline2;
   }
 });
 
@@ -13285,7 +13285,7 @@ var require_fetch = __commonJS({
       subresourceSet
     } = require_constants3();
     var EE = require("node:events");
-    var { Readable, pipeline, finished } = require("node:stream");
+    var { Readable, pipeline: pipeline2, finished } = require("node:stream");
     var { addAbortListener, isErrored, isReadable, bufferToLowerCasedHeaderName } = require_util();
     var { dataURLProcessor, serializeAMimeType, minimizeSupportedMimeType } = require_data_url();
     var { getGlobalDispatcher } = require_global2();
@@ -14229,7 +14229,7 @@ var require_fetch = __commonJS({
                 status,
                 statusText,
                 headersList,
-                body: decoders.length ? pipeline(this.body, ...decoders, (err) => {
+                body: decoders.length ? pipeline2(this.body, ...decoders, (err) => {
                   if (err) {
                     this.onError(err);
                   }
@@ -18193,7 +18193,7 @@ ${value}`;
 var require_eventsource = __commonJS({
   "node_modules/undici/lib/web/eventsource/eventsource.js"(exports2, module2) {
     "use strict";
-    var { pipeline } = require("node:stream");
+    var { pipeline: pipeline2 } = require("node:stream");
     var { fetching } = require_fetch();
     var { makeRequest } = require_request2();
     var { webidl } = require_webidl();
@@ -18351,7 +18351,7 @@ var require_eventsource = __commonJS({
               ));
             }
           });
-          pipeline(
+          pipeline2(
             response.body.stream,
             eventSourceStream,
             (error2) => {
@@ -18781,7 +18781,7 @@ var require_lib = __commonJS({
     exports2.HttpClient = exports2.HttpClientResponse = exports2.HttpClientError = exports2.MediaTypes = exports2.Headers = exports2.HttpCodes = void 0;
     exports2.getProxyUrl = getProxyUrl2;
     exports2.isHttps = isHttps;
-    var http2 = __importStar(require("http"));
+    var http3 = __importStar(require("http"));
     var https2 = __importStar(require("https"));
     var pm = __importStar(require_proxy());
     var tunnel2 = __importStar(require_tunnel2());
@@ -19171,7 +19171,7 @@ var require_lib = __commonJS({
         const info2 = {};
         info2.parsedUrl = requestUrl;
         const usingSsl = info2.parsedUrl.protocol === "https:";
-        info2.httpModule = usingSsl ? https2 : http2;
+        info2.httpModule = usingSsl ? https2 : http3;
         const defaultPort = usingSsl ? 443 : 80;
         info2.options = {};
         info2.options.host = info2.parsedUrl.hostname;
@@ -19272,7 +19272,7 @@ var require_lib = __commonJS({
         const usingSsl = parsedUrl.protocol === "https:";
         let maxSockets = 100;
         if (this.requestOptions) {
-          maxSockets = this.requestOptions.maxSockets || http2.globalAgent.maxSockets;
+          maxSockets = this.requestOptions.maxSockets || http3.globalAgent.maxSockets;
         }
         if (proxyUrl && proxyUrl.hostname) {
           const agentOptions = {
@@ -19294,7 +19294,7 @@ var require_lib = __commonJS({
         }
         if (!agent) {
           const options = { keepAlive: this._keepAlive, maxSockets };
-          agent = usingSsl ? new https2.Agent(options) : new http2.Agent(options);
+          agent = usingSsl ? new https2.Agent(options) : new http3.Agent(options);
           this._agent = agent;
         }
         if (usingSsl && this._ignoreSslError) {
@@ -21556,9 +21556,44 @@ function getIDToken(aud) {
 var import_fs2 = require("fs");
 var os6 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
+var import_promises = require("stream/promises");
+var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
 var CARGOWALL_VERSION = "v1.1.0";
+var http2 = new HttpClient("cargowall-action");
+async function downloadAsset(url, dest) {
+  const attempt = async () => {
+    const res = await http2.get(url);
+    const status2 = res.message.statusCode ?? 0;
+    if (status2 < 200 || status2 >= 300) {
+      res.message.resume();
+      return status2;
+    }
+    await (0, import_promises.pipeline)(res.message, (0, import_fs2.createWriteStream)(dest));
+    return status2;
+  };
+  let status;
+  try {
+    status = await attempt();
+  } catch {
+    await import_fs2.promises.unlink(dest).catch(() => {
+    });
+    await (0, import_promises2.setTimeout)(500);
+    return attempt();
+  }
+  if (status >= 500) {
+    await import_fs2.promises.unlink(dest).catch(() => {
+    });
+    await (0, import_promises2.setTimeout)(500);
+    return attempt();
+  }
+  if (status < 200 || status >= 300) {
+    await import_fs2.promises.unlink(dest).catch(() => {
+    });
+  }
+  return status;
+}
 async function setup() {
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const binaryPath = getInput("binary-path");
@@ -21620,79 +21655,44 @@ async function downloadAndInstall() {
     throw new Error(`CargoWall only supports Linux (detected: ${platform3})`);
   }
   const repo = "code-cargo/cargowall";
-  const githubToken = getInput("github-token");
+  const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`;
   info(`CargoWall version: ${CARGOWALL_VERSION}`);
   const binaryAsset = `cargowall-linux-${arch3}`;
   info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`);
   const tempDir = await import_fs2.promises.mkdtemp(path4.join(os6.tmpdir(), "cargowall-"));
   const binaryDest = path4.join(tempDir, BINARY_NAME);
   try {
-    const ghEnv = githubToken ? { ...process.env, GH_TOKEN: githubToken } : void 0;
-    const dlResult = await exec("gh", [
-      "release",
-      "download",
-      CARGOWALL_VERSION,
-      "--repo",
-      repo,
-      "--pattern",
-      binaryAsset,
-      "--dir",
-      tempDir
-    ], { ignoreReturnCode: true, env: ghEnv });
-    if (dlResult !== 0) {
-      throw new Error("Failed to download cargowall binary");
+    const binStatus = await downloadAsset(`${releaseBase}/${binaryAsset}`, binaryDest);
+    if (binStatus < 200 || binStatus >= 300) {
+      throw new Error(`Failed to download cargowall binary (HTTP ${binStatus})`);
     }
-    await import_fs2.promises.rename(path4.join(tempDir, binaryAsset), binaryDest);
     const checksumDest = path4.join(tempDir, "checksums.txt");
-    const csResult = await exec("gh", [
-      "release",
-      "download",
-      CARGOWALL_VERSION,
-      "--repo",
-      repo,
-      "--pattern",
-      "checksums.txt",
-      "--dir",
-      tempDir
-    ], { ignoreReturnCode: true, silent: true, env: ghEnv });
-    if (csResult === 0) {
-      info("Verifying checksum...");
-      const checksums = await import_fs2.promises.readFile(checksumDest, "utf8");
-      const expectedLine = checksums.split("\n").find((l) => l.includes(`cargowall-linux-${arch3}`));
-      if (expectedLine) {
-        const expectedChecksum = expectedLine.trim().split(/\s+/)[0];
-        let actualChecksum = "";
-        await exec("sha256sum", [binaryDest], {
-          listeners: {
-            stdout: (data) => {
-              actualChecksum += data.toString();
-            }
-          }
-        });
-        actualChecksum = actualChecksum.trim().split(/\s+/)[0];
-        if (expectedChecksum !== actualChecksum) {
-          throw new Error(`Checksum verification failed
+    const csStatus = await downloadAsset(`${releaseBase}/checksums.txt`, checksumDest);
+    if (csStatus < 200 || csStatus >= 300) {
+      throw new Error(`Failed to download checksums.txt (HTTP ${csStatus})`);
+    }
+    info("Verifying checksum...");
+    const checksums = await import_fs2.promises.readFile(checksumDest, "utf8");
+    const expectedLine = checksums.split("\n").find((l) => l.includes(binaryAsset));
+    if (!expectedLine) {
+      throw new Error(`No checksum entry for ${binaryAsset} in checksums.txt`);
+    }
+    const expectedChecksum = expectedLine.trim().split(/\s+/)[0];
+    let actualChecksum = "";
+    await exec("sha256sum", [binaryDest], {
+      listeners: {
+        stdout: (data) => {
+          actualChecksum += data.toString();
+        }
+      }
+    });
+    actualChecksum = actualChecksum.trim().split(/\s+/)[0];
+    if (expectedChecksum !== actualChecksum) {
+      throw new Error(`Checksum verification failed
 Expected: ${expectedChecksum}
 Actual: ${actualChecksum}`);
-        }
-        info("Checksum verified");
-      }
-    } else {
-      warning("Could not download checksums \u2014 attestation verification will still be enforced");
     }
-    info("Verifying artifact attestation...");
-    const attestResult = await exec("gh", [
-      "attestation",
-      "verify",
-      binaryDest,
-      "--repo",
-      repo
-    ], { ignoreReturnCode: true, env: ghEnv });
-    if (attestResult === 0) {
-      info("Attestation verified: binary provenance confirmed");
-    } else {
-      throw new Error("Attestation verification failed \u2014 binary provenance could not be confirmed");
-    }
+    info("Checksum verified");
     await exec("chmod", ["+x", binaryDest]);
     await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
     info(`Installed cargowall to ${INSTALL_DIR}/${BINARY_NAME}`);
@@ -25996,7 +25996,7 @@ async function start() {
       endGroup();
       return { supported: false, pid: null };
     }
-    await sleep(1e3);
+    await sleep2(1e3);
   }
   try {
     await import_fs6.promises.access(READY_FILE);
@@ -26039,7 +26039,7 @@ async function restoreDns() {
 function parseList(lines) {
   return lines.flatMap((line) => line.split(",")).map((entry) => entry.trim()).filter(Boolean).join(",");
 }
-function sleep(ms) {
+function sleep2(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 
