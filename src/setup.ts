@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
-const CARGOWALL_VERSION = 'v1.1.0'
+const CARGOWALL_VERSION = 'v1.2.0-rc.0'
 
 const http = new HttpClient('cargowall-action')
 
