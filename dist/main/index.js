@@ -21560,7 +21560,7 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.2.0-rc.0";
+var CARGOWALL_VERSION = "v1.2.0-rc.1";
 var http2 = new HttpClient("cargowall-action");
 async function downloadAsset(url, dest) {
   const attempt = async () => {
@@ -21693,6 +21693,21 @@ Expected: ${expectedChecksum}
 Actual: ${actualChecksum}`);
     }
     info("Checksum verified");
+    const bundleDest = path4.join(tempDir, "attestations.sigstore.json");
+    const bundleStatus = await downloadAsset(`${releaseBase}/attestations.sigstore.json`, bundleDest);
+    if (bundleStatus < 200 || bundleStatus >= 300) {
+      throw new Error(`Failed to download attestations.sigstore.json (HTTP ${bundleStatus})`);
+    }
+    info("Verifying provenance...");
+    const verifyResult = await exec(
+      "gh",
+      ["attestation", "verify", binaryDest, "--bundle", bundleDest, "--repo", repo],
+      { ignoreReturnCode: true }
+    );
+    if (verifyResult !== 0) {
+      throw new Error("Provenance verification failed \u2014 binary attestation could not be confirmed");
+    }
+    info("Provenance verified");
     await exec("chmod", ["+x", binaryDest]);
     await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
     info(`Installed cargowall to ${INSTALL_DIR}/${BINARY_NAME}`);

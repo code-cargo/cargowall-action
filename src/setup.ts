@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
-const CARGOWALL_VERSION = 'v1.2.0-rc.0'
+const CARGOWALL_VERSION = 'v1.2.0-rc.1'
 
 const http = new HttpClient('cargowall-action')
 
@@ -168,7 +168,22 @@ async function downloadAndInstall(): Promise<void> {
     }
     core.info('Checksum verified')
 
-    // TODO: re-add provenance verification via Sigstore bundle (see follow-up)
+    const bundleDest = path.join(tempDir, 'attestations.sigstore.json')
+    const bundleStatus = await downloadAsset(`${releaseBase}/attestations.sigstore.json`, bundleDest)
+    if (bundleStatus < 200 || bundleStatus >= 300) {
+      throw new Error(`Failed to download attestations.sigstore.json (HTTP ${bundleStatus})`)
+    }
+
+    core.info('Verifying provenance...')
+    const verifyResult = await exec.exec(
+      'gh',
+      ['attestation', 'verify', binaryDest, '--bundle', bundleDest, '--repo', repo],
+      { ignoreReturnCode: true }
+    )
+    if (verifyResult !== 0) {
+      throw new Error('Provenance verification failed — binary attestation could not be confirmed')
+    }
+    core.info('Provenance verified')
 
     await exec.exec('chmod', ['+x', binaryDest])
     await exec.exec('sudo', ['mv', binaryDest, path.join(INSTALL_DIR, BINARY_NAME)])
