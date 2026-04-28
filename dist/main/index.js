@@ -21560,7 +21560,7 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.2.0-rc.1";
+var CARGOWALL_VERSION = "v1.2.0";
 var http2 = new HttpClient("cargowall-action");
 async function downloadAsset(url, dest) {
   const attempt = async () => {
