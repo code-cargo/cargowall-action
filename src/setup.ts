@@ -175,6 +175,11 @@ async function downloadAndInstall(): Promise<void> {
     }
 
     core.info('Verifying provenance...')
+    try {
+      await io.which('gh', true)
+    } catch {
+      throw new Error('gh CLI not found on this runner — required for provenance verification')
+    }
     const verifyResult = await exec.exec(
       'gh',
       ['attestation', 'verify', binaryDest, '--bundle', bundleDest, '--repo', repo],

@@ -21699,6 +21699,11 @@ Actual: ${actualChecksum}`);
       throw new Error(`Failed to download attestations.sigstore.json (HTTP ${bundleStatus})`);
     }
     info("Verifying provenance...");
+    try {
+      await which("gh", true);
+    } catch {
+      throw new Error("gh CLI not found on this runner \u2014 required for provenance verification");
+    }
     const verifyResult = await exec(
       "gh",
       ["attestation", "verify", binaryDest, "--bundle", bundleDest, "--repo", repo],
