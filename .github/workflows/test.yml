@@ -373,29 +373,32 @@ jobs:
           curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
           echo "Connected to archive.ubuntu.com (.ubuntu.com stripped -> matched 'archive' rule)"
 
-      - name: Test bypass for unmatched name under a search domain (resolves, not refused)
+      - name: Test bypass for an unmatched name under a search domain (forwarded, not refused)
         run: |
-          # security.ubuntu.com has no host rule, but it ends in a configured
-          # search-domain suffix, so the DNS proxy bypasses it instead of refusing
-          # it as DNS tunneling.
-          OUTPUT=$(nslookup security.ubuntu.com 127.0.0.1 2>&1 || true)
+          # A made-up label under the .ubuntu.com search domain has no host rule, so
+          # the proxy must BYPASS query filtering and forward it upstream rather than
+          # refuse it as DNS tunneling. A non-existent label is used deliberately: it
+          # has no CNAME chain to escape the suffix, so bypass -> upstream NXDOMAIN,
+          # whereas a refusal (REFUSED) would mean bypass did not apply.
+          OUTPUT=$(nslookup nonexistent-cargowall-bypass-test.ubuntu.com 127.0.0.1 2>&1 || true)
           echo "$OUTPUT"
-          if echo "$OUTPUT" | grep -qi "refused\|SERVFAIL"; then
-            echo "ERROR: security.ubuntu.com should be bypassed (resolved), not refused"
+          if echo "$OUTPUT" | grep -qi "REFUSED"; then
+            echo "ERROR: a name under the search domain should be bypassed (forwarded), not REFUSED"
             exit 1
           fi
-          echo "Correctly bypassed DNS query for security.ubuntu.com"
+          echo "Correctly bypassed DNS query for a name under the search domain"
 
       - name: Test name outside any search domain is still refused (DNS tunneling guard)
         run: |
-          # attacker-domain has no rule and is not under a search domain, so the
-          # proxy should still refuse it. Soft-checked to match the DNS-filtering job.
-          OUTPUT=$(nslookup attacker-domain-98765.example 127.0.0.1 2>&1 || true)
+          # No host rule and not under a search domain -> the proxy refuses it.
+          # `.example` is a reserved TLD, so this can never resolve for real.
+          OUTPUT=$(nslookup blocked-cargowall-test.example 127.0.0.1 2>&1 || true)
           echo "$OUTPUT"
-          if echo "$OUTPUT" | grep -qi "refused\|SERVFAIL\|NXDOMAIN\|can't find\|timed out"; then
-            echo "Correctly refused/failed DNS query for non-allowed, non-search-domain name"
+          if echo "$OUTPUT" | grep -qi "REFUSED"; then
+            echo "Correctly refused DNS query for an off-suffix, unmatched name"
           else
-            echo "WARNING: attacker-domain query may have succeeded unexpectedly"
+            echo "ERROR: an off-suffix, unmatched name should be REFUSED"
+            exit 1
           fi
 
   test-sudo-lockdown:
