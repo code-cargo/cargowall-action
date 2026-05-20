@@ -25827,6 +25827,7 @@ async function parseExecutedSteps(diagDir) {
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
 var READY_FILE = "/tmp/cargowall-ready";
+var PID_FILE = "/tmp/cargowall.pid";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
 var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
@@ -25905,7 +25906,13 @@ async function start() {
   }
   const dnsResult = await detectDnsUpstream(getInput("dns-upstream"));
   const dnsUpstream = dnsResult.primary;
-  const args = ["start", "--github-action", `--dns-upstream=${dnsUpstream}`];
+  const args = [
+    "start",
+    "--github-action",
+    `--dns-upstream=${dnsUpstream}`,
+    `--pidfile=${PID_FILE}`,
+    `--ready-file=${READY_FILE}`
+  ];
   if (auditSummary) {
     args.push(`--audit-log=${AUDIT_LOG}`);
   }
@@ -25988,58 +25995,49 @@ async function start() {
   });
   child2.unref();
   (0, import_fs7.closeSync)(logFd);
-  const pid = child2.pid;
-  if (!pid) {
+  const spawnedPid = child2.pid;
+  if (!spawnedPid) {
     throw new Error("Failed to start cargowall process");
   }
-  info(`CargoWall started with PID: ${pid}`);
-  setOutput("pid", pid);
+  info(`CargoWall launcher started (PID: ${spawnedPid})`);
   info("Waiting for cargowall to initialize...");
+  let cargowallPid = null;
+  let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
       await import_fs6.promises.access(READY_FILE);
-      info("CargoWall is ready");
+      ready = true;
       break;
     } catch {
     }
-    const killCheck = await exec("sudo", ["kill", "-0", String(pid)], {
-      ignoreReturnCode: true,
-      silent: true
-    });
-    if (killCheck !== 0) {
+    cargowallPid = cargowallPid ?? await readPidFile();
+    if (cargowallPid !== null && !await isProcessAlive(cargowallPid)) {
       error("CargoWall process exited unexpectedly");
       await showLastLog();
-      if (failOnUnsupported) {
-        endGroup();
-        throw new Error("CargoWall failed to start");
-      }
-      warning("CargoWall failed to start. Network filtering is not active.");
-      setOutput("supported", "false");
-      await restoreDns();
-      endGroup();
-      return { supported: false, pid: null };
+      return handleStartupFailure(
+        "CargoWall failed to start. Network filtering is not active.",
+        "CargoWall failed to start",
+        failOnUnsupported
+      );
     }
     await sleep2(1e3);
   }
-  try {
-    await import_fs6.promises.access(READY_FILE);
-  } catch {
+  if (!ready) {
     error("Timeout waiting for cargowall to be ready");
     await showLastLog();
-    await exec("sudo", ["kill", String(pid)], { ignoreReturnCode: true, silent: true });
-    if (failOnUnsupported) {
-      endGroup();
-      throw new Error("CargoWall timed out starting up");
-    }
-    warning("CargoWall timed out. Network filtering is not active.");
-    setOutput("supported", "false");
-    await restoreDns();
-    endGroup();
-    return { supported: false, pid: null };
+    await stopCargowall([cargowallPid ?? await readPidFile(), spawnedPid]);
+    return handleStartupFailure(
+      "CargoWall timed out. Network filtering is not active.",
+      "CargoWall timed out starting up",
+      failOnUnsupported
+    );
   }
+  info("CargoWall is ready");
+  cargowallPid = cargowallPid ?? await readPidFile();
+  const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
-  saveState("cargowall-pid", String(pid));
-  await import_fs6.promises.writeFile("/tmp/cargowall.pid", String(pid));
+  setOutput("pid", reportedPid);
+  saveState("cargowall-pid", String(reportedPid));
   endGroup();
   notice("CargoWall firewall is active. Network egress is being filtered.");
   if (debug2) {
@@ -26050,7 +26048,44 @@ async function start() {
     }
     endGroup();
   }
-  return { supported: true, pid };
+  return { supported: true, pid: reportedPid };
+}
+async function isProcessAlive(pid) {
+  const rc = await exec("sudo", ["kill", "-0", String(pid)], {
+    ignoreReturnCode: true,
+    silent: true
+  });
+  return rc === 0;
+}
+async function readPidFile() {
+  let out = "";
+  const rc = await exec("sudo", ["cat", PID_FILE], {
+    ignoreReturnCode: true,
+    silent: true,
+    listeners: { stdout: (data) => {
+      out += data.toString();
+    } }
+  });
+  if (rc !== 0) return null;
+  const pid = parseInt(out.trim(), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+async function stopCargowall(pids) {
+  for (const pid of pids) {
+    if (pid == null) continue;
+    await exec("sudo", ["kill", String(pid)], { ignoreReturnCode: true, silent: true });
+  }
+}
+async function handleStartupFailure(warnMessage, throwMessage, failOnUnsupported) {
+  if (failOnUnsupported) {
+    endGroup();
+    throw new Error(throwMessage);
+  }
+  warning(warnMessage);
+  setOutput("supported", "false");
+  await restoreDns();
+  endGroup();
+  return { supported: false, pid: null };
 }
 async function restoreDns() {
   try {
