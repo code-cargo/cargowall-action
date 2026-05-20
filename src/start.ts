@@ -40,6 +40,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
   const allowedHosts = parseList(core.getMultilineInput('allowed-hosts'))
   const allowedCidrs = parseList(core.getMultilineInput('allowed-cidrs'))
+  const searchDomains = parseList(core.getMultilineInput('search-domains'))
   const githubServiceHosts = parseList(core.getMultilineInput('github-service-hosts'))
   const azureInfraHosts = parseList(core.getMultilineInput('azure-infra-hosts'))
 
@@ -167,6 +168,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   core.info(`  Mode: ${mode}`)
   if (allowedHosts) core.info(`  Allowed hosts: ${allowedHosts}`)
   if (allowedCidrs) core.info(`  Allowed CIDRs: ${allowedCidrs}`)
+  if (searchDomains) core.info(`  Search domains: ${searchDomains}`)
   if (githubServiceHosts) core.info(`  GitHub service hosts: ${githubServiceHosts}`)
   if (azureInfraHosts) core.info(`  Azure infra hosts: ${azureInfraHosts}`)
   if (configFile) core.info(`  Config file: ${configFile}`)
@@ -202,6 +204,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     CARGOWALL_DEFAULT_ACTION: 'deny',
     ...(allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts }),
     ...(allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs }),
+    ...(searchDomains && { CARGOWALL_SEARCH_DOMAINS: searchDomains }),
     ...(githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts }),
     ...(azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }),
   }

@@ -82,6 +82,26 @@ In this example:
 - `*.github.com` allows `api.github.com` but not `github.com` or `a.b.github.com`
 - `**.ubuntu.com` allows `archive.ubuntu.com`, `us.archive.ubuntu.com`, and any depth of subdomain
 
+### With DNS Search Domains
+
+Cloud runners often resolve internal hosts through a DNS search domain (e.g. AWS attaches `.compute.internal` / `.ec2.internal`). Use `search-domains` so those suffixes are stripped before rule matching and bypassed for unmatched DNS queries — handy when the underlying traffic is already governed by a CIDR rule and per-hostname tracking would be wasteful:
+
+```yaml
+- uses: code-cargo/cargowall-action@v1
+  with:
+    allowed-cidrs: |
+      10.0.0.0/8
+    search-domains: |
+      .compute.internal
+      .ec2.internal
+```
+
+With this configuration:
+- A rule for `bastion` also matches `bastion.compute.internal` (the suffix is stripped before matching).
+- Any name ending in a configured suffix passes the DNS proxy even without a matching hostname rule, while explicit deny rules still win.
+
+Each suffix must have at least two labels (`.compute.internal` is valid, `.internal` is not) and cannot be a public suffix (`.com`, `.co.uk`, `.github.io`, … are rejected). Kubernetes suffixes (`.cluster.local`, `.svc.cluster.local`, `.default.svc.cluster.local`) are always stripped automatically.
+
 ### With Docker Support
 
 CargoWall automatically configures Docker to use its DNS proxy, so hostname filtering works inside containers:
@@ -148,27 +168,28 @@ For complex configurations, use a JSON or YAML config file:
 
 ## Inputs
 
-| Input                        | Description                                                                       | Default                                        |
-|------------------------------|-----------------------------------------------------------------------------------|------------------------------------------------|
-| `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                         | `enforce`                                      |
+| Input                        | Description                                                                                | Default                                        |
+|------------------------------|--------------------------------------------------------------------------------------------|------------------------------------------------|
+| `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                                  | `enforce`                                      |
 | `allowed-hosts`              | Allowed hostnames, one per line (auto matches subdomains, supports `*` and `**` wildcards) |                                                |
-| `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                 |                                                |
-| `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line)                 | See [defaults](#automatically-allowed-traffic) |
-| `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line)           | See [defaults](#automatically-allowed-traffic) |
-| `config-file`                | Path to YAML/JSON config file for advanced rules                                  |                                                |
-| `version`                    | CargoWall version to use                                                          | `latest`                                       |
-| `fail-on-unsupported`        | Fail if eBPF not supported                                                        | `false`                                        |
-| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                   | `false`                                        |
-| `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                         |                                                |
-| `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                    | auto-detect                                    |
-| `allow-existing-connections` | Allow pre-existing TCP connections at startup                                     | `true`                                         |
-| `binary-path`                | Path to a pre-built cargowall binary (skips download)                             |                                                |
-| `debug`                      | Enable debug logging                                                              | `false`                                        |
-| `audit-summary`              | Generate audit summary in workflow summary                                        | `true`                                         |
-| `github-token`               | GitHub token for downloading the binary and fetching step timing in audit summary | `${{ github.token }}`                          |
-| `include-prerelease`         | Include pre-release versions when resolving "latest"                              | `false`                                        |
-| `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)   | `https://app.codecargo.com`                    |
-| `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)              | `false`                                        |
+| `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                          |                                                |
+| `search-domains`             | DNS search-domain suffixes (e.g. `.compute.internal`), one per line — stripped before hostname-rule matching and bypassed for unmatched DNS queries. Each suffix needs ≥2 labels and cannot be a public suffix. |                                                |
+| `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line)                          | See [defaults](#automatically-allowed-traffic) |
+| `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line)                    | See [defaults](#automatically-allowed-traffic) |
+| `config-file`                | Path to YAML/JSON config file for advanced rules                                           |                                                |
+| `fail-on-unsupported`        | Fail if eBPF not supported                                                                 | `false`                                        |
+| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                            | `false`                                        |
+| `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                  |                                                |
+| `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                             | auto-detect                                    |
+| `allow-existing-connections` | Allow pre-existing TCP connections at startup                                              | `true`                                         |
+| `binary-path`                | Path to a pre-built cargowall binary (skips download)                                      |                                                |
+| `debug`                      | Enable debug logging                                                                       | `false`                                        |
+| `audit-summary`              | Generate audit summary in workflow summary                                                 | `true`                                         |
+| `skip-actions-api`           | Skip the GitHub Actions API call that enriches audit-summary step names/status (falls back to local `_diag` data); set `true` when near the per-repo rate limit | `false`                                        |
+| `github-token`               | GitHub token for fetching step timing in the audit summary                                 | `${{ github.token }}`                          |
+| `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)           | `https://app.codecargo.com`                    |
+| `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                       | `false`                                        |
+| `job-id`                     | Check run ID of the current job (from workflow context by default; override if needed)     | `${{ job.check_run_id }}`                      |
 
 ## Outputs
 

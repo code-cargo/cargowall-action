@@ -17,6 +17,9 @@ inputs:
   allowed-cidrs:
     description: 'Allowed CIDR blocks, one per line'
     required: false
+  search-domains:
+    description: 'DNS search-domain suffixes to strip before hostname-rule matching and bypass for unmatched DNS queries (e.g. .compute.internal), one per line. Each suffix needs at least two labels and cannot be a public suffix.'
+    required: false
   github-service-hosts:
     description: 'GitHub service hostnames to auto-allow on port 443 (one per line)'
     required: false
