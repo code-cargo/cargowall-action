@@ -21560,7 +21560,7 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.2.0";
+var CARGOWALL_VERSION = "v1.3.0-rc.1";
 var http2 = new HttpClient("cargowall-action");
 async function downloadAsset(url, dest) {
   const attempt = async () => {
@@ -25856,6 +25856,7 @@ async function start() {
   }
   const allowedHosts = parseList(getMultilineInput("allowed-hosts"));
   const allowedCidrs = parseList(getMultilineInput("allowed-cidrs"));
+  const searchDomains = parseList(getMultilineInput("search-domains"));
   const githubServiceHosts = parseList(getMultilineInput("github-service-hosts"));
   const azureInfraHosts = parseList(getMultilineInput("azure-infra-hosts"));
   const configFile = getInput("config-file");
@@ -25948,6 +25949,7 @@ async function start() {
   info(`  Mode: ${mode}`);
   if (allowedHosts) info(`  Allowed hosts: ${allowedHosts}`);
   if (allowedCidrs) info(`  Allowed CIDRs: ${allowedCidrs}`);
+  if (searchDomains) info(`  Search domains: ${searchDomains}`);
   if (githubServiceHosts) info(`  GitHub service hosts: ${githubServiceHosts}`);
   if (azureInfraHosts) info(`  Azure infra hosts: ${azureInfraHosts}`);
   if (configFile) info(`  Config file: ${configFile}`);
@@ -25974,6 +25976,7 @@ async function start() {
     CARGOWALL_DEFAULT_ACTION: "deny",
     ...allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts },
     ...allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs },
+    ...searchDomains && { CARGOWALL_SEARCH_DOMAINS: searchDomains },
     ...githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts },
     ...azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }
   };

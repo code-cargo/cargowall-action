@@ -80,6 +80,11 @@ jobs:
           allowed-cidrs: |
             10.0.0.0/8
             192.168.0.0/16
+          # Strip cloud-internal DNS suffixes before rule matching and bypass
+          # unmatched queries ending in them (traffic is covered by the CIDRs above)
+          search-domains: |
+            .compute.internal
+            .ec2.internal
           fail-on-unsupported: true
 
       - uses: actions/checkout@v6
