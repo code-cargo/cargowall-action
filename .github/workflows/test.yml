@@ -345,6 +345,59 @@ jobs:
           fi
           echo "Correctly blocked httpbin.org"
 
+  test-search-domains:
+    name: DNS Search Domains
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with search domains
+        uses: ./
+        with:
+          offline: 'true'
+          # `archive` is a bare single-label rule that only matches a real host
+          # once the `.ubuntu.com` search-domain suffix is stripped before matching.
+          allowed-hosts: |
+            archive
+          search-domains: |
+            .ubuntu.com
+
+      - name: Test suffix stripping enables rule match (archive.ubuntu.com -> archive)
+        run: |
+          # Without search-domains, the bare `archive` rule would NOT cover
+          # archive.ubuntu.com. It connects only because `.ubuntu.com` is stripped
+          # to `archive`, which matches the rule.
+          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          echo "Connected to archive.ubuntu.com (.ubuntu.com stripped -> matched 'archive' rule)"
+
+      - name: Test bypass for unmatched name under a search domain (resolves, not refused)
+        run: |
+          # security.ubuntu.com has no host rule, but it ends in a configured
+          # search-domain suffix, so the DNS proxy bypasses it instead of refusing
+          # it as DNS tunneling.
+          OUTPUT=$(nslookup security.ubuntu.com 127.0.0.1 2>&1 || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qi "refused\|SERVFAIL"; then
+            echo "ERROR: security.ubuntu.com should be bypassed (resolved), not refused"
+            exit 1
+          fi
+          echo "Correctly bypassed DNS query for security.ubuntu.com"
+
+      - name: Test name outside any search domain is still refused (DNS tunneling guard)
+        run: |
+          # attacker-domain has no rule and is not under a search domain, so the
+          # proxy should still refuse it. Soft-checked to match the DNS-filtering job.
+          OUTPUT=$(nslookup attacker-domain-98765.example 127.0.0.1 2>&1 || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qi "refused\|SERVFAIL\|NXDOMAIN\|can't find\|timed out"; then
+            echo "Correctly refused/failed DNS query for non-allowed, non-search-domain name"
+          else
+            echo "WARNING: attacker-domain query may have succeeded unexpectedly"
+          fi
+
   test-sudo-lockdown:
     name: Sudo Lockdown
     runs-on: ubuntu-latest
