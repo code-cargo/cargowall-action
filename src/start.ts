@@ -386,20 +386,23 @@ async function stopCargowall(pids: Array<number | null>): Promise<void> {
 
 /**
  * Shared handling for a failed/timed-out startup: either throw (when
- * fail-on-unsupported) or warn, mark unsupported, and restore DNS.
+ * fail-on-unsupported) or warn and mark unsupported. Always restore DNS first —
+ * resolv.conf was repointed at 127.0.0.1 (cargowall's proxy) during startup, and
+ * cargowall isn't running, so leaving it would break DNS for subsequent jobs on
+ * a reused/self-hosted runner. Must happen on the throw path too.
  */
 async function handleStartupFailure(
   warnMessage: string,
   throwMessage: string,
   failOnUnsupported: boolean,
 ): Promise<{ supported: boolean; pid: number | null }> {
+  await restoreDns()
   if (failOnUnsupported) {
     core.endGroup()
     throw new Error(throwMessage)
   }
   core.warning(warnMessage)
   core.setOutput('supported', 'false')
-  await restoreDns()
   core.endGroup()
   return { supported: false, pid: null }
 }

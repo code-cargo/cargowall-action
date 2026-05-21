@@ -26085,13 +26085,13 @@ async function stopCargowall(pids) {
   }
 }
 async function handleStartupFailure(warnMessage, throwMessage, failOnUnsupported) {
+  await restoreDns();
   if (failOnUnsupported) {
     endGroup();
     throw new Error(throwMessage);
   }
   warning(warnMessage);
   setOutput("supported", "false");
-  await restoreDns();
   endGroup();
   return { supported: false, pid: null };
 }
