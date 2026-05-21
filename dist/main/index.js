@@ -25978,6 +25978,7 @@ async function start() {
     await restoreDns();
   }
   info("Starting cargowall...");
+  await clearStartupFiles();
   const env = {
     ...process.env,
     CARGOWALL_DEFAULT_ACTION: "deny",
@@ -26033,6 +26034,7 @@ async function start() {
     );
   }
   info("CargoWall is ready");
+  await makePidFileReadable();
   cargowallPid = cargowallPid ?? await readPidFile();
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
@@ -26069,6 +26071,18 @@ async function readPidFile() {
   if (rc !== 0) return null;
   const pid = parseInt(out.trim(), 10);
   return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+async function clearStartupFiles() {
+  await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE], {
+    ignoreReturnCode: true,
+    silent: true
+  });
+}
+async function makePidFileReadable() {
+  await exec("sudo", ["chmod", "644", PID_FILE], {
+    ignoreReturnCode: true,
+    silent: true
+  });
 }
 async function stopCargowall(pids) {
   for (const pid of pids) {

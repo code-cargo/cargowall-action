@@ -209,6 +209,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Start cargowall in the background
   core.info('Starting cargowall...')
 
+  // Clear any stale ready/pid files from a prior run on a reused (e.g.
+  // self-hosted) runner. Otherwise a leftover ready sentinel would short-circuit
+  // the wait, and a stale pidfile pointing at a dead PID would trip the liveness
+  // check as a false "exited unexpectedly". Best-effort and root-owned, so sudo.
+  await clearStartupFiles()
+
   // Set environment variables for cargowall
   const env = {
     ...process.env,
@@ -285,6 +291,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   core.info('CargoWall is ready')
 
+  // cargowall writes the pidfile as root. Make it world-readable so unprivileged
+  // workflow steps can `cat /tmp/cargowall.pid` (e.g. examples/secure.yml) — this
+  // preserves the readability of the action-written pidfile prior to v1.3.0.
+  await makePidFileReadable()
+
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
   // PID if the pidfile can't be read.
@@ -337,6 +348,29 @@ async function readPidFile(): Promise<number | null> {
   if (rc !== 0) return null
   const pid = parseInt(out.trim(), 10)
   return Number.isInteger(pid) && pid > 0 ? pid : null
+}
+
+/**
+ * Best-effort removal of stale ready/pid files left by a prior run in the same
+ * (reused) runner, so this launch's readiness/liveness checks only react to files
+ * this cargowall writes. The files may be root-owned, so remove via sudo.
+ */
+async function clearStartupFiles(): Promise<void> {
+  await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE], {
+    ignoreReturnCode: true,
+    silent: true,
+  })
+}
+
+/**
+ * Best-effort: make the root-owned pidfile world-readable so unprivileged
+ * workflow steps can read it. Non-fatal if the file is absent or chmod fails.
+ */
+async function makePidFileReadable(): Promise<void> {
+  await exec.exec('sudo', ['chmod', '644', PID_FILE], {
+    ignoreReturnCode: true,
+    silent: true,
+  })
 }
 
 /** Best-effort SIGTERM to cargowall (real PID and/or launcher PID). */
