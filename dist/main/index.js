@@ -26057,7 +26057,7 @@ async function processLiveness(pid) {
   return "dead";
 }
 async function sudoKillZero(pid) {
-  const rc = await exec("sudo", ["kill", "-0", String(pid)], {
+  const rc = await exec("sudo", ["-n", "kill", "-0", String(pid)], {
     ignoreReturnCode: true,
     silent: true
   });

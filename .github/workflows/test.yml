@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup CargoWall
+        id: cargowall
         uses: ./
         with:
           offline: 'true'
@@ -27,6 +28,18 @@ jobs:
             github.com
             githubusercontent.com
             api.github.com
+
+      - name: Verify pid output is the real cargowall process (not the sudo wrapper)
+        run: |
+          PID='${{ steps.cargowall.outputs.pid }}'
+          test -n "$PID"
+          # /proc/<pid>/comm is world-readable, so ps works without sudo.
+          COMM=$(ps -o comm= -p "$PID" | tr -d '[:space:]')
+          echo "pid=$PID comm=$COMM"
+          if [ "$COMM" != "cargowall" ]; then
+            echo "ERROR: pid output should be the cargowall process, got '$COMM'"
+            exit 1
+          fi
 
       - name: Test allowed connection (github.com)
         run: |
@@ -45,7 +58,7 @@ jobs:
             exit 1
           fi
           echo "Correctly blocked example.com"
-        
+
       - name: Test blocked connection (httpbin.org)
         run: |
           if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
@@ -412,6 +425,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup CargoWall with sudo lockdown
+        id: cargowall
         uses: ./
         with:
           allowed-hosts: |
@@ -421,6 +435,22 @@ jobs:
             security.ubuntu.com
           sudo-lockdown: true
           sudo-allow-commands: /usr/bin/apt-get
+          # Make a false "exited unexpectedly" liveness verdict a hard failure.
+          # Under lockdown the action can't probe liveness via sudo, so this
+          # guards the tri-state 'unknown' path (must wait for the sentinel, not
+          # crash) as well as the no-sudo pidfile read below.
+          fail-on-unsupported: true
+
+      - name: Verify real PID is tracked under sudo-lockdown
+        run: |
+          # The pidfile is 0644, so an unprivileged step reads it even under
+          # lockdown; the action must report that same (real) PID, not the wrapper.
+          OUT='${{ steps.cargowall.outputs.pid }}'
+          FILE=$(cat /tmp/cargowall.pid)
+          echo "output=$OUT file=$FILE"
+          test -n "$OUT"
+          test "$OUT" = "$FILE"
+          ps -o comm= -p "$OUT" | tr -d '[:space:]' | grep -qx cargowall
 
       - name: Test apt-get works
         run: |
@@ -433,3 +463,103 @@ jobs:
           else
             echo "Correctly blocked iptables"
           fi
+
+  test-stale-startup-files:
+    name: Stale Startup Files (reused runner)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Plant stale ready/pid files (simulate a prior run on a reused runner)
+        run: |
+          # Root-owned, like the files cargowall leaves behind. Without the
+          # action clearing them, the stale ready sentinel would short-circuit the
+          # wait and the stale dead PID would trip a false "exited" verdict.
+          echo 999999 | sudo tee /tmp/cargowall.pid > /dev/null
+          sudo touch /tmp/cargowall-ready
+          ls -l /tmp/cargowall.pid /tmp/cargowall-ready
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          offline: 'true'
+          fail-on-unsupported: true
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Verify clean start despite stale files
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          PID='${{ steps.cargowall.outputs.pid }}'
+          echo "pid=$PID"
+          test -n "$PID"
+          # Must be the real cargowall PID, not the planted stale 999999.
+          test "$PID" != "999999"
+          ps -o comm= -p "$PID" | tr -d '[:space:]' | grep -qx cargowall
+
+      - name: Test allowed connection (github.com)
+        run: |
+          curl -sf --max-time 10 https://github.com > /dev/null
+          echo "Successfully connected to github.com"
+
+      - name: Test blocked connection (example.com)
+        run: |
+          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
+            echo "ERROR: example.com should be blocked"
+            exit 1
+          fi
+          echo "Correctly blocked example.com"
+
+  test-fail-on-unsupported-cleanup:
+    name: Fail-on-unsupported restores DNS
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a fake cargowall that records its PID then exits
+        run: |
+          # Stand-in binary: writes the pidfile cargowall would, then exits
+          # without ever writing the ready sentinel. The action sees a real but
+          # dead PID -> 'dead' liveness -> startup failure. With
+          # fail-on-unsupported the action must throw AND restore resolv.conf
+          # (which start() repointed at 127.0.0.1 before launching).
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'for a in "$@"; do case "$a" in --pidfile=*) echo "$$" > "${a#--pidfile=}";; esac; done' \
+            'exit 0' > /tmp/fake-cargowall
+          chmod +x /tmp/fake-cargowall
+
+      - name: Capture DNS before
+        run: cat /etc/resolv.conf
+
+      - name: Setup CargoWall (expected to fail)
+        id: cw
+        continue-on-error: true
+        uses: ./
+        with:
+          offline: 'true'
+          binary-path: /tmp/fake-cargowall
+          fail-on-unsupported: true
+          allowed-hosts: github.com
+
+      - name: Assert startup failed and DNS was restored
+        run: |
+          if [ '${{ steps.cw.outcome }}' != 'failure' ]; then
+            echo "ERROR: expected the action to fail, got '${{ steps.cw.outcome }}'"
+            exit 1
+          fi
+          echo "resolv.conf after:"; cat /etc/resolv.conf
+          if grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf; then
+            echo "ERROR: /etc/resolv.conf still points at cargowall's proxy (DNS not restored)"
+            exit 1
+          fi
+          # DNS must actually resolve again.
+          getent hosts github.com

@@ -338,9 +338,15 @@ async function processLiveness(pid: number): Promise<Liveness> {
   return 'dead'
 }
 
-/** `sudo kill -0 <pid>` — true when it exits 0 (process exists and is signalable). */
+/**
+ * `sudo -n kill -0 <pid>` — true when it exits 0 (process exists and is
+ * signalable). `-n` (non-interactive) is essential: this runs every loop
+ * iteration, and under --sudo-lockdown a non-allowed `sudo` would otherwise
+ * prompt for a password and hang on the action's empty stdin. With `-n` it
+ * fails fast instead, which processLiveness reads as "can't tell" (PID 1 probe).
+ */
 async function sudoKillZero(pid: number): Promise<boolean> {
-  const rc = await exec.exec('sudo', ['kill', '-0', String(pid)], {
+  const rc = await exec.exec('sudo', ['-n', 'kill', '-0', String(pid)], {
     ignoreReturnCode: true,
     silent: true,
   })
