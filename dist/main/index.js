@@ -26012,7 +26012,7 @@ async function start() {
     } catch {
     }
     cargowallPid = cargowallPid ?? await readPidFile();
-    if (cargowallPid !== null && !await isProcessAlive(cargowallPid)) {
+    if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
       error("CargoWall process exited unexpectedly");
       await showLastLog();
       return handleStartupFailure(
@@ -26034,7 +26034,6 @@ async function start() {
     );
   }
   info("CargoWall is ready");
-  await makePidFileReadable();
   cargowallPid = cargowallPid ?? await readPidFile();
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
@@ -26052,7 +26051,12 @@ async function start() {
   }
   return { supported: true, pid: reportedPid };
 }
-async function isProcessAlive(pid) {
+async function processLiveness(pid) {
+  if (await sudoKillZero(pid)) return "alive";
+  if (!await sudoKillZero(1)) return "unknown";
+  return "dead";
+}
+async function sudoKillZero(pid) {
   const rc = await exec("sudo", ["kill", "-0", String(pid)], {
     ignoreReturnCode: true,
     silent: true
@@ -26060,26 +26064,16 @@ async function isProcessAlive(pid) {
   return rc === 0;
 }
 async function readPidFile() {
-  let out = "";
-  const rc = await exec("sudo", ["cat", PID_FILE], {
-    ignoreReturnCode: true,
-    silent: true,
-    listeners: { stdout: (data) => {
-      out += data.toString();
-    } }
-  });
-  if (rc !== 0) return null;
-  const pid = parseInt(out.trim(), 10);
-  return Number.isInteger(pid) && pid > 0 ? pid : null;
+  try {
+    const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
+    const pid = parseInt(out.trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
 }
 async function clearStartupFiles() {
   await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE], {
-    ignoreReturnCode: true,
-    silent: true
-  });
-}
-async function makePidFileReadable() {
-  await exec("sudo", ["chmod", "644", PID_FILE], {
     ignoreReturnCode: true,
     silent: true
   });

@@ -250,7 +250,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // process tree we launched. Polling that PID yields false "exited" verdicts even
   // though cargowall comes up and filters fine. Instead we wait for the ready
   // sentinel and, once cargowall has written its own pidfile (just before the
-  // sentinel), use that real PID — a dead real PID is a genuine crash.
+  // sentinel), use that real PID — a dead real PID is a genuine crash. Under
+  // --sudo-lockdown liveness is unobservable (sudo is denied), so we just wait
+  // for the sentinel/timeout rather than risk a false crash verdict.
   core.info('Waiting for cargowall to initialize...')
 
   let cargowallPid: number | null = null
@@ -265,7 +267,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     }
 
     cargowallPid = cargowallPid ?? await readPidFile()
-    if (cargowallPid !== null && !(await isProcessAlive(cargowallPid))) {
+    if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
       core.error('CargoWall process exited unexpectedly')
       await showLastLog()
       return handleStartupFailure(
@@ -290,11 +292,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   core.info('CargoWall is ready')
-
-  // cargowall writes the pidfile as root. Make it world-readable so unprivileged
-  // workflow steps can `cat /tmp/cargowall.pid` (e.g. examples/secure.yml) — this
-  // preserves the readability of the action-written pidfile prior to v1.3.0.
-  await makePidFileReadable()
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
@@ -324,8 +321,25 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   return { supported: true, pid: reportedPid }
 }
 
-/** True if `pid` is alive. Uses sudo since cargowall runs as root. */
-async function isProcessAlive(pid: number): Promise<boolean> {
+type Liveness = 'alive' | 'dead' | 'unknown'
+
+/**
+ * Liveness of a root-owned PID. An unprivileged `kill -0` of a root process
+ * returns EPERM even while it's alive, so the check needs sudo. Under
+ * --sudo-lockdown the action's sudo is denied — we then can't observe liveness
+ * at all and must return 'unknown' rather than misreport a crash. PID 1 is the
+ * control: it always exists, so a failing `sudo kill -0 1` means sudo itself is
+ * unavailable (lockdown), not that our process died.
+ */
+async function processLiveness(pid: number): Promise<Liveness> {
+  if (await sudoKillZero(pid)) return 'alive'
+  // The PID check failed: either the process is gone, or sudo is locked down.
+  if (!(await sudoKillZero(1))) return 'unknown'
+  return 'dead'
+}
+
+/** `sudo kill -0 <pid>` — true when it exits 0 (process exists and is signalable). */
+async function sudoKillZero(pid: number): Promise<boolean> {
   const rc = await exec.exec('sudo', ['kill', '-0', String(pid)], {
     ignoreReturnCode: true,
     silent: true,
@@ -334,20 +348,20 @@ async function isProcessAlive(pid: number): Promise<boolean> {
 }
 
 /**
- * Read cargowall's real PID from the pidfile it writes via --pidfile. The file
- * is owned by root, so we read it through sudo. Returns null if absent/unreadable
- * (e.g. cargowall hasn't reached the pidfile write yet).
+ * Read cargowall's real PID from the pidfile it writes via --pidfile. cargowall
+ * writes it world-readable (0644), so we read it directly without sudo — which
+ * also means this keeps working under --sudo-lockdown, where the action's sudo
+ * is denied. Returns null if absent/unreadable (e.g. cargowall hasn't reached
+ * the pidfile write yet).
  */
 async function readPidFile(): Promise<number | null> {
-  let out = ''
-  const rc = await exec.exec('sudo', ['cat', PID_FILE], {
-    ignoreReturnCode: true,
-    silent: true,
-    listeners: { stdout: (data: Buffer) => { out += data.toString() } },
-  })
-  if (rc !== 0) return null
-  const pid = parseInt(out.trim(), 10)
-  return Number.isInteger(pid) && pid > 0 ? pid : null
+  try {
+    const out = await fs.readFile(PID_FILE, 'utf8')
+    const pid = parseInt(out.trim(), 10)
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -357,17 +371,6 @@ async function readPidFile(): Promise<number | null> {
  */
 async function clearStartupFiles(): Promise<void> {
   await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE], {
-    ignoreReturnCode: true,
-    silent: true,
-  })
-}
-
-/**
- * Best-effort: make the root-owned pidfile world-readable so unprivileged
- * workflow steps can read it. Non-fatal if the file is absent or chmod fails.
- */
-async function makePidFileReadable(): Promise<void> {
-  await exec.exec('sudo', ['chmod', '644', PID_FILE], {
     ignoreReturnCode: true,
     silent: true,
   })
