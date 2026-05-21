@@ -80,10 +80,12 @@ jobs:
       - name: Verify kill is restricted
         run: |
           CARGOWALL_PID=$(cat /tmp/cargowall.pid 2>/dev/null || echo "")
-          if [ -n "$CARGOWALL_PID" ]; then
-            if sudo kill -9 "$CARGOWALL_PID" 2>/dev/null; then
-              echo "ERROR: Should not be able to kill cargowall"
-              exit 1
-            fi
-            echo "Correctly prevented killing cargowall"
+          if [ -z "$CARGOWALL_PID" ]; then
+            echo "ERROR: /tmp/cargowall.pid is empty or unreadable"
+            exit 1
           fi
+          if sudo kill -9 "$CARGOWALL_PID" 2>/dev/null; then
+            echo "ERROR: Should not be able to kill cargowall"
+            exit 1
+          fi
+          echo "Correctly prevented killing cargowall"

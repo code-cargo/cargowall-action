@@ -11,6 +11,7 @@ import { findDiagDir, parseExecutedSteps, parseJobPlan } from './diag'
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
 const READY_FILE = '/tmp/cargowall-ready'
+const PID_FILE = '/tmp/cargowall.pid'
 const RESOLV_CONF_BACKUP = '/etc/resolv.conf.cargowall.bak'
 const STARTUP_TIMEOUT = 30
 const STEP_PLAN_FILE = '/tmp/cargowall-step-plan.json'
@@ -110,8 +111,18 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const dnsResult = await detectDnsUpstream(core.getInput('dns-upstream'))
   const dnsUpstream = dnsResult.primary
 
-  // Build cargowall arguments
-  const args: string[] = ['start', '--github-action', `--dns-upstream=${dnsUpstream}`]
+  // Build cargowall arguments.
+  // --pidfile lets cargowall record its own (real) PID so we can track the
+  // actual process rather than the `sudo` wrapper we spawn. --ready-file is
+  // passed explicitly so the sentinel path stays pinned even if the binary's
+  // default changes.
+  const args: string[] = [
+    'start',
+    '--github-action',
+    `--dns-upstream=${dnsUpstream}`,
+    `--pidfile=${PID_FILE}`,
+    `--ready-file=${READY_FILE}`,
+  ]
 
   if (auditSummary) {
     args.push(`--audit-log=${AUDIT_LOG}`)
@@ -198,6 +209,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Start cargowall in the background
   core.info('Starting cargowall...')
 
+  // Clear any stale ready/pid files from a prior run on a reused (e.g.
+  // self-hosted) runner. Otherwise a leftover ready sentinel would short-circuit
+  // the wait, and a stale pidfile pointing at a dead PID would trip the liveness
+  // check as a false "exited unexpectedly". Best-effort and root-owned, so sudo.
+  await clearStartupFiles()
+
   // Set environment variables for cargowall
   const env = {
     ...process.env,
@@ -218,83 +235,75 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   child.unref()
   closeSync(logFd)
 
-  const pid = child.pid
-  if (!pid) {
+  const spawnedPid = child.pid
+  if (!spawnedPid) {
     throw new Error('Failed to start cargowall process')
   }
 
-  core.info(`CargoWall started with PID: ${pid}`)
-  core.setOutput('pid', pid)
+  core.info(`CargoWall launcher started (PID: ${spawnedPid})`)
 
-  // Wait for cargowall to be ready
+  // Wait for cargowall to be ready.
+  //
+  // Liveness is intentionally NOT based on the spawned `sudo` wrapper PID: under
+  // the --github-action preset cargowall restarts the Docker daemon during
+  // startup (to apply container DNS config), which tears down and re-parents the
+  // process tree we launched. Polling that PID yields false "exited" verdicts even
+  // though cargowall comes up and filters fine. Instead we wait for the ready
+  // sentinel and, once cargowall has written its own pidfile (just before the
+  // sentinel), use that real PID — a dead real PID is a genuine crash. Under
+  // --sudo-lockdown liveness is unobservable (sudo is denied), so we just wait
+  // for the sentinel/timeout rather than risk a false crash verdict.
   core.info('Waiting for cargowall to initialize...')
 
+  let cargowallPid: number | null = null
+  let ready = false
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
       await fs.access(READY_FILE)
-      core.info('CargoWall is ready')
+      ready = true
       break
     } catch {
       // Not ready yet
     }
 
-    // Check if process is still running
-    const killCheck = await exec.exec('sudo', ['kill', '-0', String(pid)], {
-      ignoreReturnCode: true,
-      silent: true
-    })
-    if (killCheck !== 0) {
+    cargowallPid = cargowallPid ?? await readPidFile()
+    if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
       core.error('CargoWall process exited unexpectedly')
-
       await showLastLog()
-
-      if (failOnUnsupported) {
-        core.endGroup()
-        throw new Error('CargoWall failed to start')
-      }
-
-      core.warning('CargoWall failed to start. Network filtering is not active.')
-      core.setOutput('supported', 'false')
-
-      // Restore DNS
-      await restoreDns()
-      core.endGroup()
-      return { supported: false, pid: null }
+      return handleStartupFailure(
+        'CargoWall failed to start. Network filtering is not active.',
+        'CargoWall failed to start',
+        failOnUnsupported,
+      )
     }
 
     await sleep(1000)
   }
 
-  // Check if we timed out
-  try {
-    await fs.access(READY_FILE)
-  } catch {
+  if (!ready) {
     core.error('Timeout waiting for cargowall to be ready')
-
     await showLastLog()
-
-    // Kill the process
-    await exec.exec('sudo', ['kill', String(pid)], { ignoreReturnCode: true, silent: true })
-
-    if (failOnUnsupported) {
-      core.endGroup()
-      throw new Error('CargoWall timed out starting up')
-    }
-
-    core.warning('CargoWall timed out. Network filtering is not active.')
-    core.setOutput('supported', 'false')
-    await restoreDns()
-    core.endGroup()
-    return { supported: false, pid: null }
+    await stopCargowall([cargowallPid ?? await readPidFile(), spawnedPid])
+    return handleStartupFailure(
+      'CargoWall timed out. Network filtering is not active.',
+      'CargoWall timed out starting up',
+      failOnUnsupported,
+    )
   }
 
+  core.info('CargoWall is ready')
+
+  // Resolve cargowall's real PID (written via --pidfile, just before the ready
+  // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
+  // PID if the pidfile can't be read.
+  cargowallPid = cargowallPid ?? await readPidFile()
+  const reportedPid = cargowallPid ?? spawnedPid
+
   core.setOutput('supported', 'true')
+  core.setOutput('pid', reportedPid)
 
-  // Save PID for cleanup via state (persists to post step)
-  core.saveState('cargowall-pid', String(pid))
-
-  // Also write PID file for compatibility
-  await fs.writeFile('/tmp/cargowall.pid', String(pid))
+  // Persist for the post step (also signals that cargowall was started).
+  core.saveState('cargowall-pid', String(reportedPid))
 
   core.endGroup()
 
@@ -309,7 +318,99 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     core.endGroup()
   }
 
-  return { supported: true, pid }
+  return { supported: true, pid: reportedPid }
+}
+
+type Liveness = 'alive' | 'dead' | 'unknown'
+
+/**
+ * Liveness of a root-owned PID. An unprivileged `kill -0` of a root process
+ * returns EPERM even while it's alive, so the check needs sudo. Under
+ * --sudo-lockdown the action's sudo is denied — we then can't observe liveness
+ * at all and must return 'unknown' rather than misreport a crash. PID 1 is the
+ * control: it always exists, so a failing `sudo kill -0 1` means sudo itself is
+ * unavailable (lockdown), not that our process died.
+ */
+async function processLiveness(pid: number): Promise<Liveness> {
+  if (await sudoKillZero(pid)) return 'alive'
+  // The PID check failed: either the process is gone, or sudo is locked down.
+  if (!(await sudoKillZero(1))) return 'unknown'
+  return 'dead'
+}
+
+/**
+ * `sudo -n kill -0 <pid>` — true when it exits 0 (process exists and is
+ * signalable). `-n` (non-interactive) is essential: this runs every loop
+ * iteration, and under --sudo-lockdown a non-allowed `sudo` would otherwise
+ * prompt for a password and hang on the action's empty stdin. With `-n` it
+ * fails fast instead, which processLiveness reads as "can't tell" (PID 1 probe).
+ */
+async function sudoKillZero(pid: number): Promise<boolean> {
+  const rc = await exec.exec('sudo', ['-n', 'kill', '-0', String(pid)], {
+    ignoreReturnCode: true,
+    silent: true,
+  })
+  return rc === 0
+}
+
+/**
+ * Read cargowall's real PID from the pidfile it writes via --pidfile. cargowall
+ * writes it world-readable (0644), so we read it directly without sudo — which
+ * also means this keeps working under --sudo-lockdown, where the action's sudo
+ * is denied. Returns null if absent/unreadable (e.g. cargowall hasn't reached
+ * the pidfile write yet).
+ */
+async function readPidFile(): Promise<number | null> {
+  try {
+    const out = await fs.readFile(PID_FILE, 'utf8')
+    const pid = parseInt(out.trim(), 10)
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Best-effort removal of stale ready/pid files left by a prior run in the same
+ * (reused) runner, so this launch's readiness/liveness checks only react to files
+ * this cargowall writes. The files may be root-owned, so remove via sudo.
+ */
+async function clearStartupFiles(): Promise<void> {
+  await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE], {
+    ignoreReturnCode: true,
+    silent: true,
+  })
+}
+
+/** Best-effort SIGTERM to cargowall (real PID and/or launcher PID). */
+async function stopCargowall(pids: Array<number | null>): Promise<void> {
+  for (const pid of pids) {
+    if (pid == null) continue
+    await exec.exec('sudo', ['kill', String(pid)], { ignoreReturnCode: true, silent: true })
+  }
+}
+
+/**
+ * Shared handling for a failed/timed-out startup: either throw (when
+ * fail-on-unsupported) or warn and mark unsupported. Always restore DNS first —
+ * resolv.conf was repointed at 127.0.0.1 (cargowall's proxy) during startup, and
+ * cargowall isn't running, so leaving it would break DNS for subsequent jobs on
+ * a reused/self-hosted runner. Must happen on the throw path too.
+ */
+async function handleStartupFailure(
+  warnMessage: string,
+  throwMessage: string,
+  failOnUnsupported: boolean,
+): Promise<{ supported: boolean; pid: number | null }> {
+  await restoreDns()
+  if (failOnUnsupported) {
+    core.endGroup()
+    throw new Error(throwMessage)
+  }
+  core.warning(warnMessage)
+  core.setOutput('supported', 'false')
+  core.endGroup()
+  return { supported: false, pid: null }
 }
 
 async function restoreDns(): Promise<void> {
