@@ -269,6 +269,8 @@ CargoWall automatically allows certain traffic required for the runner and GitHu
 | `api.github.com`                    | 443   | GitHub REST/GraphQL API                |
 | `githubapp.com`                     | 443   | GitHub Apps infrastructure             |
 | `actions.githubusercontent.com`     | 443   | Actions artifact/cache/log services    |
+| `release-assets.githubusercontent.com` | 443 | GitHub release asset downloads         |
+| `avatars.githubusercontent.com`     | 443   | GitHub user/org avatar images          |
 | `github.githubassets.com`           | 443   | GitHub static assets                   |
 
 **Azure infrastructure hostnames** (configurable via `azure-infra-hosts`):

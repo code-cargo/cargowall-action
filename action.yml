@@ -28,6 +28,8 @@ inputs:
       api.github.com
       githubapp.com
       actions.githubusercontent.com
+      release-assets.githubusercontent.com
+      avatars.githubusercontent.com
       github.githubassets.com
   azure-infra-hosts:
     description: 'Azure infrastructure hostnames to auto-allow on port 443 (one per line)'
