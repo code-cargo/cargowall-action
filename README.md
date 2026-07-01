@@ -16,6 +16,7 @@ For concepts, architecture, and platform capabilities, see the [main CargoWall r
 - **Hostname filtering**: Allow/deny based on domain names
   - Subdomains are automatically allowed (i.e. `github.com` would also allow `api.github.com`)
   - Wildcard patterns: `*` matches exactly one DNS label, `**` matches one or more DNS labels (e.g. `*.example.com` matches `api.example.com`; `**.example.com` also matches `us.east.example.com`)
+  - CNAME chains of allowed hosts are followed transparently — if an allowed host resolves through a moving CDN edge, the chain's target names and IPs are allowed automatically, so you don't have to wildcard churning CDN targets
 - **CIDR filtering**: Allow/deny based on IP address ranges
 - **DNS tunneling prevention**: Blocks DNS queries for non-allowed domains
 - **Docker support**: Automatically configures Docker containers to respect firewall rules
@@ -239,6 +240,7 @@ flowchart LR
 ### What Gets Allowed
 
 - Traffic to explicitly allowed hostnames and CIDR ranges
+- CNAME targets of an allowed host — their names pass the DNS query filter and their resolved IPs are enforced on the origin rule's ports, reassembled even when the DNS chain is split across separate queries. Connection events are attributed to the enabling allowed hostname, with the full CNAME chain shown as a drill-down. Explicit deny rules still win.
 - Pre-existing TCP connections established before CargoWall starts (when `allow-existing-connections: true`, the default)
 
 #### Automatically Allowed Traffic
