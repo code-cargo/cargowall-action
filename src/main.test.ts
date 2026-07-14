@@ -12,7 +12,14 @@ import * as core from '@actions/core'
 import { setup } from './setup'
 import { start } from './start'
 
-/** main.ts invokes run() on import, so re-import it fresh to drive each path. */
+/**
+ * main.ts invokes run() on import, so re-import it fresh to drive each path.
+ *
+ * resetModules() clears the *module* registry but not the *mock* registry, so the
+ * re-imported main.ts binds to the very same vi.fn() instances stubbed above — no
+ * need to re-import the mocks after the reset. The `start` assertions below would
+ * fail if that were not true.
+ */
 async function runMain(): Promise<void> {
   vi.resetModules()
   await import('./main')

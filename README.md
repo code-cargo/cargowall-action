@@ -199,7 +199,7 @@ For complex configurations, use a JSON or YAML config file:
 | Input                        | Description                                                                                                                                                                                                                                                                            | Default                                        |
 |------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------|
 | `mode`                       | Enforcement mode: `enforce` (block) or `audit` (log only)                                                                                                                                                                                                                              | `enforce`                                      |
-| `allowed-hosts`              | Allowed hostnames, one per line. Matches subdomains, supports `*`/`**` wildcards, and allows all ports unless you append `:443`. See [How Hostnames Match](#how-hostnames-match)                                                                                                       |                                                |
+| `allowed-hosts`              | Allowed hostnames, one per line. Matches subdomains, supports `*`/`**` wildcards, and allows all ports unless you append `:port` (`;`-separated for several). See [How Hostnames Match](#how-hostnames-match)                                                                                                       |                                                |
 | `allowed-cidrs`              | Allowed CIDR blocks, one per line                                                                                                                                                                                                                                                      |                                                |
 | `search-domains`             | Extra DNS search-domain suffixes, one per line — stripped before hostname-rule matching and bypassed for unmatched DNS queries. The detected cloud provider's suffixes are added [automatically](#with-dns-search-domains). Each suffix needs ≥2 labels and cannot be a public suffix. |                                                |
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line). Replaces the default list rather than adding to it; an empty value is an error                                                                                                                                      | See [defaults](#automatically-allowed-traffic) |
@@ -223,8 +223,19 @@ For complex configurations, use a JSON or YAML config file:
 
 | Output      | Description                                                                                  |
 |-------------|----------------------------------------------------------------------------------------------|
-| `supported` | `true` if the eBPF firewall was activated, `false` if eBPF was unsupported or startup failed |
+| `supported` | `true` if the eBPF firewall was activated, `false` if it could not be and the action continued anyway (see below) |
 | `pid`       | Process ID of the running cargowall instance (unset when `supported` is `false`)             |
+
+`supported` is only meaningful on the paths where the action **continues** — eBPF is unsupported, or startup failed, and `fail-on-unsupported` is `false` (the default), so the step goes green with the firewall inactive. That is the case worth branching on:
+
+```yaml
+- uses: code-cargo/cargowall-action@v1
+  id: cargowall
+- if: steps.cargowall.outputs.supported != 'true'
+  run: echo "::warning::CargoWall is not active — egress is unfiltered"
+```
+
+When the step itself fails — `fail-on-unsupported: true`, or an invalid input — the action fails without setting outputs, so neither output is readable.
 
 ## How It Works
 
