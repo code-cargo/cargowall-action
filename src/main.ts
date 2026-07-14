@@ -7,6 +7,7 @@ async function run(): Promise<void> {
     const ebpfSupported = await setup()
 
     if (!ebpfSupported) {
+      core.setOutput('supported', 'false')
       core.saveState('cargowall-skipped', 'true')
       return
     }
