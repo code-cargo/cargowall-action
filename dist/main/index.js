@@ -25858,8 +25858,8 @@ async function start() {
   const allowedHosts = parseList(getMultilineInput("allowed-hosts"));
   const allowedCidrs = parseList(getMultilineInput("allowed-cidrs"));
   const searchDomains = parseList(getMultilineInput("search-domains"));
-  const githubServiceHosts = parseList(getMultilineInput("github-service-hosts"));
-  const azureInfraHosts = parseList(getMultilineInput("azure-infra-hosts"));
+  const githubServiceHosts = requireNonEmptyHostList("github-service-hosts");
+  const azureInfraHosts = requireNonEmptyHostList("azure-infra-hosts");
   const configFile = getInput("config-file");
   const sudoLockdown = getInput("sudo-lockdown") === "true";
   const debug2 = getInput("debug") === "true";
@@ -25985,8 +25985,10 @@ async function start() {
     ...allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts },
     ...allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs },
     ...searchDomains && { CARGOWALL_SEARCH_DOMAINS: searchDomains },
-    ...githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts },
-    ...azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }
+    // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
+    // them would hand cargowall's narrower built-in defaults to the user unannounced.
+    CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
+    CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
   };
   const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
@@ -26102,6 +26104,15 @@ async function restoreDns() {
   } catch {
   }
 }
+function requireNonEmptyHostList(name) {
+  const hosts = parseList(getMultilineInput(name));
+  if (hosts === "") {
+    throw new Error(
+      `"${name}" was set to an empty value. This does not disable the auto-allowed hosts \u2014 cargowall falls back to its own built-in defaults, which are narrower than this action's. Remove the input to use the defaults, or list the hostnames you want.`
+    );
+  }
+  return hosts;
+}
 function parseList(lines) {
   return lines.flatMap((line) => line.split(",")).map((entry) => entry.trim()).filter(Boolean).join(",");
 }
@@ -26114,6 +26125,7 @@ async function run() {
   try {
     const ebpfSupported = await setup();
     if (!ebpfSupported) {
+      setOutput("supported", "false");
       saveState("cargowall-skipped", "true");
       return;
     }

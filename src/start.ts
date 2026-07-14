@@ -42,8 +42,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const allowedHosts = parseList(core.getMultilineInput('allowed-hosts'))
   const allowedCidrs = parseList(core.getMultilineInput('allowed-cidrs'))
   const searchDomains = parseList(core.getMultilineInput('search-domains'))
-  const githubServiceHosts = parseList(core.getMultilineInput('github-service-hosts'))
-  const azureInfraHosts = parseList(core.getMultilineInput('azure-infra-hosts'))
+  const githubServiceHosts = requireNonEmptyHostList('github-service-hosts')
+  const azureInfraHosts = requireNonEmptyHostList('azure-infra-hosts')
 
   const configFile = core.getInput('config-file')
   const sudoLockdown = core.getInput('sudo-lockdown') === 'true'
@@ -222,8 +222,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     ...(allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts }),
     ...(allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs }),
     ...(searchDomains && { CARGOWALL_SEARCH_DOMAINS: searchDomains }),
-    ...(githubServiceHosts && { CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts }),
-    ...(azureInfraHosts && { CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts }),
+    // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
+    // them would hand cargowall's narrower built-in defaults to the user unannounced.
+    CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
+    CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts,
   }
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
@@ -420,6 +422,26 @@ async function restoreDns(): Promise<void> {
   } catch {
     // No backup to restore
   }
+}
+
+/**
+ * Parse an auto-allow host list that carries a non-empty default in action.yml.
+ *
+ * Clearing such an input does not disable the auto-allow — the action would omit
+ * the env var and cargowall would silently fall back to its own built-in list,
+ * which is narrower than ours. Since the default is non-empty, an empty result
+ * here can only mean the caller deliberately cleared it, so reject it.
+ */
+export function requireNonEmptyHostList(name: string): string {
+  const hosts = parseList(core.getMultilineInput(name))
+  if (hosts === '') {
+    throw new Error(
+      `"${name}" was set to an empty value. This does not disable the auto-allowed hosts — ` +
+        `cargowall falls back to its own built-in defaults, which are narrower than this action's. ` +
+        `Remove the input to use the defaults, or list the hostnames you want.`
+    )
+  }
+  return hosts
 }
 
 /** Split on both newlines (handled by getMultilineInput) and commas, trim, drop empties. */
