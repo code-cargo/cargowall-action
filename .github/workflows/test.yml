@@ -295,15 +295,42 @@ jobs:
           allowed-hosts: |
             **.ubuntu.com
 
-      - name: Test allowed connection 2 labels deep (us.archive.ubuntu.com matches **.ubuntu.com)
+      - name: Test 2 labels deep matches **.ubuntu.com (gb.archive.ubuntu.com)
         run: |
-          curl -sfL --max-time 10 https://us.archive.ubuntu.com > /dev/null
-          echo "Successfully connected to us.archive.ubuntu.com via **.ubuntu.com wildcard (2 labels deep)"
+          # Assert cargowall's DNS verdict, not an end-to-end connection. Canonical's
+          # archive mirrors round-robin through 185.125.190.0/24, which GitHub's Azure
+          # runners can't reach on :443, and curl does NOT fail over to another A
+          # record on a connect timeout — so gb.archive.ubuntu.com, whose addresses
+          # are entirely in that range, can never complete a TCP handshake here.
+          # With the --github-action preset's DNS query filtering on and no search
+          # domain configured, a matched name is resolved by the proxy and an
+          # unmatched one is REFUSED, so resolution is a precise match signal.
+          # (us.archive.ubuntu.com, the old host, was retired by Canonical.)
+          OUTPUT=$(nslookup gb.archive.ubuntu.com 127.0.0.1 2>&1 || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qi "refused"; then
+            echo "ERROR: gb.archive.ubuntu.com (2 labels deep) should match **.ubuntu.com, but was REFUSED"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -qi "^Name:"; then
+            echo "ERROR: expected gb.archive.ubuntu.com to resolve through the proxy (globstar match), but it did not"
+            exit 1
+          fi
+          echo "**.ubuntu.com matched gb.archive.ubuntu.com (2 labels deep): allowed and resolved"
 
-      - name: Test allowed connection 1 label deep (archive.ubuntu.com matches **.ubuntu.com)
+      - name: Test 1 label deep matches **.ubuntu.com (archive.ubuntu.com)
         run: |
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
-          echo "Successfully connected to archive.ubuntu.com via **.ubuntu.com wildcard (1 label deep)"
+          OUTPUT=$(nslookup archive.ubuntu.com 127.0.0.1 2>&1 || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qi "refused"; then
+            echo "ERROR: archive.ubuntu.com (1 label deep) should match **.ubuntu.com, but was REFUSED"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -qi "^Name:"; then
+            echo "ERROR: expected archive.ubuntu.com to resolve through the proxy (globstar match), but it did not"
+            exit 1
+          fi
+          echo "**.ubuntu.com matched archive.ubuntu.com (1 label deep): allowed and resolved"
 
       - name: Test bare domain not matched (ubuntu.com should not match **.ubuntu.com)
         run: |
@@ -337,18 +364,37 @@ jobs:
           allowed-hosts: |
             *.ubuntu.com
 
-      - name: Test single-label wildcard (archive.ubuntu.com via *.ubuntu.com)
+      # Assert cargowall's DNS verdict rather than a connection: with query
+      # filtering on (the --github-action preset) and no search domain, a name not
+      # matched by any rule is REFUSED at the proxy. gb.archive.ubuntu.com is 2
+      # labels deep, so *.ubuntu.com (single label only) must NOT match it. The
+      # verdict avoids a false pass — gb.archive's IPs are all in Canonical's
+      # unreachable 185.125.190.0/24, so a plain curl would "fail to connect" even
+      # if the name were wrongly allowed (the retired us.archive.ubuntu.com passed
+      # this vacuously for the same reason).
+      - name: Test 2-labels-deep name refused (gb.archive.ubuntu.com not matched by *.ubuntu.com)
         run: |
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
-          echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com"
-
-      - name: Test globstar wildcard (us.archive.ubuntu.com via **.ubuntu.com should fail - not in rules)
-        run: |
-          if curl -sfL --max-time 5 https://us.archive.ubuntu.com > /dev/null 2>&1; then
-            echo "ERROR: us.archive.ubuntu.com should be blocked (*.ubuntu.com only matches 1 label)"
+          OUTPUT=$(nslookup gb.archive.ubuntu.com 127.0.0.1 2>&1 || true)
+          echo "$OUTPUT"
+          if ! echo "$OUTPUT" | grep -qi "refused"; then
+            echo "ERROR: gb.archive.ubuntu.com should be REFUSED (*.ubuntu.com only matches 1 label)"
             exit 1
           fi
-          echo "Correctly blocked us.archive.ubuntu.com (*.ubuntu.com does not match 2 labels deep)"
+          echo "Correctly refused gb.archive.ubuntu.com (*.ubuntu.com does not match 2 labels deep)"
+
+      - name: Test single-label wildcard matches (archive.ubuntu.com via *.ubuntu.com)
+        run: |
+          OUTPUT=$(nslookup archive.ubuntu.com 127.0.0.1 2>&1 || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qi "refused"; then
+            echo "ERROR: archive.ubuntu.com should match *.ubuntu.com, but was REFUSED"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -qi "^Name:"; then
+            echo "ERROR: expected archive.ubuntu.com to resolve through the proxy (*.ubuntu.com match), but it did not"
+            exit 1
+          fi
+          echo "*.ubuntu.com matched archive.ubuntu.com: allowed and resolved"
 
       - name: Test blocked connection (httpbin.org)
         run: |
@@ -380,10 +426,26 @@ jobs:
 
       - name: Test suffix stripping enables rule match (archive.ubuntu.com -> archive)
         run: |
-          # Without search-domains, the bare `archive` rule would NOT cover
-          # archive.ubuntu.com. It connects only because `.ubuntu.com` is stripped
-          # to `archive`, which matches the rule.
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          # This check must stay end-to-end. A name under the .ubuntu.com search
+          # domain that does NOT match a rule is BYPASSED (forwarded and resolved),
+          # so a DNS-only probe can't tell a real `archive` rule match from a bypass
+          # — only a completed connection proves the resolved IPs were allowlisted.
+          # Without search-domains the bare `archive` rule would not cover
+          # archive.ubuntu.com; it connects only because `.ubuntu.com` is stripped
+          # to `archive`, which matches. Canonical's mirrors round-robin through an
+          # 185.125.190.0/24 range these Azure runners can't reach on :443, and curl
+          # does not fail over across A records on a connect timeout, so retry to get
+          # a re-resolution that fronts a reachable (91.189.x) IP; -4 skips the dead
+          # IPv6 path.
+          ok=""
+          for i in 1 2 3 4 5; do
+            if curl -sf -4 --connect-timeout 5 --max-time 15 https://archive.ubuntu.com > /dev/null; then
+              ok=1; break
+            fi
+            echo "attempt $i: archive.ubuntu.com mirror IP unreachable, retrying"
+            sleep 3
+          done
+          [ -n "$ok" ] || { echo "ERROR: archive.ubuntu.com unreachable after retries; suffix-strip match unverified"; exit 1; }
           echo "Connected to archive.ubuntu.com (.ubuntu.com stripped -> matched 'archive' rule)"
 
       - name: Test bypass for an unmatched name under a search domain (forwarded, not refused)
