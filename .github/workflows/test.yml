@@ -341,18 +341,24 @@ jobs:
           allowed-hosts: |
             *.ubuntu.com
 
-      - name: Test single-label wildcard (archive.ubuntu.com via *.ubuntu.com)
+      # Assert the block BEFORE the allow: running it first means no *.ubuntu.com
+      # IP is allowlisted yet, so a shared Canonical mirror IP can't mask the
+      # block (gb.archive.ubuntu.com resolves into archive.ubuntu.com's IP pool).
+      # The old host here, us.archive.ubuntu.com, was retired by Canonical and
+      # made this pass vacuously — curl failed to resolve it, which looks
+      # identical to a cargowall block.
+      - name: Test 2-labels-deep name blocked (gb.archive.ubuntu.com not matched by *.ubuntu.com)
         run: |
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
-          echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com"
-
-      - name: Test globstar wildcard (us.archive.ubuntu.com via **.ubuntu.com should fail - not in rules)
-        run: |
-          if curl -sfL --max-time 5 https://us.archive.ubuntu.com > /dev/null 2>&1; then
-            echo "ERROR: us.archive.ubuntu.com should be blocked (*.ubuntu.com only matches 1 label)"
+          if curl -sfL -4 --max-time 5 https://gb.archive.ubuntu.com > /dev/null 2>&1; then
+            echo "ERROR: gb.archive.ubuntu.com should be blocked (*.ubuntu.com only matches 1 label)"
             exit 1
           fi
-          echo "Correctly blocked us.archive.ubuntu.com (*.ubuntu.com does not match 2 labels deep)"
+          echo "Correctly blocked gb.archive.ubuntu.com (*.ubuntu.com does not match 2 labels deep)"
+
+      - name: Test single-label wildcard (archive.ubuntu.com via *.ubuntu.com)
+        run: |
+          curl -sf -4 --connect-timeout 5 --max-time 20 https://archive.ubuntu.com > /dev/null
+          echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com"
 
       - name: Test blocked connection (httpbin.org)
         run: |
