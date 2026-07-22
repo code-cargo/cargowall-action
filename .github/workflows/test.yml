@@ -295,14 +295,18 @@ jobs:
           allowed-hosts: |
             **.ubuntu.com
 
-      - name: Test allowed connection 2 labels deep (us.archive.ubuntu.com matches **.ubuntu.com)
+      - name: Test allowed connection 2 labels deep (gb.archive.ubuntu.com matches **.ubuntu.com)
         run: |
-          curl -sfL --max-time 10 https://us.archive.ubuntu.com > /dev/null
-          echo "Successfully connected to us.archive.ubuntu.com via **.ubuntu.com wildcard (2 labels deep)"
+          # us.archive.ubuntu.com was retired by Canonical and no longer resolves;
+          # gb.archive.ubuntu.com is a live 2-label host under ubuntu.com. The -4 +
+          # --connect-timeout flags skip IPv6 happy-eyeballs and fail a blackholed
+          # mirror IP over to the next resolved address instead of burning --max-time.
+          curl -sfL -4 --connect-timeout 5 --max-time 20 https://gb.archive.ubuntu.com > /dev/null
+          echo "Successfully connected to gb.archive.ubuntu.com via **.ubuntu.com wildcard (2 labels deep)"
 
       - name: Test allowed connection 1 label deep (archive.ubuntu.com matches **.ubuntu.com)
         run: |
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          curl -sf -4 --connect-timeout 5 --max-time 20 https://archive.ubuntu.com > /dev/null
           echo "Successfully connected to archive.ubuntu.com via **.ubuntu.com wildcard (1 label deep)"
 
       - name: Test bare domain not matched (ubuntu.com should not match **.ubuntu.com)
@@ -382,8 +386,10 @@ jobs:
         run: |
           # Without search-domains, the bare `archive` rule would NOT cover
           # archive.ubuntu.com. It connects only because `.ubuntu.com` is stripped
-          # to `archive`, which matches the rule.
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
+          # to `archive`, which matches the rule. The -4 + --connect-timeout flags
+          # skip IPv6 happy-eyeballs and fail a blackholed mirror IP over to the
+          # next resolved address instead of burning --max-time on a dead IP.
+          curl -sf -4 --connect-timeout 5 --max-time 20 https://archive.ubuntu.com > /dev/null
           echo "Connected to archive.ubuntu.com (.ubuntu.com stripped -> matched 'archive' rule)"
 
       - name: Test bypass for an unmatched name under a search domain (forwarded, not refused)
