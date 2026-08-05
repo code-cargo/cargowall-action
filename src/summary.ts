@@ -224,15 +224,18 @@ export async function generateSummary(opts: { render: boolean } = { render: true
       }
     })
 
-    if (summaryResult === 0) {
-      // The push (when configured) happened inside that invocation regardless
-      // of whether we render its stdout.
-      if (render && summaryOutput) {
-        await core.summary.addRaw(summaryOutput).write()
-        core.info('Audit summary written to workflow summary')
-      } else {
-        core.info('Audit summary complete (rendering disabled)')
-      }
+    // Three distinct outcomes (the push, when configured, happened inside the
+    // invocation either way):
+    //   exit 0, rendering off       → done, say so accurately
+    //   exit 0, markdown produced   → write it to the workflow summary
+    //   anything else, rendering on → warn and retry without step correlation
+    //     (includes exit 0 with EMPTY stdout — reachable via the zero-event
+    //     push shape — which must not be mislabelled "rendering disabled")
+    if (summaryResult === 0 && !render) {
+      core.info('Audit summary complete (rendering disabled)')
+    } else if (summaryResult === 0 && summaryOutput) {
+      await core.summary.addRaw(summaryOutput).write()
+      core.info('Audit summary written to workflow summary')
     } else {
       core.warning('Failed to generate audit summary with step correlation')
 

@@ -26107,25 +26107,50 @@ async function readPidFile() {
   }
 }
 async function clearStartupFiles() {
-  await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
+  const rc = await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true
   });
+  if (rc !== 0) {
+    warning(
+      "Failed to clear stale cargowall state files from a previous run \u2014 a leftover ready/failure sentinel may be misattributed to this run."
+    );
+  }
+}
+function sentinelReason(raw) {
+  let body = raw;
+  const nl = raw.indexOf("\n");
+  if (nl !== -1 && raw.slice(0, nl).trim().startsWith("pid=")) {
+    body = raw.slice(nl + 1);
+  }
+  const reason = body.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 4096);
+  return reason || "cargowall reported a startup failure with no reason recorded";
 }
 async function readFailureFile() {
+  const raw = await readStateFile(FAILURE_FILE);
+  return raw === null ? null : sentinelReason(raw);
+}
+var MAX_STATE_FILE_BYTES = 8192;
+async function readStateFile(path7) {
+  let handle;
   try {
-    const reason = (await import_fs6.promises.readFile(FAILURE_FILE, "utf8")).trim();
-    return reason || "cargowall reported a startup failure with no reason recorded";
+    handle = await import_fs6.promises.open(path7, import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW);
   } catch {
     return null;
+  }
+  try {
+    if (!(await handle.stat()).isFile()) return null;
+    const buf = Buffer.alloc(MAX_STATE_FILE_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0);
+    return buf.toString("utf8", 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle.close();
   }
 }
 async function readDowngradeFile() {
-  try {
-    return await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
-  } catch {
-    return null;
-  }
+  return readStateFile(DOWNGRADE_FILE);
 }
 function isLockdownRecord(raw) {
   if (raw === null) return false;
@@ -26143,7 +26168,7 @@ function downgradeMessage(raw) {
   } catch {
   }
   if (detail) return `CargoWall changed enforcement posture: ${detail}`;
-  const trimmed = raw.trim();
+  const trimmed = raw.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 512);
   if (!trimmed) return null;
   return `CargoWall changed enforcement posture during startup: ${trimmed}`;
 }
@@ -26176,7 +26201,7 @@ function handlePolicyLockdown(reason) {
   setOutput("supported", "false");
   endGroup();
   throw new Error(
-    `${reason} CargoWall is still running and holding this runner at deny-all, so egress stays blocked for the rest of the job.`
+    `${reason} CargoWall stays alive and is locking this runner down to deny-all; egress will remain blocked for the rest of the job.`
   );
 }
 async function restoreDns() {
@@ -26195,7 +26220,6 @@ function resolveApiFailureMode(args) {
     case "audit":
       return { value: "audit", reason: "set by `api-failure-mode`" };
     case "enforce":
-    case "local":
       return { value: "local", reason: "set by `api-failure-mode`" };
     case "fail":
       return { value: "fail", reason: "set by `api-failure-mode`" };

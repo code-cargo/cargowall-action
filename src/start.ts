@@ -3,7 +3,7 @@ import * as exec from '@actions/exec'
 import * as github from '@actions/github'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
-import { closeSync, openSync } from 'fs'
+import { closeSync, openSync, constants as fsConstants } from 'fs'
 import * as path from 'path'
 import { detectDnsUpstream } from './dns'
 import { findDiagDir, parseExecutedSteps, parseJobPlan } from './diag'
@@ -436,10 +436,38 @@ async function readPidFile(): Promise<number | null> {
  * this cargowall writes. The files may be root-owned, so remove via sudo.
  */
 async function clearStartupFiles(): Promise<void> {
-  await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
+  const rc = await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true,
   })
+  // Not silent on failure: these files gate the readiness loop, and a stale
+  // sentinel that survives here could be misread as this run's verdict.
+  if (rc !== 0) {
+    core.warning(
+      'Failed to clear stale cargowall state files from a previous run — ' +
+        'a leftover ready/failure sentinel may be misattributed to this run.'
+    )
+  }
+}
+
+/**
+ * Extract the human-readable reason from a failure sentinel. cargowall writes
+ * `pid=<n>\n<reason>\n` (cmd/start.go writeFailureSentinel) — the pid stamp
+ * exists for wait-ready's freshness check, not for display, and cargowall's
+ * own consumer drops it before rendering (cmd/wait_ready.go sentinelReason).
+ * Mirror that: cut the pid line, strip control characters (the file lives in
+ * world-writable /tmp and this text reaches CI logs), bound the result, and
+ * never return empty.
+ */
+export function sentinelReason(raw: string): string {
+  let body = raw
+  const nl = raw.indexOf('\n')
+  if (nl !== -1 && raw.slice(0, nl).trim().startsWith('pid=')) {
+    body = raw.slice(nl + 1)
+  }
+  // eslint-disable-next-line no-control-regex
+  const reason = body.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 4096)
+  return reason || 'cargowall reported a startup failure with no reason recorded'
 }
 
 /**
@@ -451,21 +479,41 @@ async function clearStartupFiles(): Promise<void> {
  * Returns the reason, or null if absent.
  */
 async function readFailureFile(): Promise<string | null> {
+  const raw = await readStateFile(FAILURE_FILE)
+  return raw === null ? null : sentinelReason(raw)
+}
+
+/**
+ * Bounded, symlink-refusing read of a cargowall state file. These live at
+ * fixed paths in world-writable /tmp, so mirror the binary's own reader
+ * (cmd/wait_ready.go readStateFile): refuse to follow symlinks, require a
+ * regular file, and cap the read — a planted link or oversized file must not
+ * be followed or slurped.
+ */
+const MAX_STATE_FILE_BYTES = 8192
+
+async function readStateFile(path: string): Promise<string | null> {
+  let handle: Awaited<ReturnType<typeof fs.open>>
   try {
-    const reason = (await fs.readFile(FAILURE_FILE, 'utf8')).trim()
-    return reason || 'cargowall reported a startup failure with no reason recorded'
+    handle = await fs.open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
   } catch {
     return null
+  }
+  try {
+    if (!(await handle.stat()).isFile()) return null
+    const buf = Buffer.alloc(MAX_STATE_FILE_BYTES)
+    const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0)
+    return buf.toString('utf8', 0, bytesRead)
+  } catch {
+    return null
+  } finally {
+    await handle.close()
   }
 }
 
 /** Read the downgrade record, or null when cargowall recorded no posture change. */
 async function readDowngradeFile(): Promise<string | null> {
-  try {
-    return await fs.readFile(DOWNGRADE_FILE, 'utf8')
-  } catch {
-    return null
-  }
+  return readStateFile(DOWNGRADE_FILE)
 }
 
 /**
@@ -502,7 +550,10 @@ export function downgradeMessage(raw: string | null): string | null {
     // Fall through to the raw payload.
   }
   if (detail) return `CargoWall changed enforcement posture: ${detail}`
-  const trimmed = raw.trim()
+  // Unparseable record: echo a sanitized, tightly bounded excerpt — enough to
+  // recognise, not a vehicle for arbitrary /tmp content in the annotation.
+  // eslint-disable-next-line no-control-regex
+  const trimmed = raw.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 512)
   if (!trimmed) return null
   return `CargoWall changed enforcement posture during startup: ${trimmed}`
 }
@@ -566,17 +617,22 @@ async function handleStartupFailure(
  * for the build to fail when the policy is unavailable.
  *
  * Deliberately does not restore DNS or stop cargowall. The lockdown is meant to
- * hold for the rest of the job: cargowall is alive and still serving DNS on
- * 127.0.0.1, so restoring resolv.conf would point name resolution back at the
- * upstream while eBPF keeps blocking egress — a confusing half-dismantled state
- * rather than the fail-closed one that was asked for.
+ * hold for the rest of the job: cargowall stays alive serving DNS on 127.0.0.1
+ * and proceeds to lock the runner down, so restoring resolv.conf would point
+ * name resolution back at the upstream mid-lockdown — a confusing
+ * half-dismantled state rather than the fail-closed one that was asked for.
+ *
+ * Future tense on purpose: the sentinel is published at the decision, before
+ * the TC attach (cmd/start.go documents it must be read as "cargowall will
+ * lock down and will never become ready", not "deny-all is already enforcing").
+ * DNS filtering is already refusing non-allowed hostnames in that window.
  */
 function handlePolicyLockdown(reason: string): never {
   core.setOutput('supported', 'false')
   core.endGroup()
   throw new Error(
-    `${reason} CargoWall is still running and holding this runner at deny-all, ` +
-      `so egress stays blocked for the rest of the job.`
+    `${reason} CargoWall stays alive and is locking this runner down to deny-all; ` +
+      `egress will remain blocked for the rest of the job.`
   )
 }
 
@@ -600,8 +656,9 @@ export interface ApiFailureModeResolution {
  *
  * The action's vocabulary is `audit | enforce | fail`; the binary calls the
  * middle one `local`, because "enforce" here means "this step's own policy",
- * which is *audit* when the step says `mode: audit`. `local` is accepted as an
- * alias so either vocabulary works in a workflow.
+ * which is *audit* when the step says `mode: audit`. Only the documented
+ * values are accepted — the binary's `local` spelling is a translation
+ * target, not an input alias.
  *
  * The default is `audit` — a policy outage should not silently hand the job an
  * unreviewed local config with full enforcement behind it. But that default
@@ -629,7 +686,6 @@ export function resolveApiFailureMode(args: { input: string; modeSupplied: boole
     case 'audit':
       return { value: 'audit', reason: 'set by `api-failure-mode`' }
     case 'enforce':
-    case 'local':
       return { value: 'local', reason: 'set by `api-failure-mode`' }
     case 'fail':
       return { value: 'fail', reason: 'set by `api-failure-mode`' }

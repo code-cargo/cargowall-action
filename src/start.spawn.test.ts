@@ -42,10 +42,12 @@ vi.mock('child_process', () => ({
 vi.mock('fs', () => ({
   openSync: vi.fn(() => 3),
   closeSync: vi.fn(),
+  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100 },
   promises: {
     access: vi.fn(async () => undefined),
     readFile: vi.fn(async () => { throw new Error('ENOENT') }),
     writeFile: vi.fn(async () => undefined),
+    open: vi.fn(async () => { throw new Error('ENOENT') }),
   },
 }))
 
@@ -59,8 +61,10 @@ const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 
 /**
- * Model the state files cargowall writes. `absent` paths make fs.access reject
- * and fs.readFile throw, matching how the wait loop actually probes them.
+ * Model the state files cargowall writes. Absent paths make fs.access reject
+ * and fs.readFile/fs.open throw, matching how the wait loop actually probes
+ * them. fs.open returns a minimal FileHandle since the state-file reader uses
+ * an O_NOFOLLOW open + bounded read rather than readFile.
  */
 function withFiles(files: Record<string, string>): void {
   vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
@@ -72,6 +76,24 @@ function withFiles(files: Record<string, string>): void {
     if (content === undefined) throw new Error(`ENOENT: ${String(p)}`)
     return content
   })
+  vi.mocked(fsp.open).mockImplementation(async (p: unknown) => {
+    const content = files[String(p)]
+    if (content === undefined) throw new Error(`ENOENT: ${String(p)}`)
+    return {
+      stat: async () => ({ isFile: () => true }),
+      read: async (buf: Buffer, offset: number, length: number) => {
+        const src = Buffer.from(content, 'utf8')
+        const bytesRead = src.copy(buf, offset, 0, Math.min(src.length, length))
+        return { bytesRead, buffer: buf }
+      },
+      close: async () => undefined,
+    } as unknown as Awaited<ReturnType<typeof fsp.open>>
+  })
+}
+
+/** Sentinel content exactly as cargowall writes it: pid stamp, then reason. */
+function sentinel(reason: string, pid = 4242): string {
+  return `pid=${pid}\n${reason}\n`
 }
 
 /**
@@ -269,7 +291,7 @@ describe('start() failure-sentinel handling', () => {
     withInputs({ 'fail-on-unsupported': 'false' })
     withFiles({
       // No ready sentinel: in lockdown cargowall deliberately withholds it.
-      [FAILURE_FILE]: 'cargowall entered policy lockdown (default-deny): policy fetch failed',
+      [FAILURE_FILE]: sentinel('cargowall entered policy lockdown (default-deny): policy fetch failed'),
       [DOWNGRADE_FILE]: JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN' }),
     })
 
@@ -281,16 +303,16 @@ describe('start() failure-sentinel handling', () => {
   it('says the runner is still locked down, so the failure is actionable', async () => {
     withInputs({})
     withFiles({
-      [FAILURE_FILE]: 'cargowall entered policy lockdown (default-deny): policy fetch failed',
+      [FAILURE_FILE]: sentinel('cargowall entered policy lockdown (default-deny): policy fetch failed'),
       [DOWNGRADE_FILE]: JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN' }),
     })
 
-    await expect(start()).rejects.toThrow(/holding this runner at deny-all/)
+    await expect(start()).rejects.toThrow(/locking this runner down to deny-all/)
   })
 
   it('honours fail-on-unsupported:false for a generic fatal startup error', async () => {
     withInputs({ 'fail-on-unsupported': 'false' })
-    withFiles({ [FAILURE_FILE]: 'cargowall startup failed: failed to attach TC program' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program') })
 
     // No downgrade record → not a lockdown → the pre-existing contract applies.
     const result = await start()
@@ -306,14 +328,14 @@ describe('start() failure-sentinel handling', () => {
 
   it('fails a generic fatal startup error when fail-on-unsupported is true', async () => {
     withInputs({ 'fail-on-unsupported': 'true' })
-    withFiles({ [FAILURE_FILE]: 'cargowall startup failed: failed to attach TC program' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program') })
 
     await expect(start()).rejects.toThrow(/failed to attach TC program/)
   })
 
   it('surfaces the binary\'s own reason rather than a generic message', async () => {
     withInputs({ 'fail-on-unsupported': 'true' })
-    withFiles({ [FAILURE_FILE]: 'cargowall startup failed: interface eth0 not found' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: interface eth0 not found') })
 
     await expect(start()).rejects.toThrow(/interface eth0 not found/)
   })

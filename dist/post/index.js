@@ -25517,13 +25517,11 @@ async function generateSummary(opts = { render: true }) {
         }
       }
     });
-    if (summaryResult === 0) {
-      if (render && summaryOutput) {
-        await summary.addRaw(summaryOutput).write();
-        info("Audit summary written to workflow summary");
-      } else {
-        info("Audit summary complete (rendering disabled)");
-      }
+    if (summaryResult === 0 && !render) {
+      info("Audit summary complete (rendering disabled)");
+    } else if (summaryResult === 0 && summaryOutput) {
+      await summary.addRaw(summaryOutput).write();
+      info("Audit summary written to workflow summary");
     } else {
       warning("Failed to generate audit summary with step correlation");
       if (render) {

@@ -21,7 +21,7 @@ inputs:
     # apart. start.ts defaults this to "audit".
     description: >-
       Posture when the policy cannot be retrieved from the CodeCargo API:
-      "audit" (downgrade to audit mode so a policy outage cannot silently drop enforcement to an unreviewed local config),
+      "audit" (downgrade to audit mode — log, don't block — so the job completes and the degraded run is visible on the dashboard; note this means an unreachable API disables blocking, see README),
       "enforce" (use the policy from this step as-is), or
       "fail" (lock the runner down to deny-all and fail the step).
       Only genuine retrieval failures act on this — an unreachable API, a server

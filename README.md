@@ -170,9 +170,11 @@ If you manage policies on the [CodeCargo platform](#codecargo-platform), the act
 
 | Value              | Behaviour on a retrieval failure                                                              |
 |--------------------|-----------------------------------------------------------------------------------------------|
-| `audit` *(default)* | Run in audit mode — log connections, block nothing. A policy outage never breaks the build, and never silently enforces a config nobody reviewed |
+| `audit` *(default)* | Run in audit mode — log connections, block nothing. The build completes, and the downgrade is warned in the log and recorded for the dashboard |
 | `enforce`           | Use this step's own configuration as-is (the behaviour before this input existed)              |
 | `fail`              | Lock the runner down to deny-all and fail the step                                             |
+
+> **Trade-off of the `audit` default — read this if you don't use the CodeCargo platform.** A retrieval failure downgrades the run to logging-only, and "retrieval failure" includes runners that can *never* reach `app.codecargo.com` — e.g. self-hosted runners with restricted egress — not just transient outages. On such a runner the firewall would downgrade on **every** run. If your policy lives in this workflow file rather than the CodeCargo platform, set `api-failure-mode: enforce` (keep enforcing this step's config), or `offline: true` (skip the API entirely — also keeps enforcing). Setting `mode:` explicitly has the same effect as `enforce` here, as shown below.
 
 **Only genuine retrieval failures count**: the API being unreachable, a server error, a timeout, or a policy that can't be parsed. These do *not* count and always fall back to this step's configuration, whatever `api-failure-mode` says:
 
