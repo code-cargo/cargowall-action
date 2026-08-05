@@ -14,8 +14,15 @@ vi.mock('@actions/core', () => ({
 }))
 vi.mock('./cleanup', () => ({ cleanup: vi.fn() }))
 vi.mock('./summary', () => ({ generateSummary: vi.fn() }))
+vi.mock('fs', () => ({
+  promises: {
+    // No downgrade record by default — the common case.
+    access: vi.fn(async () => { throw new Error('ENOENT') }),
+  },
+}))
 
 import * as core from '@actions/core'
+import { promises as fsp } from 'fs'
 import { cleanup } from './cleanup'
 import { generateSummary } from './summary'
 
@@ -39,6 +46,7 @@ describe('post', () => {
     vi.mocked(core.getState).mockImplementation((name: string) =>
       name === 'cargowall-pid' ? '4242' : ''
     )
+    vi.mocked(fsp.access).mockRejectedValue(new Error('ENOENT'))
     withInputs({})
   })
 
@@ -105,5 +113,30 @@ describe('post', () => {
 
     expect(generateSummary).not.toHaveBeenCalled()
     expect(cleanup).not.toHaveBeenCalled()
+  })
+
+  it('skips the push when start() failed before cargowall ran', async () => {
+    // start() threw pre-spawn (bad input, download failure): no pid state, no
+    // downgrade record. A zero-event push would report effective mode
+    // "enforce" for a job that had no filtering at all.
+    vi.mocked(core.getState).mockReturnValue('')
+    withInputs({ 'api-url': 'https://app.codecargo.com' })
+
+    await runPost()
+
+    expect(generateSummary).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalled()
+  })
+
+  it('still pushes for a policy lockdown (downgrade record, no pid)', async () => {
+    // Lockdown never saves pid state (the throw happens before), but the
+    // downgrade record exists and the push carries it to the dashboard.
+    vi.mocked(core.getState).mockReturnValue('')
+    vi.mocked(fsp.access).mockResolvedValue(undefined)
+    withInputs({ 'api-url': 'https://app.codecargo.com' })
+
+    await runPost()
+
+    expect(generateSummary).toHaveBeenCalledWith({ render: true })
   })
 })

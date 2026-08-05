@@ -649,28 +649,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Start a policy API stub that always 503s
-        run: |
-          # 503 is a "server" class failure — a genuine outage, so the posture
-          # applies. Backgrounded; the runner VM is destroyed after the job.
-          cat > /tmp/policy-stub.py <<'PY'
-          import http.server, sys
-          status = int(sys.argv[1])
-          class H(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  self.send_response(status)
-                  self.send_header('Content-Type', 'application/json')
-                  self.end_headers()
-                  self.wfile.write(b'{}')
-              def log_message(self, *a):
-                  pass
-          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
-          PY
-          nohup python3 /tmp/policy-stub.py 503 > /tmp/policy-stub.log 2>&1 &
-          for _ in $(seq 1 20); do
-            curl -s -o /dev/null http://127.0.0.1:8099/ && break
-            sleep 0.25
-          done
-          curl -s -o /dev/null -w 'stub status: %{http_code}\n' http://127.0.0.1:8099/
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '503'
 
       - name: Setup CargoWall
         id: cargowall
@@ -719,25 +700,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Start a policy API stub that always 404s
-        run: |
-          cat > /tmp/policy-stub.py <<'PY'
-          import http.server, sys
-          status = int(sys.argv[1])
-          class H(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  self.send_response(status)
-                  self.send_header('Content-Type', 'application/json')
-                  self.end_headers()
-                  self.wfile.write(b'{}')
-              def log_message(self, *a):
-                  pass
-          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
-          PY
-          nohup python3 /tmp/policy-stub.py 404 > /tmp/policy-stub.log 2>&1 &
-          for _ in $(seq 1 20); do
-            curl -s -o /dev/null http://127.0.0.1:8099/ && break
-            sleep 0.25
-          done
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '404'
 
       - name: Setup CargoWall
         id: cargowall
@@ -782,25 +747,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Start a policy API stub that always 503s
-        run: |
-          cat > /tmp/policy-stub.py <<'PY'
-          import http.server, sys
-          status = int(sys.argv[1])
-          class H(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  self.send_response(status)
-                  self.send_header('Content-Type', 'application/json')
-                  self.end_headers()
-                  self.wfile.write(b'{}')
-              def log_message(self, *a):
-                  pass
-          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
-          PY
-          nohup python3 /tmp/policy-stub.py 503 > /tmp/policy-stub.log 2>&1 &
-          for _ in $(seq 1 20); do
-            curl -s -o /dev/null http://127.0.0.1:8099/ && break
-            sleep 0.25
-          done
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '503'
 
       - name: Setup CargoWall (expected to fail)
         id: cargowall
@@ -827,12 +776,24 @@ jobs:
           echo "failure sentinel:"; cat /tmp/cargowall-failed
           grep -q 'policy lockdown' /tmp/cargowall-failed
 
+          # Pin the sentinel format contract the action's parser relies on:
+          # first line is the writer's pid stamp, and on the lockdown path
+          # (process alive, pidfile written) it matches the real pid.
+          head -1 /tmp/cargowall-failed | grep -Eq '^pid=[0-9]+$'
+          test "$(head -1 /tmp/cargowall-failed)" = "pid=$(cat /tmp/cargowall.pid)"
+
           # Ready is withheld on purpose: "ready" means the requested policy is
           # enforced, and it is not.
           if [ -f /tmp/cargowall-ready ]; then
             echo "ERROR: ready sentinel must be withheld in lockdown"
             exit 1
           fi
+
+          # Lockdown invariant: the process stays ALIVE holding the runner at
+          # deny-all, and DNS stays pointed at cargowall's proxy — the action
+          # must not have restored resolv.conf out from under it.
+          sudo kill -0 "$(cat /tmp/cargowall.pid)"
+          grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf
 
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)

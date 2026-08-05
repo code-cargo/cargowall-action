@@ -42,10 +42,14 @@ vi.mock('child_process', () => ({
 vi.mock('fs', () => ({
   openSync: vi.fn(() => 3),
   closeSync: vi.fn(),
+  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x800 },
   promises: {
     access: vi.fn(async () => undefined),
     readFile: vi.fn(async () => { throw new Error('ENOENT') }),
     writeFile: vi.fn(async () => undefined),
+    open: vi.fn(async () => { throw new Error('ENOENT') }),
+    stat: vi.fn(async () => { throw new Error('ENOENT') }),
+    lstat: vi.fn(async () => { throw new Error('ENOENT') }),
   },
 }))
 
@@ -59,19 +63,50 @@ const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 
 /**
- * Model the state files cargowall writes. `absent` paths make fs.access reject
- * and fs.readFile throw, matching how the wait loop actually probes them.
+ * Model the state files cargowall writes. Absent paths make fs.access reject
+ * and fs.readFile/fs.open/fs.stat throw, matching how the wait loop actually
+ * probes them. fs.open returns a minimal FileHandle since the state-file
+ * reader uses an O_NOFOLLOW open + bounded read rather than readFile. Present
+ * files default to a future mtime (unambiguously fresher than the spawn
+ * anchor); pass `staleMtimes` to model a leftover from a previous run.
  */
-function withFiles(files: Record<string, string>): void {
+function withFiles(files: Record<string, string>, staleMtimes: string[] = []): void {
   vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
     if (String(p) in files || !String(p).startsWith('/tmp/cargowall')) return undefined
     throw new Error(`ENOENT: ${String(p)}`)
+  })
+  vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
+    if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
+    const mtimeMs = staleMtimes.includes(String(p)) ? 1 : Date.now() + 5000
+    return { mtimeMs, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
+  })
+  vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
+    if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
+    return { isFile: () => true } as Awaited<ReturnType<typeof fsp.lstat>>
   })
   vi.mocked(fsp.readFile).mockImplementation(async (p: unknown) => {
     const content = files[String(p)]
     if (content === undefined) throw new Error(`ENOENT: ${String(p)}`)
     return content
   })
+  vi.mocked(fsp.open).mockImplementation(async (p: unknown) => {
+    const content = files[String(p)]
+    if (content === undefined) throw new Error(`ENOENT: ${String(p)}`)
+    return {
+      stat: async () => ({ isFile: () => true }),
+      read: async (buf: Buffer, offset: number, length: number) => {
+        const src = Buffer.from(content, 'utf8')
+        const bytesRead = src.copy(buf, offset, 0, Math.min(src.length, length))
+        return { bytesRead, buffer: buf }
+      },
+      close: async () => undefined,
+    } as unknown as Awaited<ReturnType<typeof fsp.open>>
+  })
+}
+
+/** Sentinel content exactly as cargowall writes it: pid stamp, then reason. */
+function sentinel(reason: string, pid = 4242): string {
+  return `pid=${pid}\n${reason}\n`
 }
 
 /**
@@ -209,6 +244,14 @@ describe('start() argument construction', () => {
       withInputs({ 'api-url': 'https://app.codecargo.com', 'api-failure-mode': 'abort' })
       await expect(start()).rejects.toThrow(/Invalid "api-failure-mode" value "abort"/)
     })
+
+    it('rejects an invalid value even when the API path is disabled', async () => {
+      // Validation must not be reachable only on the API path — a typo that
+      // lies dormant behind offline:true would surface as a silent posture
+      // choice the day the API path is enabled.
+      withInputs({ offline: 'true', 'api-failure-mode': 'abort' })
+      await expect(start()).rejects.toThrow(/Invalid "api-failure-mode" value "abort"/)
+    })
   })
 
   describe('mode', () => {
@@ -269,7 +312,7 @@ describe('start() failure-sentinel handling', () => {
     withInputs({ 'fail-on-unsupported': 'false' })
     withFiles({
       // No ready sentinel: in lockdown cargowall deliberately withholds it.
-      [FAILURE_FILE]: 'cargowall entered policy lockdown (default-deny): policy fetch failed',
+      [FAILURE_FILE]: sentinel('cargowall entered policy lockdown (default-deny): policy fetch failed'),
       [DOWNGRADE_FILE]: JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN' }),
     })
 
@@ -281,16 +324,16 @@ describe('start() failure-sentinel handling', () => {
   it('says the runner is still locked down, so the failure is actionable', async () => {
     withInputs({})
     withFiles({
-      [FAILURE_FILE]: 'cargowall entered policy lockdown (default-deny): policy fetch failed',
+      [FAILURE_FILE]: sentinel('cargowall entered policy lockdown (default-deny): policy fetch failed'),
       [DOWNGRADE_FILE]: JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN' }),
     })
 
-    await expect(start()).rejects.toThrow(/holding this runner at deny-all/)
+    await expect(start()).rejects.toThrow(/locking this runner down to deny-all/)
   })
 
   it('honours fail-on-unsupported:false for a generic fatal startup error', async () => {
     withInputs({ 'fail-on-unsupported': 'false' })
-    withFiles({ [FAILURE_FILE]: 'cargowall startup failed: failed to attach TC program' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program') })
 
     // No downgrade record → not a lockdown → the pre-existing contract applies.
     const result = await start()
@@ -306,15 +349,52 @@ describe('start() failure-sentinel handling', () => {
 
   it('fails a generic fatal startup error when fail-on-unsupported is true', async () => {
     withInputs({ 'fail-on-unsupported': 'true' })
-    withFiles({ [FAILURE_FILE]: 'cargowall startup failed: failed to attach TC program' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program') })
 
     await expect(start()).rejects.toThrow(/failed to attach TC program/)
   })
 
   it('surfaces the binary\'s own reason rather than a generic message', async () => {
     withInputs({ 'fail-on-unsupported': 'true' })
-    withFiles({ [FAILURE_FILE]: 'cargowall startup failed: interface eth0 not found' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: interface eth0 not found') })
 
     await expect(start()).rejects.toThrow(/interface eth0 not found/)
   })
+
+  it('classifies lockdown from the sentinel text when the downgrade sidecar is missing', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    // The downgrade record is best-effort and written AFTER the sentinel. Its
+    // absence must not let an explicit fail fall through to the generic path,
+    // which would restore DNS under a still-running lockdown and go green.
+    withFiles({
+      [FAILURE_FILE]: sentinel('cargowall entered policy lockdown (default-deny): policy fetch failed'),
+    })
+
+    await expect(start()).rejects.toThrow(/locking this runner down to deny-all/)
+  })
+
+  it('ignores a stale failure sentinel left by a previous run', async () => {
+    withInputs({})
+    // Stale sentinel (mtime long before this spawn) plus a ready file that
+    // appears on the second poll — the run must come up clean rather than
+    // failing on the leftover.
+    withFiles(
+      {
+        [FAILURE_FILE]: sentinel('cargowall startup failed: crash from a previous run'),
+        [READY_FILE]: '',
+      },
+      [FAILURE_FILE],
+    )
+    let readyPolls = 0
+    const statImpl = vi.mocked(fsp.stat).getMockImplementation()!
+    vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
+      if (String(p) === READY_FILE && readyPolls++ === 0) throw new Error('not yet')
+      return statImpl(p as never)
+    })
+
+    const result = await start()
+
+    expect(result.supported).toBe(true)
+    expect(core.error).not.toHaveBeenCalled()
+  }, 10000)
 })

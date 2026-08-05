@@ -4,6 +4,7 @@ import {
   resolveApiFailureMode,
   isLockdownRecord,
   downgradeMessage,
+  sentinelReason,
 } from './start'
 
 // Mock @actions/core — requireNonEmptyHostList calls core.getMultilineInput
@@ -87,8 +88,10 @@ describe('resolveApiFailureMode', () => {
     expect(resolveApiFailureMode({ input: 'enforce', modeSupplied: false }).value).toBe('local')
   })
 
-  it('accepts "local" as an alias so either vocabulary works', () => {
-    expect(resolveApiFailureMode({ input: 'local', modeSupplied: false }).value).toBe('local')
+  it('rejects the binary-internal "local" spelling — only documented values are accepted', () => {
+    expect(() => resolveApiFailureMode({ input: 'local', modeSupplied: false })).toThrow(
+      /Invalid "api-failure-mode" value "local"/
+    )
   })
 
   it('passes fail through', () => {
@@ -133,6 +136,44 @@ describe('isLockdownRecord', () => {
 
   it('treats a record with no type as not lockdown', () => {
     expect(isLockdownRecord(JSON.stringify({ detail: 'something happened' }))).toBe(false)
+  })
+})
+
+/**
+ * The failure sentinel is `pid=<n>\n<reason>\n` (cmd/start.go
+ * writeFailureSentinel). The pid stamp is for freshness checks, not display —
+ * cargowall's own consumer drops it (cmd/wait_ready.go sentinelReason), and so
+ * must we, or it leaks into every user-facing failure message.
+ */
+describe('sentinelReason', () => {
+  it('drops the pid stamp and returns the reason', () => {
+    expect(sentinelReason('pid=12345\ncargowall startup failed: failed to attach TC program\n')).toBe(
+      'cargowall startup failed: failed to attach TC program'
+    )
+  })
+
+  it('falls back on a pid-only sentinel instead of showing "pid=123" as the reason', () => {
+    // Without the pid-line cut this trims to the truthy "pid=123" and the
+    // no-reason fallback is dead code.
+    expect(sentinelReason('pid=123\n\n')).toBe(
+      'cargowall reported a startup failure with no reason recorded'
+    )
+  })
+
+  it('passes through content with no pid stamp', () => {
+    expect(sentinelReason('some reason\n')).toBe('some reason')
+  })
+
+  it('strips control characters so /tmp content cannot shape log lines', () => {
+    expect(sentinelReason('pid=1\nbad\x00reason\twith\x1bjunk\n')).toBe('bad reason with junk')
+  })
+
+  it('bounds the reason', () => {
+    expect(sentinelReason(`pid=1\n${'x'.repeat(10000)}\n`).length).toBe(4096)
+  })
+
+  it('only cuts a first line that is a pid stamp', () => {
+    expect(sentinelReason('pidgin failure\nmore detail\n')).toBe('pidgin failure more detail')
   })
 })
 

@@ -21560,7 +21560,7 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.3.6-rc.3";
+var CARGOWALL_VERSION = "v1.3.6";
 var http2 = new HttpClient("cargowall-action");
 async function downloadAsset(url, dest) {
   const attempt = async () => {
@@ -25942,14 +25942,14 @@ async function start() {
   }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
+  const apiFailure = resolveApiFailureMode({
+    input: getInput("api-failure-mode"),
+    modeSupplied
+  });
   let apiFailureLabel = null;
   if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`);
     args.push(`--job-key=${context2.job}`);
-    const apiFailure = resolveApiFailureMode({
-      input: getInput("api-failure-mode"),
-      modeSupplied
-    });
     args.push(`--api-failure-mode=${apiFailure.value}`);
     apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`;
     try {
@@ -26009,6 +26009,7 @@ async function start() {
     CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
   };
   const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
+  const spawnedAtMs = Date.now();
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -26026,15 +26027,16 @@ async function start() {
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      await import_fs6.promises.access(READY_FILE);
-      ready = true;
-      break;
+      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs) {
+        ready = true;
+        break;
+      }
     } catch {
     }
-    const failureReason = await readFailureFile();
+    const failureReason = await readFailureFile(spawnedAtMs);
     if (failureReason !== null) {
       await showLastLog();
-      if (await isPolicyLockdown()) {
+      if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
         return handlePolicyLockdown(failureReason);
       }
       error(`CargoWall reported a startup failure: ${failureReason}`);
@@ -26044,7 +26046,7 @@ async function start() {
         failOnUnsupported
       );
     }
-    cargowallPid = cargowallPid ?? await readPidFile();
+    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
     if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
       error("CargoWall process exited unexpectedly");
       await showLastLog();
@@ -26059,7 +26061,7 @@ async function start() {
   if (!ready) {
     error("Timeout waiting for cargowall to be ready");
     await showLastLog();
-    await stopCargowall([cargowallPid ?? await readPidFile(), spawnedPid]);
+    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid]);
     return handleStartupFailure(
       "CargoWall timed out. Network filtering is not active.",
       "CargoWall timed out starting up",
@@ -26067,8 +26069,8 @@ async function start() {
     );
   }
   info("CargoWall is ready");
-  await warnOnDowngrade();
-  cargowallPid = cargowallPid ?? await readPidFile();
+  await warnOnDowngrade(spawnedAtMs);
+  cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
   setOutput("pid", reportedPid);
@@ -26097,8 +26099,11 @@ async function sudoKillZero(pid) {
   });
   return rc === 0;
 }
-async function readPidFile() {
+async function readPidFile(spawnedAtMs) {
   try {
+    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs) {
+      return null;
+    }
     const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
     const pid = parseInt(out.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
@@ -26107,25 +26112,73 @@ async function readPidFile() {
   }
 }
 async function clearStartupFiles() {
-  await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
+  const rc = await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true
   });
+  if (rc !== 0) {
+    warning(
+      "Failed to clear stale cargowall state files from a previous run \u2014 leftovers will be ignored by their timestamps."
+    );
+  }
 }
-async function readFailureFile() {
+function sentinelReason(raw) {
+  let body = raw;
+  const nl = raw.indexOf("\n");
+  if (nl !== -1 && raw.slice(0, nl).trim().startsWith("pid=")) {
+    body = raw.slice(nl + 1);
+  }
+  const reason = body.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 4096);
+  return reason || "cargowall reported a startup failure with no reason recorded";
+}
+async function readFailureFile(spawnedAtMs) {
   try {
-    const reason = (await import_fs6.promises.readFile(FAILURE_FILE, "utf8")).trim();
-    return reason || "cargowall reported a startup failure with no reason recorded";
+    if ((await import_fs6.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs) {
+      return null;
+    }
   } catch {
     return null;
   }
+  const raw = await readStateFile(FAILURE_FILE);
+  return raw === null ? null : sentinelReason(raw);
 }
-async function readDowngradeFile() {
+var MAX_STATE_FILE_BYTES = 8192;
+async function readStateFile(filePath) {
   try {
-    return await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
+    if (!(await import_fs6.promises.lstat(filePath)).isFile()) return null;
   } catch {
     return null;
   }
+  let handle;
+  try {
+    handle = await import_fs6.promises.open(
+      filePath,
+      import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW | import_fs7.constants.O_NONBLOCK
+    );
+  } catch {
+    return null;
+  }
+  try {
+    if (!(await handle.stat()).isFile()) return null;
+    const buf = Buffer.alloc(MAX_STATE_FILE_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0);
+    return buf.toString("utf8", 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => {
+    });
+  }
+}
+async function readDowngradeFile(spawnedAtMs) {
+  try {
+    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return readStateFile(DOWNGRADE_FILE);
 }
 function isLockdownRecord(raw) {
   if (raw === null) return false;
@@ -26143,16 +26196,17 @@ function downgradeMessage(raw) {
   } catch {
   }
   if (detail) return `CargoWall changed enforcement posture: ${detail}`;
-  const trimmed = raw.trim();
+  const trimmed = raw.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 512);
   if (!trimmed) return null;
   return `CargoWall changed enforcement posture during startup: ${trimmed}`;
 }
-async function isPolicyLockdown() {
+async function isPolicyLockdown(reason, spawnedAtMs) {
   await sleep2(250);
-  return isLockdownRecord(await readDowngradeFile());
+  if (isLockdownRecord(await readDowngradeFile(spawnedAtMs))) return true;
+  return /policy lockdown/i.test(reason);
 }
-async function warnOnDowngrade() {
-  const message = downgradeMessage(await readDowngradeFile());
+async function warnOnDowngrade(spawnedAtMs) {
+  const message = downgradeMessage(await readDowngradeFile(spawnedAtMs));
   if (message) warning(message);
 }
 async function stopCargowall(pids) {
@@ -26176,7 +26230,7 @@ function handlePolicyLockdown(reason) {
   setOutput("supported", "false");
   endGroup();
   throw new Error(
-    `${reason} CargoWall is still running and holding this runner at deny-all, so egress stays blocked for the rest of the job.`
+    `${reason} CargoWall stays alive and is locking this runner down to deny-all; egress will be blocked for the rest of the job.`
   );
 }
 async function restoreDns() {
@@ -26195,7 +26249,6 @@ function resolveApiFailureMode(args) {
     case "audit":
       return { value: "audit", reason: "set by `api-failure-mode`" };
     case "enforce":
-    case "local":
       return { value: "local", reason: "set by `api-failure-mode`" };
     case "fail":
       return { value: "fail", reason: "set by `api-failure-mode`" };

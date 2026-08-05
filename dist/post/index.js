@@ -21499,6 +21499,9 @@ function getIDToken(aud) {
   });
 }
 
+// src/post.ts
+var import_fs7 = require("fs");
+
 // src/cleanup.ts
 var import_fs2 = require("fs");
 var CARGOWALL_LOG = "/tmp/cargowall.log";
@@ -25499,8 +25502,8 @@ async function generateSummary(opts = { render: true }) {
         const idToken = await getIDToken("codecargo");
         summaryArgs.push("--token", idToken);
       } catch (error) {
-        warning(
-          `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
+        info(
+          `No OIDC token available for the API push \u2014 skipping it. For CodeCargo platform integration the workflow needs "permissions: id-token: write". (${error})`
         );
         for (const flag of ["--api-url", "--job-key", "--job-name", "--job-run-id", "--mode", "--default-action", "--job-status"]) {
           const idx = summaryArgs.findIndex((a) => a === flag);
@@ -25517,13 +25520,11 @@ async function generateSummary(opts = { render: true }) {
         }
       }
     });
-    if (summaryResult === 0) {
-      if (render && summaryOutput) {
-        await summary.addRaw(summaryOutput).write();
-        info("Audit summary written to workflow summary");
-      } else {
-        info("Audit summary complete (rendering disabled)");
-      }
+    if (summaryResult === 0 && !render) {
+      info("Audit summary complete (rendering disabled)");
+    } else if (summaryResult === 0 && summaryOutput) {
+      await summary.addRaw(summaryOutput).write();
+      info("Audit summary written to workflow summary");
     } else {
       warning("Failed to generate audit summary with step correlation");
       if (render) {
@@ -25715,12 +25716,24 @@ function buildStepsFromDiag(diag) {
 }
 
 // src/post.ts
+var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 async function run() {
   try {
     const skipped = getState("cargowall-skipped");
     const pid = getState("cargowall-pid");
     if (skipped === "true" && !pid) {
       info("CargoWall was not started, skipping cleanup");
+      return;
+    }
+    let downgraded = false;
+    try {
+      await import_fs7.promises.access(DOWNGRADE_FILE);
+      downgraded = true;
+    } catch {
+    }
+    if (!pid && !downgraded) {
+      info("CargoWall never ran in this job, skipping summary");
+      await cleanup();
       return;
     }
     const render = getInput("audit-summary") !== "false";

@@ -3,7 +3,7 @@ import * as exec from '@actions/exec'
 import * as github from '@actions/github'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
-import { closeSync, openSync } from 'fs'
+import { closeSync, openSync, constants as fsConstants } from 'fs'
 import * as path from 'path'
 import { detectDnsUpstream } from './dns'
 import { findDiagDir, parseExecutedSteps, parseJobPlan } from './diag'
@@ -170,16 +170,19 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // from the CodeCargo SaaS API.
   const offline = core.getInput('offline') === 'true'
   const apiUrl = core.getInput('api-url')
+  // Resolved unconditionally so an invalid value fails the step even when the
+  // API path is disabled (offline / empty api-url) — a typo must surface at
+  // configuration time, not lie dormant until the day the API path is enabled.
+  const apiFailure = resolveApiFailureMode({
+    input: core.getInput('api-failure-mode'),
+    modeSupplied,
+  })
   // Non-null only while the API flags survive, so the configuration log never
   // advertises a posture that was dropped along with them below.
   let apiFailureLabel: string | null = null
   if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`)
     args.push(`--job-key=${github.context.job}`)
-    const apiFailure = resolveApiFailureMode({
-      input: core.getInput('api-failure-mode'),
-      modeSupplied,
-    })
     args.push(`--api-failure-mode=${apiFailure.value}`)
     apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`
     try {
@@ -263,6 +266,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
+  // Anchor for sentinel freshness: a failure sentinel older than this spawn is
+  // a leftover from a previous run that survived clearStartupFiles (whose rm is
+  // best-effort), not this run's verdict. Same idea as wait-ready's
+  // failureSentinelAnchor, using the wall clock since writer and reader share
+  // the machine.
+  const spawnedAtMs = Date.now()
   const child = spawn('sudo', ['-E', 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -295,19 +304,23 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   let ready = false
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      await fs.access(READY_FILE)
-      ready = true
-      break
+      // Anchored like the other state files: a stale ready file that survived
+      // a failed clearStartupFiles rm must not short-circuit the wait with a
+      // false "ready" while this run's cargowall is still coming up.
+      if ((await fs.stat(READY_FILE)).mtimeMs >= spawnedAtMs) {
+        ready = true
+        break
+      }
     } catch {
       // Not ready yet
     }
 
     // cargowall reported a startup failure. Two very different situations
     // share this sentinel — see isPolicyLockdown.
-    const failureReason = await readFailureFile()
+    const failureReason = await readFailureFile(spawnedAtMs)
     if (failureReason !== null) {
       await showLastLog()
-      if (await isPolicyLockdown()) {
+      if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
         return handlePolicyLockdown(failureReason)
       }
       // A fatal startup error: cargowall has exited. Same contract as the
@@ -321,7 +334,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       )
     }
 
-    cargowallPid = cargowallPid ?? await readPidFile()
+    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
     if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
       core.error('CargoWall process exited unexpectedly')
       await showLastLog()
@@ -338,7 +351,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (!ready) {
     core.error('Timeout waiting for cargowall to be ready')
     await showLastLog()
-    await stopCargowall([cargowallPid ?? await readPidFile(), spawnedPid])
+    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid])
     return handleStartupFailure(
       'CargoWall timed out. Network filtering is not active.',
       'CargoWall timed out starting up',
@@ -351,12 +364,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Surface a posture change (e.g. --api-failure-mode=audit downgraded the run)
   // now that startup succeeded. Deliberately after the ready check: a lockdown
   // exits above, so anything recorded here belongs to a run that came up.
-  await warnOnDowngrade()
+  await warnOnDowngrade(spawnedAtMs)
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
   // PID if the pidfile can't be read.
-  cargowallPid = cargowallPid ?? await readPidFile()
+  cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
   const reportedPid = cargowallPid ?? spawnedPid
 
   core.setOutput('supported', 'true')
@@ -419,9 +432,16 @@ async function sudoKillZero(pid: number): Promise<boolean> {
  * also means this keeps working under --sudo-lockdown, where the action's sudo
  * is denied. Returns null if absent/unreadable (e.g. cargowall hasn't reached
  * the pidfile write yet).
+ *
+ * Anchored like the other state files: a stale pidfile from a previous run
+ * points at a dead (or recycled) PID, and trusting it trips the liveness check
+ * into a false "exited unexpectedly" verdict.
  */
-async function readPidFile(): Promise<number | null> {
+async function readPidFile(spawnedAtMs: number): Promise<number | null> {
   try {
+    if ((await fs.stat(PID_FILE)).mtimeMs < spawnedAtMs) {
+      return null
+    }
     const out = await fs.readFile(PID_FILE, 'utf8')
     const pid = parseInt(out.trim(), 10)
     return Number.isInteger(pid) && pid > 0 ? pid : null
@@ -436,10 +456,38 @@ async function readPidFile(): Promise<number | null> {
  * this cargowall writes. The files may be root-owned, so remove via sudo.
  */
 async function clearStartupFiles(): Promise<void> {
-  await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
+  const rc = await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true,
   })
+  // Not silent on failure. Survivors are not misattributed — every reader
+  // anchors on this run's spawn time and ignores older mtimes — but a failed
+  // rm is still worth surfacing: it means something is off with the runner.
+  if (rc !== 0) {
+    core.warning(
+      'Failed to clear stale cargowall state files from a previous run — ' +
+        'leftovers will be ignored by their timestamps.'
+    )
+  }
+}
+
+/**
+ * Extract the human-readable reason from a failure sentinel. cargowall writes
+ * `pid=<n>\n<reason>\n` (cmd/start.go writeFailureSentinel) — the pid stamp
+ * exists for wait-ready's freshness check, not for display, and cargowall's
+ * own consumer drops it before rendering (cmd/wait_ready.go sentinelReason).
+ * Mirror that: cut the pid line, strip control characters (the file lives in
+ * world-writable /tmp and this text reaches CI logs), bound the result, and
+ * never return empty.
+ */
+export function sentinelReason(raw: string): string {
+  let body = raw
+  const nl = raw.indexOf('\n')
+  if (nl !== -1 && raw.slice(0, nl).trim().startsWith('pid=')) {
+    body = raw.slice(nl + 1)
+  }
+  const reason = body.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 4096)
+  return reason || 'cargowall reported a startup failure with no reason recorded'
 }
 
 /**
@@ -448,24 +496,87 @@ async function clearStartupFiles(): Promise<void> {
  * the latter is why we poll for it at all: in lockdown cargowall deliberately
  * withholds the ready sentinel and keeps running deny-all, so the wait loop
  * would otherwise sit out the full timeout for a decision already made.
- * Returns the reason, or null if absent.
+ *
+ * A sentinel whose mtime predates this run's spawn is a stale leftover from a
+ * reused runner (clearStartupFiles' rm is best-effort) and must not fail this
+ * run — ignore it. cargowall clears it at process entry, so a genuine verdict
+ * always carries a fresh mtime. Returns the reason, or null if absent/stale.
  */
-async function readFailureFile(): Promise<string | null> {
+async function readFailureFile(spawnedAtMs: number): Promise<string | null> {
   try {
-    const reason = (await fs.readFile(FAILURE_FILE, 'utf8')).trim()
-    return reason || 'cargowall reported a startup failure with no reason recorded'
+    if ((await fs.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs) {
+      return null
+    }
+  } catch {
+    return null // Absent — the overwhelmingly common case.
+  }
+  const raw = await readStateFile(FAILURE_FILE)
+  return raw === null ? null : sentinelReason(raw)
+}
+
+/**
+ * Bounded, symlink-refusing read of a cargowall state file. These live at
+ * fixed paths in world-writable /tmp, so mirror the binary's own reader
+ * (cmd/wait_ready.go readStateFile): refuse symlinks, require a regular
+ * file, and cap the read — a planted link or oversized file must not be
+ * followed or slurped.
+ *
+ * Order matters and matches the Go reader: lstat BEFORE open. open(2) with
+ * O_RDONLY on a planted FIFO blocks until a writer appears (O_NOFOLLOW does
+ * not change FIFO semantics), which would hang the wait loop forever — so the
+ * type check cannot rely on the open having returned. O_NONBLOCK guards the
+ * lstat→open race the same way; it does not affect reads of a regular file.
+ * The fstat re-check after open closes the remaining swap window.
+ *
+ * Exported for the real-filesystem tests — the mocked-fs suite cannot
+ * exercise the FIFO/symlink/ordering behaviour.
+ */
+const MAX_STATE_FILE_BYTES = 8192
+
+export async function readStateFile(filePath: string): Promise<string | null> {
+  try {
+    if (!(await fs.lstat(filePath)).isFile()) return null
   } catch {
     return null
+  }
+  let handle: Awaited<ReturnType<typeof fs.open>>
+  try {
+    handle = await fs.open(
+      filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    )
+  } catch {
+    return null
+  }
+  try {
+    if (!(await handle.stat()).isFile()) return null
+    const buf = Buffer.alloc(MAX_STATE_FILE_BYTES)
+    const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0)
+    return buf.toString('utf8', 0, bytesRead)
+  } catch {
+    return null
+  } finally {
+    // A rejecting close (EIO) must not replace the result or escape start().
+    await handle.close().catch(() => {})
   }
 }
 
-/** Read the downgrade record, or null when cargowall recorded no posture change. */
-async function readDowngradeFile(): Promise<string | null> {
+/**
+ * Read the downgrade record, or null when cargowall recorded no posture change.
+ * Anchored like the failure sentinel: a record whose mtime predates this run's
+ * spawn is a leftover from a reused runner and must not classify this run —
+ * a stale LOCKDOWN record would otherwise turn a fresh generic crash into a
+ * thrown lockdown, or a healthy run into a false posture warning.
+ */
+async function readDowngradeFile(spawnedAtMs: number): Promise<string | null> {
   try {
-    return await fs.readFile(DOWNGRADE_FILE, 'utf8')
+    if ((await fs.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs) {
+      return null
+    }
   } catch {
-    return null
+    return null // Absent — the common case.
   }
+  return readStateFile(DOWNGRADE_FILE)
 }
 
 /**
@@ -502,7 +613,9 @@ export function downgradeMessage(raw: string | null): string | null {
     // Fall through to the raw payload.
   }
   if (detail) return `CargoWall changed enforcement posture: ${detail}`
-  const trimmed = raw.trim()
+  // Unparseable record: echo a sanitized, tightly bounded excerpt — enough to
+  // recognise, not a vehicle for arbitrary /tmp content in the annotation.
+  const trimmed = raw.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 512)
   if (!trimmed) return null
   return `CargoWall changed enforcement posture during startup: ${trimmed}`
 }
@@ -511,18 +624,27 @@ export function downgradeMessage(raw: string | null): string | null {
  * Classify a failure sentinel. Both paths write the sentinel immediately before
  * their next step — the downgrade record on one, process exit on the other — so
  * wait briefly for that adjacent write to land before deciding.
+ *
+ * The downgrade record is the primary classifier, but it is a best-effort
+ * sidecar written AFTER the sentinel — if it is absent, late, or unparseable,
+ * an explicitly requested `api-failure-mode: fail` must not fall through to the
+ * generic path (which would warn, restore DNS out from under the still-running
+ * lockdown, and return success). The sentinel reason itself names the state
+ * ("cargowall entered policy lockdown …", cmd/start.go), so match it as a
+ * fallback: brittle alone, strictly safer as a second chance.
  */
-async function isPolicyLockdown(): Promise<boolean> {
+async function isPolicyLockdown(reason: string, spawnedAtMs: number): Promise<boolean> {
   await sleep(250)
-  return isLockdownRecord(await readDowngradeFile())
+  if (isLockdownRecord(await readDowngradeFile(spawnedAtMs))) return true
+  return /policy lockdown/i.test(reason)
 }
 
 /**
  * Report a posture change cargowall recorded during startup. Best-effort: a run
  * that filtered correctly must not fail over a reporting artifact.
  */
-async function warnOnDowngrade(): Promise<void> {
-  const message = downgradeMessage(await readDowngradeFile())
+async function warnOnDowngrade(spawnedAtMs: number): Promise<void> {
+  const message = downgradeMessage(await readDowngradeFile(spawnedAtMs))
   if (message) core.warning(message)
 }
 
@@ -566,17 +688,22 @@ async function handleStartupFailure(
  * for the build to fail when the policy is unavailable.
  *
  * Deliberately does not restore DNS or stop cargowall. The lockdown is meant to
- * hold for the rest of the job: cargowall is alive and still serving DNS on
- * 127.0.0.1, so restoring resolv.conf would point name resolution back at the
- * upstream while eBPF keeps blocking egress — a confusing half-dismantled state
- * rather than the fail-closed one that was asked for.
+ * hold for the rest of the job: cargowall stays alive serving DNS on 127.0.0.1
+ * and proceeds to lock the runner down, so restoring resolv.conf would point
+ * name resolution back at the upstream mid-lockdown — a confusing
+ * half-dismantled state rather than the fail-closed one that was asked for.
+ *
+ * Future tense on purpose: the sentinel is published at the decision, before
+ * the TC attach (cmd/start.go documents it must be read as "cargowall will
+ * lock down and will never become ready", not "deny-all is already enforcing").
+ * DNS filtering is already refusing non-allowed hostnames in that window.
  */
 function handlePolicyLockdown(reason: string): never {
   core.setOutput('supported', 'false')
   core.endGroup()
   throw new Error(
-    `${reason} CargoWall is still running and holding this runner at deny-all, ` +
-      `so egress stays blocked for the rest of the job.`
+    `${reason} CargoWall stays alive and is locking this runner down to deny-all; ` +
+      `egress will be blocked for the rest of the job.`
   )
 }
 
@@ -600,11 +727,16 @@ export interface ApiFailureModeResolution {
  *
  * The action's vocabulary is `audit | enforce | fail`; the binary calls the
  * middle one `local`, because "enforce" here means "this step's own policy",
- * which is *audit* when the step says `mode: audit`. `local` is accepted as an
- * alias so either vocabulary works in a workflow.
+ * which is *audit* when the step says `mode: audit`. Only the documented
+ * values are accepted — the binary's `local` spelling is a translation
+ * target, not an input alias.
  *
- * The default is `audit` — a policy outage should not silently hand the job an
- * unreviewed local config with full enforcement behind it. But that default
+ * The default is `audit`: for policies managed on the CodeCargo platform, the
+ * fail-safe posture on a retrieval failure is to log rather than enforce,
+ * keeping the build green and the degradation visible on the dashboard. The
+ * trade-off is documented in the README — a retrieval failure means
+ * logging-only, and that includes runners that can never reach the API, so
+ * non-platform users should set `enforce` (or `offline: true`). The default
  * yields to an explicit `mode`: a caller who wrote `mode: enforce` asked for
  * enforcement in so many words, and downgrading them on an outage would
  * override an instruction they actually gave. An explicitly supplied
@@ -629,7 +761,6 @@ export function resolveApiFailureMode(args: { input: string; modeSupplied: boole
     case 'audit':
       return { value: 'audit', reason: 'set by `api-failure-mode`' }
     case 'enforce':
-    case 'local':
       return { value: 'local', reason: 'set by `api-failure-mode`' }
     case 'fail':
       return { value: 'fail', reason: 'set by `api-failure-mode`' }

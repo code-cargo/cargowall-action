@@ -1,0 +1,38 @@
+name: 'Start policy API stub'
+description: >-
+  Serve a fixed HTTP status on 127.0.0.1:8099 for the api-failure e2e jobs.
+  GETs (the policy fetch) return the given status; POSTs (the summary push)
+  always return 200.
+
+inputs:
+  status:
+    description: 'HTTP status returned for every GET'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      # STATUS via env, not `${{ }}` inside the script: expression interpolation
+      # happens before bash sees the text, so quotes would not contain a
+      # malicious value in a reusable composite.
+      env:
+        STATUS: ${{ inputs.status }}
+      run: |
+        nohup python3 "${{ github.action_path }}/policy-stub.py" "$STATUS" \
+          > /tmp/policy-stub.log 2>&1 &
+        # Bind probe that HARD-FAILS if the stub never comes up. Falling
+        # through would leave the fetch hitting ECONNREFUSED — also a
+        # transport-class retrieval failure, so downstream assertions would
+        # still pass while silently testing the wrong failure class.
+        bound=0
+        for _ in $(seq 1 20); do
+          if curl -s -o /dev/null http://127.0.0.1:8099/; then bound=1; break; fi
+          sleep 0.25
+        done
+        if [ "$bound" != 1 ]; then
+          echo "ERROR: policy stub never bound on 127.0.0.1:8099"
+          cat /tmp/policy-stub.log || true
+          exit 1
+        fi
+        curl -s -o /dev/null -w 'stub status: %{http_code}\n' http://127.0.0.1:8099/
