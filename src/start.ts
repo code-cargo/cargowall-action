@@ -492,10 +492,10 @@ async function readFailureFile(): Promise<string | null> {
  */
 const MAX_STATE_FILE_BYTES = 8192
 
-async function readStateFile(path: string): Promise<string | null> {
+async function readStateFile(filePath: string): Promise<string | null> {
   let handle: Awaited<ReturnType<typeof fs.open>>
   try {
-    handle = await fs.open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+    handle = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
   } catch {
     return null
   }
@@ -660,8 +660,12 @@ export interface ApiFailureModeResolution {
  * values are accepted — the binary's `local` spelling is a translation
  * target, not an input alias.
  *
- * The default is `audit` — a policy outage should not silently hand the job an
- * unreviewed local config with full enforcement behind it. But that default
+ * The default is `audit`: for policies managed on the CodeCargo platform, the
+ * fail-safe posture on a retrieval failure is to log rather than enforce,
+ * keeping the build green and the degradation visible on the dashboard. The
+ * trade-off is documented in the README — a retrieval failure means
+ * logging-only, and that includes runners that can never reach the API, so
+ * non-platform users should set `enforce` (or `offline: true`). The default
  * yields to an explicit `mode`: a caller who wrote `mode: enforce` asked for
  * enforcement in so many words, and downgrading them on an outage would
  * override an instruction they actually gave. An explicitly supplied

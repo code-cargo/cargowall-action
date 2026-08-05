@@ -26131,10 +26131,10 @@ async function readFailureFile() {
   return raw === null ? null : sentinelReason(raw);
 }
 var MAX_STATE_FILE_BYTES = 8192;
-async function readStateFile(path7) {
+async function readStateFile(filePath) {
   let handle;
   try {
-    handle = await import_fs6.promises.open(path7, import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW);
+    handle = await import_fs6.promises.open(filePath, import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW);
   } catch {
     return null;
   }
