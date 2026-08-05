@@ -48,7 +48,10 @@ jobs:
 
       - name: Test allowed connection (api.github.com)
         run: |
-          curl -sf --max-time 10 https://api.github.com > /dev/null
+          # -f omitted on purpose: unauthenticated api.github.com often 403s (per-IP
+          # rate limit shared across hosted runners). Any HTTP response proves the
+          # firewall allowed the connection, which is what this step tests.
+          curl -s --max-time 10 -o /dev/null https://api.github.com
           echo "Successfully connected to api.github.com"
 
       - name: Test blocked connection (example.com)
@@ -92,7 +95,10 @@ jobs:
 
       - name: Test allowed connection (api.github.com)
         run: |
-          curl -sf --max-time 10 https://api.github.com > /dev/null
+          # -f omitted on purpose: unauthenticated api.github.com often 403s (per-IP
+          # rate limit shared across hosted runners). Any HTTP response proves the
+          # firewall allowed the connection, which is what this step tests.
+          curl -s --max-time 10 -o /dev/null https://api.github.com
           echo "Successfully connected to api.github.com"
 
       - name: Test blocked connection (example.com)
