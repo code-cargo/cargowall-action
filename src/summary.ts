@@ -203,8 +203,14 @@ export async function generateSummary(opts: { render: boolean } = { render: true
         const idToken = await core.getIDToken('codecargo')
         summaryArgs.push('--token', idToken)
       } catch (error) {
-        core.warning(
-          `Failed to get OIDC token for API push. Ensure the workflow has "permissions: id-token: write". Error: ${error}`
+        // Info, not warning: with the push no longer gated on audit-summary,
+        // every repo without `id-token: write` (most non-customers) hits this
+        // on every job — a per-job warning annotation for a working setup is
+        // noise. Customers with a genuinely broken push still see the message
+        // in the step log, and the missing job on the dashboard is the signal.
+        core.info(
+          `No OIDC token available for the API push — skipping it. For CodeCargo platform ` +
+            `integration the workflow needs "permissions: id-token: write". (${error})`
         )
         // Remove API-related args so the binary doesn't attempt an unauthenticated push
         for (const flag of ['--api-url', '--job-key', '--job-name', '--job-run-id', '--mode', '--default-action', '--job-status']) {

@@ -257,6 +257,8 @@ For complex configurations, use a JSON or YAML config file:
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                                                                                                                                                                                                                   | `false`                                        |
 | `job-id`                     | Check run ID of the current job (from workflow context by default; override if needed)                                                                                                                                                                                                 | `${{ job.check_run_id }}`                      |
 
+> **Behaviour change (v1.4):** `audit-summary: false` previously — and unintentionally — also skipped the CodeCargo API push, leaving those jobs off the dashboard entirely. It now gates rendering only: event collection and the API push happen regardless of it. If you do not want the action communicating with the CodeCargo API, set `offline: true` — that disables both the policy fetch and the push. Jobs without `permissions: id-token: write` never push (the token request fails and the push is skipped with a log note, not a warning).
+
 ## Outputs
 
 | Output      | Description                                                                                  |

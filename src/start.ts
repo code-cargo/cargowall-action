@@ -170,16 +170,19 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // from the CodeCargo SaaS API.
   const offline = core.getInput('offline') === 'true'
   const apiUrl = core.getInput('api-url')
+  // Resolved unconditionally so an invalid value fails the step even when the
+  // API path is disabled (offline / empty api-url) — a typo must surface at
+  // configuration time, not lie dormant until the day the API path is enabled.
+  const apiFailure = resolveApiFailureMode({
+    input: core.getInput('api-failure-mode'),
+    modeSupplied,
+  })
   // Non-null only while the API flags survive, so the configuration log never
   // advertises a posture that was dropped along with them below.
   let apiFailureLabel: string | null = null
   if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`)
     args.push(`--job-key=${github.context.job}`)
-    const apiFailure = resolveApiFailureMode({
-      input: core.getInput('api-failure-mode'),
-      modeSupplied,
-    })
     args.push(`--api-failure-mode=${apiFailure.value}`)
     apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`
     try {
@@ -263,6 +266,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
+  // Anchor for sentinel freshness: a failure sentinel older than this spawn is
+  // a leftover from a previous run that survived clearStartupFiles (whose rm is
+  // best-effort), not this run's verdict. Same idea as wait-ready's
+  // failureSentinelAnchor, using the wall clock since writer and reader share
+  // the machine.
+  const spawnedAtMs = Date.now()
   const child = spawn('sudo', ['-E', 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -304,10 +313,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
     // cargowall reported a startup failure. Two very different situations
     // share this sentinel — see isPolicyLockdown.
-    const failureReason = await readFailureFile()
+    const failureReason = await readFailureFile(spawnedAtMs)
     if (failureReason !== null) {
       await showLastLog()
-      if (await isPolicyLockdown()) {
+      if (await isPolicyLockdown(failureReason)) {
         return handlePolicyLockdown(failureReason)
       }
       // A fatal startup error: cargowall has exited. Same contract as the
@@ -476,9 +485,20 @@ export function sentinelReason(raw: string): string {
  * the latter is why we poll for it at all: in lockdown cargowall deliberately
  * withholds the ready sentinel and keeps running deny-all, so the wait loop
  * would otherwise sit out the full timeout for a decision already made.
- * Returns the reason, or null if absent.
+ *
+ * A sentinel whose mtime predates this run's spawn is a stale leftover from a
+ * reused runner (clearStartupFiles' rm is best-effort) and must not fail this
+ * run — ignore it. cargowall clears it at process entry, so a genuine verdict
+ * always carries a fresh mtime. Returns the reason, or null if absent/stale.
  */
-async function readFailureFile(): Promise<string | null> {
+async function readFailureFile(spawnedAtMs: number): Promise<string | null> {
+  try {
+    if ((await fs.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs) {
+      return null
+    }
+  } catch {
+    return null // Absent — the overwhelmingly common case.
+  }
   const raw = await readStateFile(FAILURE_FILE)
   return raw === null ? null : sentinelReason(raw)
 }
@@ -562,10 +582,19 @@ export function downgradeMessage(raw: string | null): string | null {
  * Classify a failure sentinel. Both paths write the sentinel immediately before
  * their next step — the downgrade record on one, process exit on the other — so
  * wait briefly for that adjacent write to land before deciding.
+ *
+ * The downgrade record is the primary classifier, but it is a best-effort
+ * sidecar written AFTER the sentinel — if it is absent, late, or unparseable,
+ * an explicitly requested `api-failure-mode: fail` must not fall through to the
+ * generic path (which would warn, restore DNS out from under the still-running
+ * lockdown, and return success). The sentinel reason itself names the state
+ * ("cargowall entered policy lockdown …", cmd/start.go), so match it as a
+ * fallback: brittle alone, strictly safer as a second chance.
  */
-async function isPolicyLockdown(): Promise<boolean> {
+async function isPolicyLockdown(reason: string): Promise<boolean> {
   await sleep(250)
-  return isLockdownRecord(await readDowngradeFile())
+  if (isLockdownRecord(await readDowngradeFile())) return true
+  return /policy lockdown/i.test(reason)
 }
 
 /**

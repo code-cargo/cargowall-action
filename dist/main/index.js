@@ -25942,14 +25942,14 @@ async function start() {
   }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
+  const apiFailure = resolveApiFailureMode({
+    input: getInput("api-failure-mode"),
+    modeSupplied
+  });
   let apiFailureLabel = null;
   if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`);
     args.push(`--job-key=${context2.job}`);
-    const apiFailure = resolveApiFailureMode({
-      input: getInput("api-failure-mode"),
-      modeSupplied
-    });
     args.push(`--api-failure-mode=${apiFailure.value}`);
     apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`;
     try {
@@ -26009,6 +26009,7 @@ async function start() {
     CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
   };
   const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
+  const spawnedAtMs = Date.now();
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -26031,10 +26032,10 @@ async function start() {
       break;
     } catch {
     }
-    const failureReason = await readFailureFile();
+    const failureReason = await readFailureFile(spawnedAtMs);
     if (failureReason !== null) {
       await showLastLog();
-      if (await isPolicyLockdown()) {
+      if (await isPolicyLockdown(failureReason)) {
         return handlePolicyLockdown(failureReason);
       }
       error(`CargoWall reported a startup failure: ${failureReason}`);
@@ -26126,7 +26127,14 @@ function sentinelReason(raw) {
   const reason = body.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 4096);
   return reason || "cargowall reported a startup failure with no reason recorded";
 }
-async function readFailureFile() {
+async function readFailureFile(spawnedAtMs) {
+  try {
+    if ((await import_fs6.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
   const raw = await readStateFile(FAILURE_FILE);
   return raw === null ? null : sentinelReason(raw);
 }
@@ -26172,9 +26180,10 @@ function downgradeMessage(raw) {
   if (!trimmed) return null;
   return `CargoWall changed enforcement posture during startup: ${trimmed}`;
 }
-async function isPolicyLockdown() {
+async function isPolicyLockdown(reason) {
   await sleep2(250);
-  return isLockdownRecord(await readDowngradeFile());
+  if (isLockdownRecord(await readDowngradeFile())) return true;
+  return /policy lockdown/i.test(reason);
 }
 async function warnOnDowngrade() {
   const message = downgradeMessage(await readDowngradeFile());

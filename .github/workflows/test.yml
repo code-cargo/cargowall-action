@@ -789,6 +789,12 @@ jobs:
             exit 1
           fi
 
+          # Lockdown invariant: the process stays ALIVE holding the runner at
+          # deny-all, and DNS stays pointed at cargowall's proxy — the action
+          # must not have restored resolv.conf out from under it.
+          sudo kill -0 "$(cat /tmp/cargowall.pid)"
+          grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf
+
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)
     runs-on: ubuntu-latest
