@@ -8,9 +8,29 @@ branding:
 
 inputs:
   mode:
-    description: 'Enforcement mode: "enforce" (block connections) or "audit" (log only, no blocking)'
+    # Deliberately no `default:` — the runner materialises defaults into INPUT_*
+    # exactly like caller-supplied values, so declaring one here would make an
+    # explicit `mode: enforce` indistinguishable from the default. start.ts
+    # applies the default instead, which lets `api-failure-mode` respect a mode
+    # the caller actually asked for. Keep the default documented here.
+    description: 'Enforcement mode: "enforce" (block connections) or "audit" (log only, no blocking). Default: enforce'
     required: false
-    default: 'enforce'
+  api-failure-mode:
+    # No `default:` for the same reason as `mode` above: an explicitly supplied
+    # value must win over an explicitly supplied `mode`, which needs the two
+    # apart. start.ts defaults this to "audit".
+    description: >-
+      Posture when the policy cannot be retrieved from the CodeCargo API:
+      "audit" (downgrade to audit mode so a policy outage cannot silently drop enforcement to an unreviewed local config),
+      "enforce" (use the policy from this step as-is), or
+      "fail" (lock the runner down to deny-all and fail the step).
+      Only genuine retrieval failures act on this — an unreachable API, a server
+      error, or an unusable policy. A repository that is not onboarded to
+      CodeCargo, a rejected token, or an inactive repository always falls back
+      to this step's configuration regardless of this setting.
+      Ignored when `offline: true` or `api-url` is empty.
+      Default: audit, except when `mode` is explicitly set (see README)
+    required: false
   allowed-hosts:
     description: 'Allowed hostnames, one per line (auto matches subdomains example.com would also match api.example.com)'
     required: false
@@ -62,7 +82,7 @@ inputs:
     description: 'Enable debug logging'
     default: 'false'
   audit-summary:
-    description: 'Generate audit summary in workflow summary (requires mode: audit or enforce)'
+    description: 'Render the audit summary into the workflow run summary. Rendering only — event collection and the CodeCargo API push happen regardless (use `offline: true` to stop API communication)'
     default: 'true'
   skip-actions-api:
     description: 'Skip the GitHub Actions API call used to enrich audit-summary step names and job status. Falls back to local _diag data. Set to true on installations near the per-repo rate limit (1,000 req/hr).'

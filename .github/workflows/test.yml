@@ -48,7 +48,10 @@ jobs:
 
       - name: Test allowed connection (api.github.com)
         run: |
-          curl -sf --max-time 10 https://api.github.com > /dev/null
+          # -f omitted on purpose: unauthenticated api.github.com often 403s (per-IP
+          # rate limit shared across hosted runners). Any HTTP response proves the
+          # firewall allowed the connection, which is what this step tests.
+          curl -s --max-time 10 -o /dev/null https://api.github.com
           echo "Successfully connected to api.github.com"
 
       - name: Test blocked connection (example.com)
@@ -92,7 +95,10 @@ jobs:
 
       - name: Test allowed connection (api.github.com)
         run: |
-          curl -sf --max-time 10 https://api.github.com > /dev/null
+          # -f omitted on purpose: unauthenticated api.github.com often 403s (per-IP
+          # rate limit shared across hosted runners). Any HTTP response proves the
+          # firewall allowed the connection, which is what this step tests.
+          curl -s --max-time 10 -o /dev/null https://api.github.com
           echo "Successfully connected to api.github.com"
 
       - name: Test blocked connection (example.com)
@@ -625,3 +631,239 @@ jobs:
           fi
           # DNS must actually resolve again.
           getent hosts github.com
+
+  # --- api-failure-mode (#69) ------------------------------------------------
+  # These run the REAL binary against a local stub API. Unit tests cover the
+  # action's decision logic, but only these catch a flag the pinned cargowall
+  # does not accept — kong exits on an unknown flag, so a rename would pass
+  # every unit test and break every real run.
+
+  test-api-failure-audit-downgrade:
+    name: API failure downgrades to audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that always 503s
+        run: |
+          # 503 is a "server" class failure — a genuine outage, so the posture
+          # applies. Backgrounded; the runner VM is destroyed after the job.
+          cat > /tmp/policy-stub.py <<'PY'
+          import http.server, sys
+          status = int(sys.argv[1])
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(status)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(b'{}')
+              def log_message(self, *a):
+                  pass
+          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
+          PY
+          nohup python3 /tmp/policy-stub.py 503 > /tmp/policy-stub.log 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:8099/ && break
+            sleep 0.25
+          done
+          curl -s -o /dev/null -w 'stub status: %{http_code}\n' http://127.0.0.1:8099/
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          # mode and api-failure-mode both unset: the default posture is audit.
+          api-url: http://127.0.0.1:8099
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Assert the run came up and was downgraded to audit
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+
+          echo "mode file:"; cat /tmp/cargowall-mode
+          if [ "$(cat /tmp/cargowall-mode)" != "audit" ]; then
+            echo "ERROR: expected effective mode 'audit'"
+            exit 1
+          fi
+
+          echo "downgrade record:"; cat /tmp/cargowall-downgrade
+          grep -q 'CARGO_WALL_DOWNGRADE_TYPE_AUDIT_FALLBACK' /tmp/cargowall-downgrade
+
+          # audit-summary defaults to true here, but the log must exist either
+          # way — see the audit-summary:false assertion below.
+          test -f /tmp/cargowall-audit.json
+
+      - name: Verify audit posture reaches BOTH datapaths
+        run: |
+          # example.com is not in allowed-hosts. In audit mode the eBPF layer
+          # must not block it AND the DNS proxy must not refuse it — the split
+          # that made audit-summary:false look like enforcement.
+          getent hosts example.com
+          curl -sf --max-time 10 https://example.com > /dev/null
+          echo "example.com reachable, as audit mode requires"
+
+  test-api-failure-not-onboarded:
+    name: API 404 does not change posture
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that always 404s
+        run: |
+          cat > /tmp/policy-stub.py <<'PY'
+          import http.server, sys
+          status = int(sys.argv[1])
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(status)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(b'{}')
+              def log_message(self, *a):
+                  pass
+          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
+          PY
+          nohup python3 /tmp/policy-stub.py 404 > /tmp/policy-stub.log 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:8099/ && break
+            sleep 0.25
+          done
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          # Explicitly asking for the audit downgrade — it must STILL not fire,
+          # because a 404 means "not onboarded", not "the API is down". This is
+          # what keeps the audit default safe for everyone without an account.
+          api-failure-mode: audit
+          api-url: http://127.0.0.1:8099
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Assert enforcement is intact
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+
+          if [ -f /tmp/cargowall-downgrade ]; then
+            echo "ERROR: a 404 must not produce a downgrade record"
+            cat /tmp/cargowall-downgrade
+            exit 1
+          fi
+
+          curl -sf --max-time 10 https://github.com > /dev/null
+          echo "github.com still allowed"
+
+          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
+            echo "ERROR: example.com should still be blocked — posture was downgraded on an authoritative 404"
+            exit 1
+          fi
+          echo "example.com still blocked, as enforcement requires"
+
+  test-api-failure-lockdown:
+    name: api-failure-mode fail locks down and fails the step
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that always 503s
+        run: |
+          cat > /tmp/policy-stub.py <<'PY'
+          import http.server, sys
+          status = int(sys.argv[1])
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(status)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(b'{}')
+              def log_message(self, *a):
+                  pass
+          http.server.HTTPServer(('127.0.0.1', 8099), H).serve_forever()
+          PY
+          nohup python3 /tmp/policy-stub.py 503 > /tmp/policy-stub.log 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:8099/ && break
+            sleep 0.25
+          done
+
+      - name: Setup CargoWall (expected to fail)
+        id: cargowall
+        continue-on-error: true
+        uses: ./
+        with:
+          api-failure-mode: fail
+          api-url: http://127.0.0.1:8099
+          # fail-on-unsupported is deliberately left at its default (false):
+          # api-failure-mode: fail must fail the step regardless of it.
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Assert lockdown was reported promptly
+        run: |
+          if [ '${{ steps.cargowall.outcome }}' != 'failure' ]; then
+            echo "ERROR: expected the action to fail, got '${{ steps.cargowall.outcome }}'"
+            exit 1
+          fi
+
+          # The failure sentinel is what makes this immediate rather than a
+          # 30-second readiness timeout.
+          echo "failure sentinel:"; cat /tmp/cargowall-failed
+          grep -q 'policy lockdown' /tmp/cargowall-failed
+
+          # Ready is withheld on purpose: "ready" means the requested policy is
+          # enforced, and it is not.
+          if [ -f /tmp/cargowall-ready ]; then
+            echo "ERROR: ready sentinel must be withheld in lockdown"
+            exit 1
+          fi
+
+  test-audit-summary-false-still-collects:
+    name: audit-summary false still collects events (#71)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with the summary disabled
+        id: cargowall
+        uses: ./
+        with:
+          offline: 'true'
+          audit-summary: 'false'
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Generate some traffic
+        run: curl -sf --max-time 10 https://github.com > /dev/null
+
+      - name: Assert events are still collected
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          # audit-summary controls RENDERING only. Gating collection on it left
+          # these jobs with no events and no dashboard record at all.
+          if [ ! -s /tmp/cargowall-audit.json ]; then
+            echo "ERROR: audit log missing or empty with audit-summary: false"
+            ls -l /tmp/cargowall-audit.json || true
+            exit 1
+          fi
+          echo "audit log has $(wc -l < /tmp/cargowall-audit.json) events"

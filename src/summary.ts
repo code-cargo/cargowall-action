@@ -30,16 +30,42 @@ export function shouldCallActionsApi(args: {
   return true
 }
 
-export async function generateSummary(): Promise<void> {
-  // Check if audit log exists and has content
+/**
+ * Whether `cargowall summary` is worth invoking at all.
+ *
+ * That one invocation does two jobs: it renders the markdown summary AND
+ * performs the CodeCargo push. So an absent or empty audit log is not a reason
+ * to bail — the binary treats it as a zero-event push and still reports the job
+ * record, effective mode, status, version and any downgrade. Skipping on a
+ * missing log is what made `audit-summary: false` jobs invisible to the
+ * dashboard (#71). Only skip when there is genuinely nothing to do.
+ */
+export function shouldRunSummary(args: { haveEvents: boolean; canPush: boolean }): boolean {
+  return args.haveEvents || args.canPush
+}
+
+/**
+ * Run `cargowall summary`, which both renders the markdown summary and pushes
+ * the job record to the CodeCargo API.
+ *
+ * `render: false` suppresses only the workflow-summary output — the push still
+ * happens, because the job record, effective mode, job status, cargowall
+ * version and any downgrade record are independent of event collection.
+ */
+export async function generateSummary(opts: { render: boolean } = { render: true }): Promise<void> {
+  const { render } = opts
+  const offline = core.getInput('offline') === 'true'
+  const apiUrl = core.getInput('api-url')
+  const canPush = !!apiUrl && !offline
+
+  let haveEvents = false
   try {
-    const stat = await fs.stat(AUDIT_LOG)
-    if (stat.size === 0) {
-      core.info('Audit log is empty, skipping summary')
-      return
-    }
+    haveEvents = (await fs.stat(AUDIT_LOG)).size > 0
   } catch {
-    core.info('No audit log found, skipping summary')
+    // No audit log — cargowall may have been started without one.
+  }
+  if (!shouldRunSummary({ haveEvents, canPush })) {
+    core.info('No audit events and no API push configured, skipping summary')
     return
   }
 
@@ -145,9 +171,7 @@ export async function generateSummary(): Promise<void> {
     const summaryArgs = ['summary', '--audit-log', AUDIT_LOG, '--steps', stepsJson]
 
     // Add API push flags if api-url is configured and offline mode is not enabled
-    const offline = core.getInput('offline') === 'true'
-    const apiUrl = core.getInput('api-url')
-    if (apiUrl && !offline) {
+    if (canPush) {
       summaryArgs.push('--api-url', apiUrl)
       summaryArgs.push('--job-key', github.context.job)
       summaryArgs.push('--job-name', currentJobName)
@@ -190,33 +214,44 @@ export async function generateSummary(): Promise<void> {
       }
     }
 
-    // Run cargowall summary command
+    // Run cargowall summary command. The stdout (the rendered markdown) is
+    // only accumulated when it will be written to the workflow summary.
     let summaryOutput = ''
     const summaryResult = await exec.exec('cargowall', summaryArgs, {
       ignoreReturnCode: true,
       listeners: {
-        stdout: (data: Buffer) => { summaryOutput += data.toString() }
+        stdout: (data: Buffer) => { if (render) summaryOutput += data.toString() }
       }
     })
 
-    if (summaryResult === 0 && summaryOutput) {
-      await core.summary.addRaw(summaryOutput).write()
-      core.info('Audit summary written to workflow summary')
+    if (summaryResult === 0) {
+      // The push (when configured) happened inside that invocation regardless
+      // of whether we render its stdout.
+      if (render && summaryOutput) {
+        await core.summary.addRaw(summaryOutput).write()
+        core.info('Audit summary written to workflow summary')
+      } else {
+        core.info('Audit summary complete (rendering disabled)')
+      }
     } else {
       core.warning('Failed to generate audit summary with step correlation')
 
-      // Fall back to basic summary without step correlation
-      summaryOutput = ''
-      const fallbackResult = await exec.exec('cargowall', ['summary', '--audit-log', AUDIT_LOG, '--steps', '[]'], {
-        ignoreReturnCode: true,
-        listeners: {
-          stdout: (data: Buffer) => { summaryOutput += data.toString() }
-        }
-      })
+      // Fall back to a basic summary without step correlation. Rendering-only:
+      // it carries no API flags, so there is nothing to retry when the summary
+      // is not being rendered.
+      if (render) {
+        summaryOutput = ''
+        const fallbackResult = await exec.exec('cargowall', ['summary', '--audit-log', AUDIT_LOG, '--steps', '[]'], {
+          ignoreReturnCode: true,
+          listeners: {
+            stdout: (data: Buffer) => { summaryOutput += data.toString() }
+          }
+        })
 
-      if (fallbackResult === 0 && summaryOutput) {
-        await core.summary.addRaw(summaryOutput).write()
-        core.info('Basic audit summary written to workflow summary')
+        if (fallbackResult === 0 && summaryOutput) {
+          await core.summary.addRaw(summaryOutput).write()
+          core.info('Basic audit summary written to workflow summary')
+        }
       }
     }
   } catch (error) {
@@ -224,17 +259,19 @@ export async function generateSummary(): Promise<void> {
   }
 
   // Append full cargowall log to summary
-  try {
-    const log = await fs.readFile(CARGOWALL_LOG, 'utf8')
-    if (log) {
-      await core.summary
-        .addRaw('<details><summary>CargoWall Process Log</summary>\n\n```\n')
-        .addRaw(log)
-        .addRaw('\n```\n</details>\n')
-        .write()
+  if (render) {
+    try {
+      const log = await fs.readFile(CARGOWALL_LOG, 'utf8')
+      if (log) {
+        await core.summary
+          .addRaw('<details><summary>CargoWall Process Log</summary>\n\n```\n')
+          .addRaw(log)
+          .addRaw('\n```\n</details>\n')
+          .write()
+      }
+    } catch {
+      // No log file available
     }
-  } catch {
-    // No log file available
   }
 
   // Audit log left in place — cargowall is still running and VM is ephemeral
