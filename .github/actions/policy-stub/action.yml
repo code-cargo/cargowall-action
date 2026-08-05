@@ -13,8 +13,13 @@ runs:
   using: 'composite'
   steps:
     - shell: bash
+      # STATUS via env, not `${{ }}` inside the script: expression interpolation
+      # happens before bash sees the text, so quotes would not contain a
+      # malicious value in a reusable composite.
+      env:
+        STATUS: ${{ inputs.status }}
       run: |
-        nohup python3 "${{ github.action_path }}/policy-stub.py" "${{ inputs.status }}" \
+        nohup python3 "${{ github.action_path }}/policy-stub.py" "$STATUS" \
           > /tmp/policy-stub.log 2>&1 &
         # Bind probe that HARD-FAILS if the stub never comes up. Falling
         # through would leave the fetch hitting ECONNREFUSED — also a

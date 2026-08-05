@@ -42,13 +42,14 @@ vi.mock('child_process', () => ({
 vi.mock('fs', () => ({
   openSync: vi.fn(() => 3),
   closeSync: vi.fn(),
-  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100 },
+  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x800 },
   promises: {
     access: vi.fn(async () => undefined),
     readFile: vi.fn(async () => { throw new Error('ENOENT') }),
     writeFile: vi.fn(async () => undefined),
     open: vi.fn(async () => { throw new Error('ENOENT') }),
     stat: vi.fn(async () => { throw new Error('ENOENT') }),
+    lstat: vi.fn(async () => { throw new Error('ENOENT') }),
   },
 }))
 
@@ -78,6 +79,10 @@ function withFiles(files: Record<string, string>, staleMtimes: string[] = []): v
     if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
     const mtimeMs = staleMtimes.includes(String(p)) ? 1 : Date.now() + 5000
     return { mtimeMs, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
+  })
+  vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
+    if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
+    return { isFile: () => true } as Awaited<ReturnType<typeof fsp.lstat>>
   })
   vi.mocked(fsp.readFile).mockImplementation(async (p: unknown) => {
     const content = files[String(p)]
@@ -381,10 +386,10 @@ describe('start() failure-sentinel handling', () => {
       [FAILURE_FILE],
     )
     let readyPolls = 0
-    const accessImpl = vi.mocked(fsp.access).getMockImplementation()!
-    vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
+    const statImpl = vi.mocked(fsp.stat).getMockImplementation()!
+    vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
       if (String(p) === READY_FILE && readyPolls++ === 0) throw new Error('not yet')
-      return accessImpl(p as never)
+      return statImpl(p as never)
     })
 
     const result = await start()

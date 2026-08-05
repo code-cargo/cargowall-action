@@ -160,7 +160,7 @@ Run in audit mode to log connections without blocking them — useful for unders
 
 ### When the CodeCargo Policy Can't Be Fetched
 
-If you manage policies on the [CodeCargo platform](#codecargo-platform), the action fetches the resolved policy at startup. `api-failure-mode` decides what happens when that fetch genuinely fails:
+The action fetches the resolved policy from the [CodeCargo platform](#codecargo-platform) at startup (unless `offline: true`), and `api-failure-mode` decides what happens when that fetch genuinely fails. **This default matters even if you don't use the platform** — see the trade-off note below the table.
 
 ```yaml
 - uses: code-cargo/cargowall-action@v1
@@ -182,7 +182,7 @@ If you manage policies on the [CodeCargo platform](#codecargo-platform), the act
 * the OIDC token was rejected, or the workflow is missing `permissions: id-token: write`
 * the repository is marked inactive
 
-That distinction is what makes `audit` safe as a default — without it, every workflow without a CodeCargo account would silently stop enforcing.
+That distinction keeps a **reachable** API's authoritative answers from ever changing your posture: a repo that isn't onboarded gets a 404 and keeps enforcing. It deliberately does not cover an *unreachable* API — that is a retrieval failure, and the trade-off note above applies.
 
 **An explicit `mode` wins over the default.** If you wrote `mode: enforce` yourself, a fetch failure leaves you enforcing rather than downgrading you to audit — you asked for enforcement in so many words. Setting `api-failure-mode` explicitly overrides that:
 
@@ -253,7 +253,7 @@ For complex configurations, use a JSON or YAML config file:
 | `skip-actions-api`           | Skip the GitHub Actions API call that enriches audit-summary step names/status (falls back to local `_diag` data); set `true` when near the per-repo rate limit                                                                                                                        | `false`                                        |
 | `github-token`               | GitHub token for fetching step timing in the audit summary                                                                                                                                                                                                                             | `${{ github.token }}`                          |
 | `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)                                                                                                                                                                                                       | `https://app.codecargo.com`                    |
-| `api-failure-mode`           | Posture when the policy can't be retrieved from the CodeCargo API: `audit`, `enforce`, or `fail`. Only genuine retrieval failures act on it. See [When the CodeCargo Policy Can't Be Fetched](#when-the-codecargo-policy-cant-be-fetched)                                               | `audit` (`enforce` if `mode` is set)           |
+| `api-failure-mode`           | Posture when the policy can't be retrieved from the CodeCargo API: `audit`, `enforce`, or `fail`. Only genuine retrieval failures act on it — but an *unreachable* API counts, so the `audit` default affects non-platform repos too. See [When the CodeCargo Policy Can't Be Fetched](#when-the-codecargo-policy-cant-be-fetched)                                               | `audit` (`enforce` if `mode` is set)           |
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                                                                                                                                                                                                                   | `false`                                        |
 | `job-id`                     | Check run ID of the current job (from workflow context by default; override if needed)                                                                                                                                                                                                 | `${{ job.check_run_id }}`                      |
 

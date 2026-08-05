@@ -304,9 +304,13 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   let ready = false
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      await fs.access(READY_FILE)
-      ready = true
-      break
+      // Anchored like the other state files: a stale ready file that survived
+      // a failed clearStartupFiles rm must not short-circuit the wait with a
+      // false "ready" while this run's cargowall is still coming up.
+      if ((await fs.stat(READY_FILE)).mtimeMs >= spawnedAtMs) {
+        ready = true
+        break
+      }
     } catch {
       // Not ready yet
     }
@@ -316,7 +320,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     const failureReason = await readFailureFile(spawnedAtMs)
     if (failureReason !== null) {
       await showLastLog()
-      if (await isPolicyLockdown(failureReason)) {
+      if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
         return handlePolicyLockdown(failureReason)
       }
       // A fatal startup error: cargowall has exited. Same contract as the
@@ -330,7 +334,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       )
     }
 
-    cargowallPid = cargowallPid ?? await readPidFile()
+    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
     if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
       core.error('CargoWall process exited unexpectedly')
       await showLastLog()
@@ -347,7 +351,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (!ready) {
     core.error('Timeout waiting for cargowall to be ready')
     await showLastLog()
-    await stopCargowall([cargowallPid ?? await readPidFile(), spawnedPid])
+    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid])
     return handleStartupFailure(
       'CargoWall timed out. Network filtering is not active.',
       'CargoWall timed out starting up',
@@ -360,12 +364,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Surface a posture change (e.g. --api-failure-mode=audit downgraded the run)
   // now that startup succeeded. Deliberately after the ready check: a lockdown
   // exits above, so anything recorded here belongs to a run that came up.
-  await warnOnDowngrade()
+  await warnOnDowngrade(spawnedAtMs)
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
   // PID if the pidfile can't be read.
-  cargowallPid = cargowallPid ?? await readPidFile()
+  cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
   const reportedPid = cargowallPid ?? spawnedPid
 
   core.setOutput('supported', 'true')
@@ -428,9 +432,16 @@ async function sudoKillZero(pid: number): Promise<boolean> {
  * also means this keeps working under --sudo-lockdown, where the action's sudo
  * is denied. Returns null if absent/unreadable (e.g. cargowall hasn't reached
  * the pidfile write yet).
+ *
+ * Anchored like the other state files: a stale pidfile from a previous run
+ * points at a dead (or recycled) PID, and trusting it trips the liveness check
+ * into a false "exited unexpectedly" verdict.
  */
-async function readPidFile(): Promise<number | null> {
+async function readPidFile(spawnedAtMs: number): Promise<number | null> {
   try {
+    if ((await fs.stat(PID_FILE)).mtimeMs < spawnedAtMs) {
+      return null
+    }
     const out = await fs.readFile(PID_FILE, 'utf8')
     const pid = parseInt(out.trim(), 10)
     return Number.isInteger(pid) && pid > 0 ? pid : null
@@ -449,12 +460,13 @@ async function clearStartupFiles(): Promise<void> {
     ignoreReturnCode: true,
     silent: true,
   })
-  // Not silent on failure: these files gate the readiness loop, and a stale
-  // sentinel that survives here could be misread as this run's verdict.
+  // Not silent on failure. Survivors are not misattributed — every reader
+  // anchors on this run's spawn time and ignores older mtimes — but a failed
+  // rm is still worth surfacing: it means something is off with the runner.
   if (rc !== 0) {
     core.warning(
       'Failed to clear stale cargowall state files from a previous run — ' +
-        'a leftover ready/failure sentinel may be misattributed to this run.'
+        'leftovers will be ignored by their timestamps.'
     )
   }
 }
@@ -474,7 +486,6 @@ export function sentinelReason(raw: string): string {
   if (nl !== -1 && raw.slice(0, nl).trim().startsWith('pid=')) {
     body = raw.slice(nl + 1)
   }
-  // eslint-disable-next-line no-control-regex
   const reason = body.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 4096)
   return reason || 'cargowall reported a startup failure with no reason recorded'
 }
@@ -506,16 +517,34 @@ async function readFailureFile(spawnedAtMs: number): Promise<string | null> {
 /**
  * Bounded, symlink-refusing read of a cargowall state file. These live at
  * fixed paths in world-writable /tmp, so mirror the binary's own reader
- * (cmd/wait_ready.go readStateFile): refuse to follow symlinks, require a
- * regular file, and cap the read — a planted link or oversized file must not
- * be followed or slurped.
+ * (cmd/wait_ready.go readStateFile): refuse symlinks, require a regular
+ * file, and cap the read — a planted link or oversized file must not be
+ * followed or slurped.
+ *
+ * Order matters and matches the Go reader: lstat BEFORE open. open(2) with
+ * O_RDONLY on a planted FIFO blocks until a writer appears (O_NOFOLLOW does
+ * not change FIFO semantics), which would hang the wait loop forever — so the
+ * type check cannot rely on the open having returned. O_NONBLOCK guards the
+ * lstat→open race the same way; it does not affect reads of a regular file.
+ * The fstat re-check after open closes the remaining swap window.
+ *
+ * Exported for the real-filesystem tests — the mocked-fs suite cannot
+ * exercise the FIFO/symlink/ordering behaviour.
  */
 const MAX_STATE_FILE_BYTES = 8192
 
-async function readStateFile(filePath: string): Promise<string | null> {
+export async function readStateFile(filePath: string): Promise<string | null> {
+  try {
+    if (!(await fs.lstat(filePath)).isFile()) return null
+  } catch {
+    return null
+  }
   let handle: Awaited<ReturnType<typeof fs.open>>
   try {
-    handle = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+    handle = await fs.open(
+      filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    )
   } catch {
     return null
   }
@@ -527,12 +556,26 @@ async function readStateFile(filePath: string): Promise<string | null> {
   } catch {
     return null
   } finally {
-    await handle.close()
+    // A rejecting close (EIO) must not replace the result or escape start().
+    await handle.close().catch(() => {})
   }
 }
 
-/** Read the downgrade record, or null when cargowall recorded no posture change. */
-async function readDowngradeFile(): Promise<string | null> {
+/**
+ * Read the downgrade record, or null when cargowall recorded no posture change.
+ * Anchored like the failure sentinel: a record whose mtime predates this run's
+ * spawn is a leftover from a reused runner and must not classify this run —
+ * a stale LOCKDOWN record would otherwise turn a fresh generic crash into a
+ * thrown lockdown, or a healthy run into a false posture warning.
+ */
+async function readDowngradeFile(spawnedAtMs: number): Promise<string | null> {
+  try {
+    if ((await fs.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs) {
+      return null
+    }
+  } catch {
+    return null // Absent — the common case.
+  }
   return readStateFile(DOWNGRADE_FILE)
 }
 
@@ -572,7 +615,6 @@ export function downgradeMessage(raw: string | null): string | null {
   if (detail) return `CargoWall changed enforcement posture: ${detail}`
   // Unparseable record: echo a sanitized, tightly bounded excerpt — enough to
   // recognise, not a vehicle for arbitrary /tmp content in the annotation.
-  // eslint-disable-next-line no-control-regex
   const trimmed = raw.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 512)
   if (!trimmed) return null
   return `CargoWall changed enforcement posture during startup: ${trimmed}`
@@ -591,9 +633,9 @@ export function downgradeMessage(raw: string | null): string | null {
  * ("cargowall entered policy lockdown …", cmd/start.go), so match it as a
  * fallback: brittle alone, strictly safer as a second chance.
  */
-async function isPolicyLockdown(reason: string): Promise<boolean> {
+async function isPolicyLockdown(reason: string, spawnedAtMs: number): Promise<boolean> {
   await sleep(250)
-  if (isLockdownRecord(await readDowngradeFile())) return true
+  if (isLockdownRecord(await readDowngradeFile(spawnedAtMs))) return true
   return /policy lockdown/i.test(reason)
 }
 
@@ -601,8 +643,8 @@ async function isPolicyLockdown(reason: string): Promise<boolean> {
  * Report a posture change cargowall recorded during startup. Best-effort: a run
  * that filtered correctly must not fail over a reporting artifact.
  */
-async function warnOnDowngrade(): Promise<void> {
-  const message = downgradeMessage(await readDowngradeFile())
+async function warnOnDowngrade(spawnedAtMs: number): Promise<void> {
+  const message = downgradeMessage(await readDowngradeFile(spawnedAtMs))
   if (message) core.warning(message)
 }
 
@@ -661,7 +703,7 @@ function handlePolicyLockdown(reason: string): never {
   core.endGroup()
   throw new Error(
     `${reason} CargoWall stays alive and is locking this runner down to deny-all; ` +
-      `egress will remain blocked for the rest of the job.`
+      `egress will be blocked for the rest of the job.`
   )
 }
 

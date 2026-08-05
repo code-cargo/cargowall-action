@@ -26027,15 +26027,16 @@ async function start() {
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      await import_fs6.promises.access(READY_FILE);
-      ready = true;
-      break;
+      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs) {
+        ready = true;
+        break;
+      }
     } catch {
     }
     const failureReason = await readFailureFile(spawnedAtMs);
     if (failureReason !== null) {
       await showLastLog();
-      if (await isPolicyLockdown(failureReason)) {
+      if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
         return handlePolicyLockdown(failureReason);
       }
       error(`CargoWall reported a startup failure: ${failureReason}`);
@@ -26045,7 +26046,7 @@ async function start() {
         failOnUnsupported
       );
     }
-    cargowallPid = cargowallPid ?? await readPidFile();
+    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
     if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
       error("CargoWall process exited unexpectedly");
       await showLastLog();
@@ -26060,7 +26061,7 @@ async function start() {
   if (!ready) {
     error("Timeout waiting for cargowall to be ready");
     await showLastLog();
-    await stopCargowall([cargowallPid ?? await readPidFile(), spawnedPid]);
+    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid]);
     return handleStartupFailure(
       "CargoWall timed out. Network filtering is not active.",
       "CargoWall timed out starting up",
@@ -26068,8 +26069,8 @@ async function start() {
     );
   }
   info("CargoWall is ready");
-  await warnOnDowngrade();
-  cargowallPid = cargowallPid ?? await readPidFile();
+  await warnOnDowngrade(spawnedAtMs);
+  cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
   setOutput("pid", reportedPid);
@@ -26098,8 +26099,11 @@ async function sudoKillZero(pid) {
   });
   return rc === 0;
 }
-async function readPidFile() {
+async function readPidFile(spawnedAtMs) {
   try {
+    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs) {
+      return null;
+    }
     const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
     const pid = parseInt(out.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
@@ -26114,7 +26118,7 @@ async function clearStartupFiles() {
   });
   if (rc !== 0) {
     warning(
-      "Failed to clear stale cargowall state files from a previous run \u2014 a leftover ready/failure sentinel may be misattributed to this run."
+      "Failed to clear stale cargowall state files from a previous run \u2014 leftovers will be ignored by their timestamps."
     );
   }
 }
@@ -26140,9 +26144,17 @@ async function readFailureFile(spawnedAtMs) {
 }
 var MAX_STATE_FILE_BYTES = 8192;
 async function readStateFile(filePath) {
+  try {
+    if (!(await import_fs6.promises.lstat(filePath)).isFile()) return null;
+  } catch {
+    return null;
+  }
   let handle;
   try {
-    handle = await import_fs6.promises.open(filePath, import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW);
+    handle = await import_fs6.promises.open(
+      filePath,
+      import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW | import_fs7.constants.O_NONBLOCK
+    );
   } catch {
     return null;
   }
@@ -26154,10 +26166,18 @@ async function readStateFile(filePath) {
   } catch {
     return null;
   } finally {
-    await handle.close();
+    await handle.close().catch(() => {
+    });
   }
 }
-async function readDowngradeFile() {
+async function readDowngradeFile(spawnedAtMs) {
+  try {
+    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
   return readStateFile(DOWNGRADE_FILE);
 }
 function isLockdownRecord(raw) {
@@ -26180,13 +26200,13 @@ function downgradeMessage(raw) {
   if (!trimmed) return null;
   return `CargoWall changed enforcement posture during startup: ${trimmed}`;
 }
-async function isPolicyLockdown(reason) {
+async function isPolicyLockdown(reason, spawnedAtMs) {
   await sleep2(250);
-  if (isLockdownRecord(await readDowngradeFile())) return true;
+  if (isLockdownRecord(await readDowngradeFile(spawnedAtMs))) return true;
   return /policy lockdown/i.test(reason);
 }
-async function warnOnDowngrade() {
-  const message = downgradeMessage(await readDowngradeFile());
+async function warnOnDowngrade(spawnedAtMs) {
+  const message = downgradeMessage(await readDowngradeFile(spawnedAtMs));
   if (message) warning(message);
 }
 async function stopCargowall(pids) {
@@ -26210,7 +26230,7 @@ function handlePolicyLockdown(reason) {
   setOutput("supported", "false");
   endGroup();
   throw new Error(
-    `${reason} CargoWall stays alive and is locking this runner down to deny-all; egress will remain blocked for the rest of the job.`
+    `${reason} CargoWall stays alive and is locking this runner down to deny-all; egress will be blocked for the rest of the job.`
   );
 }
 async function restoreDns() {
