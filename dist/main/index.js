@@ -21560,7 +21560,7 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.3.5";
+var CARGOWALL_VERSION = "v1.3.6-rc.2";
 var http2 = new HttpClient("cargowall-action");
 async function downloadAsset(url, dest) {
   const attempt = async () => {
@@ -25828,6 +25828,8 @@ var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
 var READY_FILE = "/tmp/cargowall-ready";
 var PID_FILE = "/tmp/cargowall.pid";
+var FAILURE_FILE = "/tmp/cargowall-failed";
+var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
 var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
@@ -25850,7 +25852,8 @@ ${logOutput}`);
   }
 }
 async function start() {
-  let mode = getInput("mode") || "enforce";
+  const modeInput = getInput("mode");
+  let mode = modeInput || "enforce";
   if (!VALID_MODES.includes(mode)) {
     warning(`Invalid mode "${mode}" \u2014 expected "enforce" or "audit". Defaulting to "enforce".`);
     mode = "enforce";
@@ -25865,7 +25868,6 @@ async function start() {
   const debug2 = getInput("debug") === "true";
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const allowExistingConnections = getInput("allow-existing-connections") !== "false";
-  const auditSummary = getInput("audit-summary") !== "false";
   startGroup("Starting CargoWall Firewall");
   try {
     const diagDir = await findDiagDir();
@@ -25911,11 +25913,15 @@ async function start() {
     "--github-action",
     `--dns-upstream=${dnsUpstream}`,
     `--pidfile=${PID_FILE}`,
-    `--ready-file=${READY_FILE}`
+    `--ready-file=${READY_FILE}`,
+    `--failure-file=${FAILURE_FILE}`,
+    // Always collected. `audit-summary` decides whether the summary is
+    // *rendered* into the workflow run summary, not whether events exist:
+    // the audit log also feeds the dashboard's per-step detail, and gating
+    // collection on a rendering preference made audit-summary:false jobs
+    // invisible to the SaaS entirely (#71).
+    `--audit-log=${AUDIT_LOG}`
   ];
-  if (auditSummary) {
-    args.push(`--audit-log=${AUDIT_LOG}`);
-  }
   if (mode === "audit") {
     args.push("--audit-mode");
     notice("CargoWall running in AUDIT MODE - connections logged but NOT blocked");
@@ -25935,18 +25941,28 @@ async function start() {
   }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
+  let apiFailureLabel = null;
   if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`);
     args.push(`--job-key=${context2.job}`);
+    const apiFailure = resolveApiFailureMode({
+      input: getInput("api-failure-mode"),
+      modeSupplied: modeInput !== ""
+    });
+    args.push(`--api-failure-mode=${apiFailure.value}`);
+    apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`;
     try {
       const idToken = await getIDToken("codecargo");
       args.push(`--token=${idToken}`);
     } catch (error2) {
-      warning(`Failed to get OIDC token for policy fetch: ${error2}. Falling back to env/file config.`);
-      const apiUrlIdx = args.indexOf(`--api-url=${apiUrl}`);
-      if (apiUrlIdx !== -1) args.splice(apiUrlIdx, 1);
-      const jobKeyIdx = args.indexOf(`--job-key=${context2.job}`);
-      if (jobKeyIdx !== -1) args.splice(jobKeyIdx, 1);
+      warning(
+        `Failed to get OIDC token for policy fetch: ${error2}. Ensure the workflow has "permissions: id-token: write". Falling back to this step's configuration (api-failure-mode does not apply).`
+      );
+      for (const flag of ["--api-url", "--job-key", "--api-failure-mode"]) {
+        const idx = args.findIndex((a) => a.startsWith(`${flag}=`));
+        if (idx !== -1) args.splice(idx, 1);
+      }
+      apiFailureLabel = null;
     }
   }
   if (configFile) {
@@ -25964,6 +25980,7 @@ async function start() {
   if (jobId) info(`  Job run ID: ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
+  if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
   try {
     await import_fs6.promises.access("/etc/resolv.conf");
     await exec("sudo", ["cp", "/etc/resolv.conf", RESOLV_CONF_BACKUP]);
@@ -26013,6 +26030,19 @@ async function start() {
       break;
     } catch {
     }
+    const failureReason = await readFailureFile();
+    if (failureReason !== null) {
+      await showLastLog();
+      if (await isPolicyLockdown()) {
+        return handlePolicyLockdown(failureReason);
+      }
+      error(`CargoWall reported a startup failure: ${failureReason}`);
+      return handleStartupFailure(
+        `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
+        `CargoWall failed to start: ${failureReason}`,
+        failOnUnsupported
+      );
+    }
     cargowallPid = cargowallPid ?? await readPidFile();
     if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
       error("CargoWall process exited unexpectedly");
@@ -26036,6 +26066,7 @@ async function start() {
     );
   }
   info("CargoWall is ready");
+  await warnOnDowngrade();
   cargowallPid = cargowallPid ?? await readPidFile();
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
@@ -26075,10 +26106,43 @@ async function readPidFile() {
   }
 }
 async function clearStartupFiles() {
-  await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE], {
+  await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true
   });
+}
+async function readFailureFile() {
+  try {
+    const reason = (await import_fs6.promises.readFile(FAILURE_FILE, "utf8")).trim();
+    return reason || "cargowall reported a startup failure with no reason recorded";
+  } catch {
+    return null;
+  }
+}
+async function isPolicyLockdown() {
+  await sleep2(250);
+  try {
+    const raw = await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
+    return JSON.parse(raw).type === "CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN";
+  } catch {
+    return false;
+  }
+}
+async function warnOnDowngrade() {
+  let raw;
+  try {
+    raw = await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
+  } catch {
+    return;
+  }
+  try {
+    const detail = JSON.parse(raw).detail;
+    warning(
+      detail ? `CargoWall changed enforcement posture: ${detail}` : `CargoWall changed enforcement posture during startup: ${raw.trim()}`
+    );
+  } catch {
+    warning(`CargoWall changed enforcement posture during startup: ${raw.trim()}`);
+  }
 }
 async function stopCargowall(pids) {
   for (const pid of pids) {
@@ -26097,12 +26161,37 @@ async function handleStartupFailure(warnMessage, throwMessage, failOnUnsupported
   endGroup();
   return { supported: false, pid: null };
 }
+function handlePolicyLockdown(reason) {
+  setOutput("supported", "false");
+  endGroup();
+  throw new Error(
+    `${reason} CargoWall is still running and holding this runner at deny-all, so egress stays blocked for the rest of the job.`
+  );
+}
 async function restoreDns() {
   try {
     await import_fs6.promises.access(RESOLV_CONF_BACKUP);
     await exec("sudo", ["cp", RESOLV_CONF_BACKUP, "/etc/resolv.conf"]);
   } catch {
   }
+}
+function resolveApiFailureMode(args) {
+  const input = args.input.trim().toLowerCase();
+  if (input === "") {
+    return args.modeSupplied ? { value: "local", reason: "default, deferring to the explicitly set `mode`" } : { value: "audit", reason: "default" };
+  }
+  switch (input) {
+    case "audit":
+      return { value: "audit", reason: "set by `api-failure-mode`" };
+    case "enforce":
+    case "local":
+      return { value: "local", reason: "set by `api-failure-mode`" };
+    case "fail":
+      return { value: "fail", reason: "set by `api-failure-mode`" };
+  }
+  throw new Error(
+    `Invalid "api-failure-mode" value "${args.input}" \u2014 expected "audit", "enforce", or "fail".`
+  );
 }
 function requireNonEmptyHostList(name) {
   const hosts = parseList(getMultilineInput(name));

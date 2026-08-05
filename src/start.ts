@@ -12,6 +12,12 @@ const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
 const READY_FILE = '/tmp/cargowall-ready'
 const PID_FILE = '/tmp/cargowall.pid'
+// FAILURE_FILE is written by cargowall on any fatal startup error, including
+// the policy lockdown from --api-failure-mode=fail. DOWNGRADE_FILE is its
+// structured record of a posture change, and tells those two apart. Both paths
+// are shared with the Go binary — keep them in sync.
+const FAILURE_FILE = '/tmp/cargowall-failed'
+const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 const RESOLV_CONF_BACKUP = '/etc/resolv.conf.cargowall.bak'
 const STARTUP_TIMEOUT = 30
 const STEP_PLAN_FILE = '/tmp/cargowall-step-plan.json'
@@ -33,7 +39,11 @@ async function showLastLog(): Promise<void> {
 }
 
 export async function start(): Promise<{ supported: boolean; pid: number | null }> {
-  let mode = core.getInput('mode') || 'enforce'
+  // `mode` carries no default in action.yml, so an empty value means the caller
+  // did not ask for a mode — which is what lets resolveApiFailureMode tell an
+  // explicit `mode: enforce` apart from the default one.
+  const modeInput = core.getInput('mode')
+  let mode = modeInput || 'enforce'
 
   if (!VALID_MODES.includes(mode as typeof VALID_MODES[number])) {
     core.warning(`Invalid mode "${mode}" — expected "enforce" or "audit". Defaulting to "enforce".`)
@@ -50,7 +60,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const debug = core.getInput('debug') === 'true'
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'
   const allowExistingConnections = core.getInput('allow-existing-connections') !== 'false'
-  const auditSummary = core.getInput('audit-summary') !== 'false'
 
   core.startGroup('Starting CargoWall Firewall')
 
@@ -122,11 +131,14 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     `--dns-upstream=${dnsUpstream}`,
     `--pidfile=${PID_FILE}`,
     `--ready-file=${READY_FILE}`,
+    `--failure-file=${FAILURE_FILE}`,
+    // Always collected. `audit-summary` decides whether the summary is
+    // *rendered* into the workflow run summary, not whether events exist:
+    // the audit log also feeds the dashboard's per-step detail, and gating
+    // collection on a rendering preference made audit-summary:false jobs
+    // invisible to the SaaS entirely (#71).
+    `--audit-log=${AUDIT_LOG}`,
   ]
-
-  if (auditSummary) {
-    args.push(`--audit-log=${AUDIT_LOG}`)
-  }
 
   if (mode === 'audit') {
     args.push('--audit-mode')
@@ -154,19 +166,36 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // from the CodeCargo SaaS API.
   const offline = core.getInput('offline') === 'true'
   const apiUrl = core.getInput('api-url')
+  // Non-null only while the API flags survive, so the configuration log never
+  // advertises a posture that was dropped along with them below.
+  let apiFailureLabel: string | null = null
   if (apiUrl && !offline) {
     args.push(`--api-url=${apiUrl}`)
     args.push(`--job-key=${github.context.job}`)
+    const apiFailure = resolveApiFailureMode({
+      input: core.getInput('api-failure-mode'),
+      modeSupplied: modeInput !== '',
+    })
+    args.push(`--api-failure-mode=${apiFailure.value}`)
+    apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`
     try {
       const idToken = await core.getIDToken('codecargo')
       args.push(`--token=${idToken}`)
     } catch (error) {
-      core.warning(`Failed to get OIDC token for policy fetch: ${error}. Falling back to env/file config.`)
-      // Remove api-url and job-key so Go binary uses env/file fallback
-      const apiUrlIdx = args.indexOf(`--api-url=${apiUrl}`)
-      if (apiUrlIdx !== -1) args.splice(apiUrlIdx, 1)
-      const jobKeyIdx = args.indexOf(`--job-key=${github.context.job}`)
-      if (jobKeyIdx !== -1) args.splice(jobKeyIdx, 1)
+      // No token means no fetch is even attempted, so this is not a retrieval
+      // failure and must not trigger the api-failure-mode posture — it is a
+      // workflow misconfiguration, handled the same way cargowall handles a
+      // rejected token. Drop the API flags so the binary uses env/file config.
+      core.warning(
+        `Failed to get OIDC token for policy fetch: ${error}. ` +
+          `Ensure the workflow has "permissions: id-token: write". ` +
+          `Falling back to this step's configuration (api-failure-mode does not apply).`
+      )
+      for (const flag of ['--api-url', '--job-key', '--api-failure-mode']) {
+        const idx = args.findIndex(a => a.startsWith(`${flag}=`))
+        if (idx !== -1) args.splice(idx, 1)
+      }
+      apiFailureLabel = null
     }
   }
 
@@ -187,6 +216,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (jobId) core.info(`  Job run ID: ${jobId}`)
   core.info(`  Sudo lockdown: ${sudoLockdown}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
+  if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
 
   // Backup current resolv.conf
   try {
@@ -268,6 +298,25 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       // Not ready yet
     }
 
+    // cargowall reported a startup failure. Two very different situations
+    // share this sentinel — see isPolicyLockdown.
+    const failureReason = await readFailureFile()
+    if (failureReason !== null) {
+      await showLastLog()
+      if (await isPolicyLockdown()) {
+        return handlePolicyLockdown(failureReason)
+      }
+      // A fatal startup error: cargowall has exited. Same contract as the
+      // "exited unexpectedly" branch below — honour fail-on-unsupported —
+      // but with the binary's own reason instead of a guess.
+      core.error(`CargoWall reported a startup failure: ${failureReason}`)
+      return handleStartupFailure(
+        `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
+        `CargoWall failed to start: ${failureReason}`,
+        failOnUnsupported,
+      )
+    }
+
     cargowallPid = cargowallPid ?? await readPidFile()
     if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
       core.error('CargoWall process exited unexpectedly')
@@ -294,6 +343,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   core.info('CargoWall is ready')
+
+  // Surface a posture change (e.g. --api-failure-mode=audit downgraded the run)
+  // now that startup succeeded. Deliberately after the ready check: a lockdown
+  // exits above, so anything recorded here belongs to a run that came up.
+  await warnOnDowngrade()
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
@@ -378,10 +432,73 @@ async function readPidFile(): Promise<number | null> {
  * this cargowall writes. The files may be root-owned, so remove via sudo.
  */
 async function clearStartupFiles(): Promise<void> {
-  await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE], {
+  await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true,
   })
+}
+
+/**
+ * Read cargowall's failure sentinel. It is written for any fatal startup error,
+ * and also when --api-failure-mode=fail puts the runner into policy lockdown —
+ * the latter is why we poll for it at all: in lockdown cargowall deliberately
+ * withholds the ready sentinel and keeps running deny-all, so the wait loop
+ * would otherwise sit out the full timeout for a decision already made.
+ * Returns the reason, or null if absent.
+ */
+async function readFailureFile(): Promise<string | null> {
+  try {
+    const reason = (await fs.readFile(FAILURE_FILE, 'utf8')).trim()
+    return reason || 'cargowall reported a startup failure with no reason recorded'
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Distinguish the two states behind the failure sentinel: policy lockdown
+ * (cargowall alive, holding the runner at deny-all, an explicitly requested
+ * outcome) from any other fatal startup error (cargowall gone, filtering
+ * absent). They need opposite handling, so classify on the structured
+ * downgrade record rather than on the reason text.
+ *
+ * Both paths write the sentinel immediately before their next step — the
+ * downgrade record on one, process exit on the other — so wait briefly for
+ * that adjacent write to land before deciding.
+ */
+async function isPolicyLockdown(): Promise<boolean> {
+  await sleep(250)
+  try {
+    const raw = await fs.readFile(DOWNGRADE_FILE, 'utf8')
+    return (JSON.parse(raw) as { type?: string }).type === 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Report a posture change cargowall recorded during startup. The downgrade file
+ * holds a protojson CargoWallDowngrade; we only need its human-readable detail.
+ * Best-effort: a run that filtered correctly must not fail over a missing or
+ * unparseable reporting artifact.
+ */
+async function warnOnDowngrade(): Promise<void> {
+  let raw: string
+  try {
+    raw = await fs.readFile(DOWNGRADE_FILE, 'utf8')
+  } catch {
+    return // No posture change — the common case.
+  }
+  try {
+    const detail = (JSON.parse(raw) as { detail?: string }).detail
+    core.warning(
+      detail
+        ? `CargoWall changed enforcement posture: ${detail}`
+        : `CargoWall changed enforcement posture during startup: ${raw.trim()}`
+    )
+  } catch {
+    core.warning(`CargoWall changed enforcement posture during startup: ${raw.trim()}`)
+  }
 }
 
 /** Best-effort SIGTERM to cargowall (real PID and/or launcher PID). */
@@ -415,6 +532,29 @@ async function handleStartupFailure(
   return { supported: false, pid: null }
 }
 
+/**
+ * Handle `--api-failure-mode=fail`: cargowall could not retrieve a policy and
+ * has locked the runner down to deny-all.
+ *
+ * Always throws, regardless of `fail-on-unsupported` — that input is about eBPF
+ * support on the runner, whereas reaching here means the caller explicitly asked
+ * for the build to fail when the policy is unavailable.
+ *
+ * Deliberately does not restore DNS or stop cargowall. The lockdown is meant to
+ * hold for the rest of the job: cargowall is alive and still serving DNS on
+ * 127.0.0.1, so restoring resolv.conf would point name resolution back at the
+ * upstream while eBPF keeps blocking egress — a confusing half-dismantled state
+ * rather than the fail-closed one that was asked for.
+ */
+function handlePolicyLockdown(reason: string): never {
+  core.setOutput('supported', 'false')
+  core.endGroup()
+  throw new Error(
+    `${reason} CargoWall is still running and holding this runner at deny-all, ` +
+      `so egress stays blocked for the rest of the job.`
+  )
+}
+
 async function restoreDns(): Promise<void> {
   try {
     await fs.access(RESOLV_CONF_BACKUP)
@@ -422,6 +562,59 @@ async function restoreDns(): Promise<void> {
   } catch {
     // No backup to restore
   }
+}
+
+/** cargowall's spelling of the three postures, plus how we got there. */
+export interface ApiFailureModeResolution {
+  value: 'audit' | 'local' | 'fail'
+  reason: string
+}
+
+/**
+ * Resolve the `--api-failure-mode` value handed to cargowall.
+ *
+ * The action's vocabulary is `audit | enforce | fail`; the binary calls the
+ * middle one `local`, because "enforce" here means "this step's own policy",
+ * which is *audit* when the step says `mode: audit`. `local` is accepted as an
+ * alias so either vocabulary works in a workflow.
+ *
+ * The default is `audit` — a policy outage should not silently hand the job an
+ * unreviewed local config with full enforcement behind it. But that default
+ * yields to an explicit `mode`: a caller who wrote `mode: enforce` asked for
+ * enforcement in so many words, and downgrading them on an outage would
+ * override an instruction they actually gave. An explicitly supplied
+ * `api-failure-mode` always wins over both.
+ *
+ * `modeSupplied` is only knowable because `mode` declares no default in
+ * action.yml — the runner materialises defaults into INPUT_* indistinguishably
+ * from caller-supplied values.
+ */
+export function resolveApiFailureMode(args: { input: string; modeSupplied: boolean }): ApiFailureModeResolution {
+  const input = args.input.trim().toLowerCase()
+
+  if (input === '') {
+    return args.modeSupplied
+      ? { value: 'local', reason: 'default, deferring to the explicitly set `mode`' }
+      : { value: 'audit', reason: 'default' }
+  }
+
+  switch (input) {
+    case 'audit':
+      return { value: 'audit', reason: 'set by `api-failure-mode`' }
+    case 'enforce':
+    case 'local':
+      return { value: 'local', reason: 'set by `api-failure-mode`' }
+    case 'fail':
+      return { value: 'fail', reason: 'set by `api-failure-mode`' }
+  }
+
+  // Deliberately fatal rather than warn-and-default like `mode`: this input
+  // decides what happens to enforcement during an API outage, and a typo
+  // would otherwise surface as a silent posture change during a rare remote
+  // failure instead of immediately at configuration time.
+  throw new Error(
+    `Invalid "api-failure-mode" value "${args.input}" — expected "audit", "enforce", or "fail".`
+  )
 }
 
 /**

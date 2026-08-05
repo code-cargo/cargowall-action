@@ -158,6 +158,41 @@ Run in audit mode to log connections without blocking them — useful for unders
     mode: audit
 ```
 
+### When the CodeCargo Policy Can't Be Fetched
+
+If you manage policies on the [CodeCargo platform](#codecargo-platform), the action fetches the resolved policy at startup. `api-failure-mode` decides what happens when that fetch genuinely fails:
+
+```yaml
+- uses: code-cargo/cargowall-action@v1
+  with:
+    api-failure-mode: audit   # default
+```
+
+| Value              | Behaviour on a retrieval failure                                                              |
+|--------------------|-----------------------------------------------------------------------------------------------|
+| `audit` *(default)* | Run in audit mode — log connections, block nothing. A policy outage never breaks the build, and never silently enforces a config nobody reviewed |
+| `enforce`           | Use this step's own configuration as-is (the behaviour before this input existed)              |
+| `fail`              | Lock the runner down to deny-all and fail the step                                             |
+
+**Only genuine retrieval failures count**: the API being unreachable, a server error, a timeout, or a policy that can't be parsed. These do *not* count and always fall back to this step's configuration, whatever `api-failure-mode` says:
+
+* the repository is not onboarded to CodeCargo (the everyday case for anyone without an account)
+* the OIDC token was rejected, or the workflow is missing `permissions: id-token: write`
+* the repository is marked inactive
+
+That distinction is what makes `audit` safe as a default — without it, every workflow without a CodeCargo account would silently stop enforcing.
+
+**An explicit `mode` wins over the default.** If you wrote `mode: enforce` yourself, a fetch failure leaves you enforcing rather than downgrading you to audit — you asked for enforcement in so many words. Setting `api-failure-mode` explicitly overrides that:
+
+| `mode`     | `api-failure-mode` | Posture on a retrieval failure |
+|------------|--------------------|--------------------------------|
+| unset      | unset              | audit                          |
+| `enforce`  | unset              | enforce (your config)          |
+| `enforce`  | `audit`            | audit                          |
+| any        | `fail`             | deny-all lockdown, step fails  |
+
+This input has no effect when `offline: true` or `api-url` is empty.
+
 ### With Sudo Lockdown (Maximum Security)
 
 Enable sudo lockdown to prevent subsequent steps from disabling the firewall:
@@ -212,10 +247,11 @@ For complex configurations, use a JSON or YAML config file:
 | `allow-existing-connections` | Allow pre-existing TCP connections at startup                                                                                                                                                                                                                                          | `true`                                         |
 | `binary-path`                | Path to a pre-built cargowall binary (skips download)                                                                                                                                                                                                                                  |                                                |
 | `debug`                      | Enable debug logging                                                                                                                                                                                                                                                                   | `false`                                        |
-| `audit-summary`              | Generate audit summary in workflow summary                                                                                                                                                                                                                                             | `true`                                         |
+| `audit-summary`              | Render the audit summary into the workflow run summary. **Rendering only** — event collection and the CodeCargo API push happen either way; use `offline: true` to stop API communication                                                                                               | `true`                                         |
 | `skip-actions-api`           | Skip the GitHub Actions API call that enriches audit-summary step names/status (falls back to local `_diag` data); set `true` when near the per-repo rate limit                                                                                                                        | `false`                                        |
 | `github-token`               | GitHub token for fetching step timing in the audit summary                                                                                                                                                                                                                             | `${{ github.token }}`                          |
 | `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)                                                                                                                                                                                                       | `https://app.codecargo.com`                    |
+| `api-failure-mode`           | Posture when the policy can't be retrieved from the CodeCargo API: `audit`, `enforce`, or `fail`. Only genuine retrieval failures act on it. See [When the CodeCargo Policy Can't Be Fetched](#when-the-codecargo-policy-cant-be-fetched)                                               | `audit` (`enforce` if `mode` is set)           |
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                                                                                                                                                                                                                   | `false`                                        |
 | `job-id`                     | Check run ID of the current job (from workflow context by default; override if needed)                                                                                                                                                                                                 | `${{ job.check_run_id }}`                      |
 

@@ -21499,11 +21499,6 @@ function getIDToken(aud) {
   });
 }
 
-// src/audit-push.ts
-async function postAuditResults(_apiUrl) {
-  info("Audit results are now pushed via the cargowall summary command");
-}
-
 // src/cleanup.ts
 var import_fs2 = require("fs");
 var CARGOWALL_LOG = "/tmp/cargowall.log";
@@ -25389,15 +25384,18 @@ function shouldCallActionsApi(args) {
   if (args.skipEnv === "true") return false;
   return true;
 }
-async function generateSummary() {
+async function generateSummary(opts = { render: true }) {
+  const { render } = opts;
+  const offline = getInput("offline") === "true";
+  const apiUrl = getInput("api-url");
+  const canPush = !!apiUrl && !offline;
+  let haveEvents = false;
   try {
-    const stat2 = await import_fs6.promises.stat(AUDIT_LOG);
-    if (stat2.size === 0) {
-      info("Audit log is empty, skipping summary");
-      return;
-    }
+    haveEvents = (await import_fs6.promises.stat(AUDIT_LOG)).size > 0;
   } catch {
-    info("No audit log found, skipping summary");
+  }
+  if (!haveEvents && !canPush) {
+    info("No audit events and no API push configured, skipping summary");
     return;
   }
   startGroup("Generating Audit Summary");
@@ -25475,9 +25473,7 @@ async function generateSummary() {
       currentJobName = context2.job;
     }
     const summaryArgs = ["summary", "--audit-log", AUDIT_LOG, "--steps", stepsJson];
-    const offline = getInput("offline") === "true";
-    const apiUrl = getInput("api-url");
-    if (apiUrl && !offline) {
+    if (canPush) {
       summaryArgs.push("--api-url", apiUrl);
       summaryArgs.push("--job-key", context2.job);
       summaryArgs.push("--job-name", currentJobName);
@@ -25518,34 +25514,42 @@ async function generateSummary() {
         }
       }
     });
-    if (summaryResult === 0 && summaryOutput) {
-      await summary.addRaw(summaryOutput).write();
-      info("Audit summary written to workflow summary");
+    if (summaryResult === 0) {
+      if (render && summaryOutput) {
+        await summary.addRaw(summaryOutput).write();
+        info("Audit summary written to workflow summary");
+      } else {
+        info("Audit summary complete (rendering disabled)");
+      }
     } else {
       warning("Failed to generate audit summary with step correlation");
-      summaryOutput = "";
-      const fallbackResult = await exec("cargowall", ["summary", "--audit-log", AUDIT_LOG, "--steps", "[]"], {
-        ignoreReturnCode: true,
-        listeners: {
-          stdout: (data) => {
-            summaryOutput += data.toString();
+      if (render) {
+        summaryOutput = "";
+        const fallbackResult = await exec("cargowall", ["summary", "--audit-log", AUDIT_LOG, "--steps", "[]"], {
+          ignoreReturnCode: true,
+          listeners: {
+            stdout: (data) => {
+              summaryOutput += data.toString();
+            }
           }
+        });
+        if (fallbackResult === 0 && summaryOutput) {
+          await summary.addRaw(summaryOutput).write();
+          info("Basic audit summary written to workflow summary");
         }
-      });
-      if (fallbackResult === 0 && summaryOutput) {
-        await summary.addRaw(summaryOutput).write();
-        info("Basic audit summary written to workflow summary");
       }
     }
   } catch (error) {
     warning(`Failed to generate audit summary: ${error}`);
   }
-  try {
-    const log = await import_fs6.promises.readFile(CARGOWALL_LOG2, "utf8");
-    if (log) {
-      await summary.addRaw("<details><summary>CargoWall Process Log</summary>\n\n```\n").addRaw(log).addRaw("\n```\n</details>\n").write();
+  if (render) {
+    try {
+      const log = await import_fs6.promises.readFile(CARGOWALL_LOG2, "utf8");
+      if (log) {
+        await summary.addRaw("<details><summary>CargoWall Process Log</summary>\n\n```\n").addRaw(log).addRaw("\n```\n</details>\n").write();
+      }
+    } catch {
     }
-  } catch {
   }
   endGroup();
 }
@@ -25716,13 +25720,12 @@ async function run() {
       info("CargoWall was not started, skipping cleanup");
       return;
     }
-    const auditSummary = getInput("audit-summary") !== "false";
-    if (auditSummary) {
-      await generateSummary();
-    }
-    const apiUrl = getInput("api-url");
-    if (apiUrl) {
-      await postAuditResults(apiUrl);
+    const render = getInput("audit-summary") !== "false";
+    const canPush = !!getInput("api-url") && getInput("offline") !== "true";
+    if (render || canPush) {
+      await generateSummary({ render });
+    } else {
+      info("Audit summary disabled and API push not configured, skipping summary");
     }
     await cleanup();
     info("CargoWall cleanup complete");
