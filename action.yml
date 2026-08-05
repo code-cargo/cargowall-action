@@ -27,7 +27,7 @@ inputs:
       Only genuine retrieval failures act on this — an unreachable API, a server
       error, or an unusable policy. A repository that is not onboarded to
       CodeCargo, a rejected token, or an inactive repository always falls back
-      to this step''s configuration regardless of this setting.
+      to this step's configuration regardless of this setting.
       Ignored when `offline: true` or `api-url` is empty.
       Default: audit, except when `mode` is explicitly set (see README)
     required: false
