@@ -17,9 +17,10 @@ vi.mock('./summary', () => ({ generateSummary: vi.fn() }))
 vi.mock('fs', () => ({
   promises: {
     // No downgrade record by default — the common case.
-    access: vi.fn(async () => { throw new Error('ENOENT') }),
+    stat: vi.fn(async () => { throw new Error('ENOENT') }),
   },
 }))
+vi.mock('./start', () => ({ STALE_SLACK_MS: 2000 }))
 
 import * as core from '@actions/core'
 import { promises as fsp } from 'fs'
@@ -39,14 +40,17 @@ function withInputs(inputs: Record<string, string>): void {
   vi.mocked(core.getInput).mockImplementation((name: string) => inputs[name] ?? '')
 }
 
+/** State as start() leaves it on the happy path: pid saved, spawn anchor saved. */
+function withState(state: Record<string, string>): void {
+  vi.mocked(core.getState).mockImplementation((name: string) => state[name] ?? '')
+}
+
 describe('post', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // cargowall started, so the post step does its full job.
-    vi.mocked(core.getState).mockImplementation((name: string) =>
-      name === 'cargowall-pid' ? '4242' : ''
-    )
-    vi.mocked(fsp.access).mockRejectedValue(new Error('ENOENT'))
+    withState({ 'cargowall-pid': '4242', 'cargowall-spawned-at': String(Date.now() - 60_000) })
+    vi.mocked(fsp.stat).mockRejectedValue(new Error('ENOENT'))
     withInputs({})
   })
 
@@ -119,7 +123,7 @@ describe('post', () => {
     // start() threw pre-spawn (bad input, download failure): no pid state, no
     // downgrade record. A zero-event push would report effective mode
     // "enforce" for a job that had no filtering at all.
-    vi.mocked(core.getState).mockReturnValue('')
+    withState({})
     withInputs({ 'api-url': 'https://app.codecargo.com' })
 
     await runPost()
@@ -128,15 +132,43 @@ describe('post', () => {
     expect(cleanup).toHaveBeenCalled()
   })
 
-  it('still pushes for a policy lockdown (downgrade record, no pid)', async () => {
+  it('still pushes for a policy lockdown (fresh downgrade record, no pid)', async () => {
     // Lockdown never saves pid state (the throw happens before), but the
     // downgrade record exists and the push carries it to the dashboard.
-    vi.mocked(core.getState).mockReturnValue('')
-    vi.mocked(fsp.access).mockResolvedValue(undefined)
+    withState({ 'cargowall-spawned-at': String(Date.now() - 60_000) })
+    vi.mocked(fsp.stat).mockResolvedValue({ mtimeMs: Date.now() } as Awaited<ReturnType<typeof fsp.stat>>)
     withInputs({ 'api-url': 'https://app.codecargo.com' })
 
     await runPost()
 
     expect(generateSummary).toHaveBeenCalledWith({ render: true })
+  })
+
+  it('ignores a stale downgrade record from a previous job on a reused runner', async () => {
+    // The record predates this run's spawn anchor: a leftover, not this
+    // run's posture. Without the anchor this pushed a zero-event record for
+    // a job where cargowall never started.
+    withState({ 'cargowall-spawned-at': String(Date.now() - 60_000) })
+    vi.mocked(fsp.stat).mockResolvedValue(
+      { mtimeMs: Date.now() - 3_600_000 } as Awaited<ReturnType<typeof fsp.stat>>
+    )
+    withInputs({ 'api-url': 'https://app.codecargo.com' })
+
+    await runPost()
+
+    expect(generateSummary).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalled()
+  })
+
+  it('ignores a downgrade record entirely when cargowall was never spawned', async () => {
+    // No spawn anchor ⇒ start() threw before spawning ⇒ any record on disk is
+    // definitionally from a previous job.
+    withState({})
+    vi.mocked(fsp.stat).mockResolvedValue({ mtimeMs: Date.now() } as Awaited<ReturnType<typeof fsp.stat>>)
+    withInputs({ 'api-url': 'https://app.codecargo.com' })
+
+    await runPost()
+
+    expect(generateSummary).not.toHaveBeenCalled()
   })
 })

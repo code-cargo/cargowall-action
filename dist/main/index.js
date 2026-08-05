@@ -25835,6 +25835,7 @@ var STARTUP_TIMEOUT = 30;
 var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
 var STEP_TIMESTAMPS_FILE = "/tmp/cargowall-step-timestamps.jsonl";
 var VALID_MODES = ["enforce", "audit"];
+var STALE_SLACK_MS = 2e3;
 async function showLastLog() {
   try {
     let logOutput = "";
@@ -26010,6 +26011,7 @@ async function start() {
   };
   const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
+  saveState("cargowall-spawned-at", String(spawnedAtMs));
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -26027,7 +26029,7 @@ async function start() {
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs) {
+      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
         ready = true;
         break;
       }
@@ -26101,7 +26103,7 @@ async function sudoKillZero(pid) {
 }
 async function readPidFile(spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs) {
+    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
     const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
@@ -26133,7 +26135,7 @@ function sentinelReason(raw) {
 }
 async function readFailureFile(spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs) {
+    if ((await import_fs6.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
@@ -26172,7 +26174,7 @@ async function readStateFile(filePath) {
 }
 async function readDowngradeFile(spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs) {
+    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {

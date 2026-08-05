@@ -68,16 +68,17 @@ const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
  * probes them. fs.open returns a minimal FileHandle since the state-file
  * reader uses an O_NOFOLLOW open + bounded read rather than readFile. Present
  * files default to a future mtime (unambiguously fresher than the spawn
- * anchor); pass `staleMtimes` to model a leftover from a previous run.
+ * anchor); pass `mtimes` to model a leftover from a previous run (an old
+ * epoch) or a write landing just inside the staleness slack.
  */
-function withFiles(files: Record<string, string>, staleMtimes: string[] = []): void {
+function withFiles(files: Record<string, string>, mtimes: Record<string, number> = {}): void {
   vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
     if (String(p) in files || !String(p).startsWith('/tmp/cargowall')) return undefined
     throw new Error(`ENOENT: ${String(p)}`)
   })
   vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
     if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
-    const mtimeMs = staleMtimes.includes(String(p)) ? 1 : Date.now() + 5000
+    const mtimeMs = mtimes[String(p)] ?? Date.now() + 5000
     return { mtimeMs, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
   })
   vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
@@ -383,7 +384,7 @@ describe('start() failure-sentinel handling', () => {
         [FAILURE_FILE]: sentinel('cargowall startup failed: crash from a previous run'),
         [READY_FILE]: '',
       },
-      [FAILURE_FILE],
+      { [FAILURE_FILE]: 1 },
     )
     let readyPolls = 0
     const statImpl = vi.mocked(fsp.stat).getMockImplementation()!
@@ -397,4 +398,18 @@ describe('start() failure-sentinel handling', () => {
     expect(result.supported).toBe(true)
     expect(core.error).not.toHaveBeenCalled()
   }, 10000)
+
+  it('treats a sentinel written moments before the spawn anchor as fresh (slack)', async () => {
+    withInputs({ 'fail-on-unsupported': 'true' })
+    // Coarse filesystem timestamps or write ordering can put a genuinely
+    // fresh sentinel's mtime a hair below spawnedAtMs. Within the slack it
+    // must still be trusted — otherwise a fast fatal error loses its precise
+    // reason to the generic 30s timeout.
+    withFiles(
+      { [FAILURE_FILE]: sentinel('cargowall startup failed: eBPF verifier rejected program') },
+      { [FAILURE_FILE]: Date.now() - 500 },
+    )
+
+    await expect(start()).rejects.toThrow(/eBPF verifier rejected program/)
+  })
 })

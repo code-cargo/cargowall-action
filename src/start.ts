@@ -25,6 +25,18 @@ const STEP_TIMESTAMPS_FILE = '/tmp/cargowall-step-timestamps.jsonl'
 
 const VALID_MODES = ['enforce', 'audit'] as const
 
+/**
+ * Slack for the state-file staleness anchor, mirroring wait-ready's
+ * staleSlack: a genuinely fresh file may carry an mtime a moment before the
+ * spawn anchor (write ordering, coarse filesystem timestamps — not something
+ * the action controls, especially on self-hosted runners). Without it, a
+ * fresh ready sentinel read as stale times out a healthy run, and a fast
+ * fatal error loses its precise reason to the generic timeout. Costs nothing
+ * on the staleness side — leftovers are from a previous job, minutes old,
+ * not two seconds. Exported so the post step applies the same tolerance.
+ */
+export const STALE_SLACK_MS = 2000
+
 async function showLastLog(): Promise<void> {
   try {
     let logOutput = ''
@@ -272,6 +284,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // failureSentinelAnchor, using the wall clock since writer and reader share
   // the machine.
   const spawnedAtMs = Date.now()
+  // Saved for the post step, whose downgrade-record check needs the same
+  // anchor: without it a leftover record from a previous job on a reused
+  // runner would trigger a push for a job where cargowall never started.
+  // Absence of this state tells the post step cargowall was never spawned.
+  core.saveState('cargowall-spawned-at', String(spawnedAtMs))
   const child = spawn('sudo', ['-E', 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -307,7 +324,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       // Anchored like the other state files: a stale ready file that survived
       // a failed clearStartupFiles rm must not short-circuit the wait with a
       // false "ready" while this run's cargowall is still coming up.
-      if ((await fs.stat(READY_FILE)).mtimeMs >= spawnedAtMs) {
+      if ((await fs.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
         ready = true
         break
       }
@@ -439,7 +456,7 @@ async function sudoKillZero(pid: number): Promise<boolean> {
  */
 async function readPidFile(spawnedAtMs: number): Promise<number | null> {
   try {
-    if ((await fs.stat(PID_FILE)).mtimeMs < spawnedAtMs) {
+    if ((await fs.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null
     }
     const out = await fs.readFile(PID_FILE, 'utf8')
@@ -504,7 +521,7 @@ export function sentinelReason(raw: string): string {
  */
 async function readFailureFile(spawnedAtMs: number): Promise<string | null> {
   try {
-    if ((await fs.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs) {
+    if ((await fs.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null
     }
   } catch {
@@ -570,7 +587,7 @@ export async function readStateFile(filePath: string): Promise<string | null> {
  */
 async function readDowngradeFile(spawnedAtMs: number): Promise<string | null> {
   try {
-    if ((await fs.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs) {
+    if ((await fs.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null
     }
   } catch {

@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import { promises as fs } from 'fs'
 import { cleanup } from './cleanup'
+import { STALE_SLACK_MS } from './start'
 import { generateSummary } from './summary'
 
 // Shared with start.ts and the Go binary — see start.ts for the contract.
@@ -24,12 +25,20 @@ async function run(): Promise<void> {
     // input, failed download, spawn failure, crash, timeout — a zero-event
     // push would report effective mode "enforce" for a job that had no
     // filtering at all, and spend an Actions API request doing it.
+    //
+    // The downgrade record is anchored on the spawn time saved by start(),
+    // like every state-file reader there: clearStartupFiles' rm is
+    // best-effort, so a leftover record from a previous job on a reused
+    // runner must not count as this run's. Absent state means cargowall was
+    // never even spawned — any record is definitionally not this run's.
+    const spawnedAtMs = Number(core.getState('cargowall-spawned-at'))
     let downgraded = false
-    try {
-      await fs.access(DOWNGRADE_FILE)
-      downgraded = true
-    } catch {
-      // No downgrade record — the common case.
+    if (spawnedAtMs > 0) {
+      try {
+        downgraded = (await fs.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS
+      } catch {
+        // No downgrade record — the common case.
+      }
     }
     if (!pid && !downgraded) {
       core.info('CargoWall never ran in this job, skipping summary')

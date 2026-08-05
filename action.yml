@@ -28,7 +28,9 @@ inputs:
       error, or an unusable policy. A repository that is not onboarded to
       CodeCargo, a rejected token, or an inactive repository always falls back
       to this step's configuration regardless of this setting.
-      Ignored when `offline: true` or `api-url` is empty.
+      When `offline: true` or `api-url` is empty the posture is never applied
+      (no fetch happens), but the value is still validated — a typo fails the
+      step immediately rather than surfacing as a silent posture choice later.
       Default: audit, except when `mode` is explicitly set (see README)
     required: false
   allowed-hosts:
