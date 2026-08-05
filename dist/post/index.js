@@ -25384,6 +25384,9 @@ function shouldCallActionsApi(args) {
   if (args.skipEnv === "true") return false;
   return true;
 }
+function shouldRunSummary(args) {
+  return args.haveEvents || args.canPush;
+}
 async function generateSummary(opts = { render: true }) {
   const { render } = opts;
   const offline = getInput("offline") === "true";
@@ -25394,7 +25397,7 @@ async function generateSummary(opts = { render: true }) {
     haveEvents = (await import_fs6.promises.stat(AUDIT_LOG)).size > 0;
   } catch {
   }
-  if (!haveEvents && !canPush) {
+  if (!shouldRunSummary({ haveEvents, canPush })) {
     info("No audit events and no API push configured, skipping summary");
     return;
   }

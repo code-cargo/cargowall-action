@@ -455,21 +455,29 @@ async function readFailureFile(): Promise<string | null> {
   }
 }
 
+/** Read the downgrade record, or null when cargowall recorded no posture change. */
+async function readDowngradeFile(): Promise<string | null> {
+  try {
+    return await fs.readFile(DOWNGRADE_FILE, 'utf8')
+  } catch {
+    return null
+  }
+}
+
 /**
  * Distinguish the two states behind the failure sentinel: policy lockdown
  * (cargowall alive, holding the runner at deny-all, an explicitly requested
  * outcome) from any other fatal startup error (cargowall gone, filtering
- * absent). They need opposite handling, so classify on the structured
- * downgrade record rather than on the reason text.
+ * absent). They need opposite handling — the first must always fail the step,
+ * the second must keep honouring `fail-on-unsupported` — so classify on the
+ * structured downgrade record rather than on the reason text.
  *
- * Both paths write the sentinel immediately before their next step — the
- * downgrade record on one, process exit on the other — so wait briefly for
- * that adjacent write to land before deciding.
+ * Anything unreadable reads as "not lockdown", which routes to the pre-existing
+ * startup-failure handling rather than newly failing a build.
  */
-async function isPolicyLockdown(): Promise<boolean> {
-  await sleep(250)
+export function isLockdownRecord(raw: string | null): boolean {
+  if (raw === null) return false
   try {
-    const raw = await fs.readFile(DOWNGRADE_FILE, 'utf8')
     return (JSON.parse(raw) as { type?: string }).type === 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN'
   } catch {
     return false
@@ -477,28 +485,41 @@ async function isPolicyLockdown(): Promise<boolean> {
 }
 
 /**
- * Report a posture change cargowall recorded during startup. The downgrade file
- * holds a protojson CargoWallDowngrade; we only need its human-readable detail.
- * Best-effort: a run that filtered correctly must not fail over a missing or
- * unparseable reporting artifact.
+ * The human-readable half of a downgrade record. Falls back to the raw payload
+ * so an unparseable record still tells the user their posture changed — losing
+ * that notice is worse than printing JSON at them.
+ */
+export function downgradeMessage(raw: string | null): string | null {
+  if (raw === null) return null
+  let detail: string | undefined
+  try {
+    detail = (JSON.parse(raw) as { detail?: string }).detail
+  } catch {
+    // Fall through to the raw payload.
+  }
+  if (detail) return `CargoWall changed enforcement posture: ${detail}`
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  return `CargoWall changed enforcement posture during startup: ${trimmed}`
+}
+
+/**
+ * Classify a failure sentinel. Both paths write the sentinel immediately before
+ * their next step — the downgrade record on one, process exit on the other — so
+ * wait briefly for that adjacent write to land before deciding.
+ */
+async function isPolicyLockdown(): Promise<boolean> {
+  await sleep(250)
+  return isLockdownRecord(await readDowngradeFile())
+}
+
+/**
+ * Report a posture change cargowall recorded during startup. Best-effort: a run
+ * that filtered correctly must not fail over a reporting artifact.
  */
 async function warnOnDowngrade(): Promise<void> {
-  let raw: string
-  try {
-    raw = await fs.readFile(DOWNGRADE_FILE, 'utf8')
-  } catch {
-    return // No posture change — the common case.
-  }
-  try {
-    const detail = (JSON.parse(raw) as { detail?: string }).detail
-    core.warning(
-      detail
-        ? `CargoWall changed enforcement posture: ${detail}`
-        : `CargoWall changed enforcement posture during startup: ${raw.trim()}`
-    )
-  } catch {
-    core.warning(`CargoWall changed enforcement posture during startup: ${raw.trim()}`)
-  }
+  const message = downgradeMessage(await readDowngradeFile())
+  if (message) core.warning(message)
 }
 
 /** Best-effort SIGTERM to cargowall (real PID and/or launcher PID). */

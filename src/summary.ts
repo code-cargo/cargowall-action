@@ -31,6 +31,20 @@ export function shouldCallActionsApi(args: {
 }
 
 /**
+ * Whether `cargowall summary` is worth invoking at all.
+ *
+ * That one invocation does two jobs: it renders the markdown summary AND
+ * performs the CodeCargo push. So an absent or empty audit log is not a reason
+ * to bail — the binary treats it as a zero-event push and still reports the job
+ * record, effective mode, status, version and any downgrade. Skipping on a
+ * missing log is what made `audit-summary: false` jobs invisible to the
+ * dashboard (#71). Only skip when there is genuinely nothing to do.
+ */
+export function shouldRunSummary(args: { haveEvents: boolean; canPush: boolean }): boolean {
+  return args.haveEvents || args.canPush
+}
+
+/**
  * Run `cargowall summary`, which both renders the markdown summary and pushes
  * the job record to the CodeCargo API.
  *
@@ -44,16 +58,13 @@ export async function generateSummary(opts: { render: boolean } = { render: true
   const apiUrl = core.getInput('api-url')
   const canPush = !!apiUrl && !offline
 
-  // An absent or empty audit log is no longer a reason to bail: the binary
-  // treats it as a zero-event push and still reports the job. Only skip when
-  // there is also nothing to push, since then the run really is a no-op.
   let haveEvents = false
   try {
     haveEvents = (await fs.stat(AUDIT_LOG)).size > 0
   } catch {
     // No audit log — cargowall may have been started without one.
   }
-  if (!haveEvents && !canPush) {
+  if (!shouldRunSummary({ haveEvents, canPush })) {
     core.info('No audit events and no API push configured, skipping summary')
     return
   }

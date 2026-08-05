@@ -26119,30 +26119,40 @@ async function readFailureFile() {
     return null;
   }
 }
-async function isPolicyLockdown() {
-  await sleep2(250);
+async function readDowngradeFile() {
   try {
-    const raw = await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
+    return await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
+  } catch {
+    return null;
+  }
+}
+function isLockdownRecord(raw) {
+  if (raw === null) return false;
+  try {
     return JSON.parse(raw).type === "CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN";
   } catch {
     return false;
   }
 }
+function downgradeMessage(raw) {
+  if (raw === null) return null;
+  let detail;
+  try {
+    detail = JSON.parse(raw).detail;
+  } catch {
+  }
+  if (detail) return `CargoWall changed enforcement posture: ${detail}`;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return `CargoWall changed enforcement posture during startup: ${trimmed}`;
+}
+async function isPolicyLockdown() {
+  await sleep2(250);
+  return isLockdownRecord(await readDowngradeFile());
+}
 async function warnOnDowngrade() {
-  let raw;
-  try {
-    raw = await import_fs6.promises.readFile(DOWNGRADE_FILE, "utf8");
-  } catch {
-    return;
-  }
-  try {
-    const detail = JSON.parse(raw).detail;
-    warning(
-      detail ? `CargoWall changed enforcement posture: ${detail}` : `CargoWall changed enforcement posture during startup: ${raw.trim()}`
-    );
-  } catch {
-    warning(`CargoWall changed enforcement posture during startup: ${raw.trim()}`);
-  }
+  const message = downgradeMessage(await readDowngradeFile());
+  if (message) warning(message);
 }
 async function stopCargowall(pids) {
   for (const pid of pids) {

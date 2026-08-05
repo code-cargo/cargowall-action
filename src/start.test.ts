@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { requireNonEmptyHostList, resolveApiFailureMode } from './start'
+import {
+  requireNonEmptyHostList,
+  resolveApiFailureMode,
+  isLockdownRecord,
+  downgradeMessage,
+} from './start'
 
 // Mock @actions/core — requireNonEmptyHostList calls core.getMultilineInput
 vi.mock('@actions/core', () => ({
@@ -98,5 +103,65 @@ describe('resolveApiFailureMode', () => {
     expect(() => resolveApiFailureMode({ input: 'abort', modeSupplied: false })).toThrow(
       /Invalid "api-failure-mode" value "abort"/
     )
+  })
+})
+
+/**
+ * The failure sentinel is written for BOTH policy lockdown and any fatal
+ * startup error. Misreading a generic crash as lockdown would fail builds that
+ * `fail-on-unsupported: false` (the default) says to warn-and-continue on, so
+ * everything unrecognised must read as "not lockdown".
+ */
+describe('isLockdownRecord', () => {
+  it('recognises a lockdown downgrade record', () => {
+    expect(isLockdownRecord(JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN' }))).toBe(true)
+  })
+
+  it('does not treat an audit fallback as lockdown', () => {
+    expect(
+      isLockdownRecord(JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_AUDIT_FALLBACK' }))
+    ).toBe(false)
+  })
+
+  it('treats an absent record as not lockdown — the generic startup-failure path', () => {
+    expect(isLockdownRecord(null)).toBe(false)
+  })
+
+  it('treats unparseable JSON as not lockdown rather than failing the build', () => {
+    expect(isLockdownRecord('{"type": ')).toBe(false)
+  })
+
+  it('treats a record with no type as not lockdown', () => {
+    expect(isLockdownRecord(JSON.stringify({ detail: 'something happened' }))).toBe(false)
+  })
+})
+
+describe('downgradeMessage', () => {
+  it('returns null when no posture change was recorded', () => {
+    expect(downgradeMessage(null)).toBeNull()
+  })
+
+  it('surfaces the human-readable detail', () => {
+    const raw = JSON.stringify({
+      type: 'CARGO_WALL_DOWNGRADE_TYPE_AUDIT_FALLBACK',
+      detail: 'downgraded to audit mode: policy could not be retrieved',
+    })
+    expect(downgradeMessage(raw)).toBe(
+      'CargoWall changed enforcement posture: downgraded to audit mode: policy could not be retrieved'
+    )
+  })
+
+  it('still warns when the record is unparseable — losing the notice is worse than raw JSON', () => {
+    expect(downgradeMessage('{"type":')).toMatch(/changed enforcement posture during startup/)
+  })
+
+  it('still warns when the record parses but carries no detail', () => {
+    expect(downgradeMessage(JSON.stringify({ type: 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN' }))).toMatch(
+      /changed enforcement posture during startup/
+    )
+  })
+
+  it('returns null for an empty record rather than warning about nothing', () => {
+    expect(downgradeMessage('   ')).toBeNull()
   })
 })
