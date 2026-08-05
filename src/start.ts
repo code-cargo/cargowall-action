@@ -41,8 +41,12 @@ async function showLastLog(): Promise<void> {
 export async function start(): Promise<{ supported: boolean; pid: number | null }> {
   // `mode` carries no default in action.yml, so an empty value means the caller
   // did not ask for a mode — which is what lets resolveApiFailureMode tell an
-  // explicit `mode: enforce` apart from the default one.
+  // explicit `mode: enforce` apart from the default one. Only a VALID value
+  // counts as supplied: a typo'd mode falls back to enforce as a lenient
+  // recovery, not a user instruction, and treating it as "explicitly asked to
+  // enforce" would also suppress the api-failure-mode audit default.
   const modeInput = core.getInput('mode')
+  const modeSupplied = VALID_MODES.includes(modeInput as typeof VALID_MODES[number])
   let mode = modeInput || 'enforce'
 
   if (!VALID_MODES.includes(mode as typeof VALID_MODES[number])) {
@@ -174,7 +178,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     args.push(`--job-key=${github.context.job}`)
     const apiFailure = resolveApiFailureMode({
       input: core.getInput('api-failure-mode'),
-      modeSupplied: modeInput !== '',
+      modeSupplied,
     })
     args.push(`--api-failure-mode=${apiFailure.value}`)
     apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`
@@ -608,7 +612,9 @@ export interface ApiFailureModeResolution {
  *
  * `modeSupplied` is only knowable because `mode` declares no default in
  * action.yml — the runner materialises defaults into INPUT_* indistinguishably
- * from caller-supplied values.
+ * from caller-supplied values. Callers must pass true only for a valid `mode`
+ * value: an invalid one falls back to enforce as a lenient recovery, which is
+ * not an instruction worth deferring to.
  */
 export function resolveApiFailureMode(args: { input: string; modeSupplied: boolean }): ApiFailureModeResolution {
   const input = args.input.trim().toLowerCase()

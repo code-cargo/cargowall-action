@@ -214,12 +214,13 @@ export async function generateSummary(opts: { render: boolean } = { render: true
       }
     }
 
-    // Run cargowall summary command
+    // Run cargowall summary command. The stdout (the rendered markdown) is
+    // only accumulated when it will be written to the workflow summary.
     let summaryOutput = ''
     const summaryResult = await exec.exec('cargowall', summaryArgs, {
       ignoreReturnCode: true,
       listeners: {
-        stdout: (data: Buffer) => { summaryOutput += data.toString() }
+        stdout: (data: Buffer) => { if (render) summaryOutput += data.toString() }
       }
     })
 

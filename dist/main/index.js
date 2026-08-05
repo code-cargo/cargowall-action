@@ -25853,6 +25853,7 @@ ${logOutput}`);
 }
 async function start() {
   const modeInput = getInput("mode");
+  const modeSupplied = VALID_MODES.includes(modeInput);
   let mode = modeInput || "enforce";
   if (!VALID_MODES.includes(mode)) {
     warning(`Invalid mode "${mode}" \u2014 expected "enforce" or "audit". Defaulting to "enforce".`);
@@ -25947,7 +25948,7 @@ async function start() {
     args.push(`--job-key=${context2.job}`);
     const apiFailure = resolveApiFailureMode({
       input: getInput("api-failure-mode"),
-      modeSupplied: modeInput !== ""
+      modeSupplied
     });
     args.push(`--api-failure-mode=${apiFailure.value}`);
     apiFailureLabel = `${apiFailure.value} (${apiFailure.reason})`;

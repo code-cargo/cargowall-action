@@ -147,6 +147,18 @@ describe('start() argument construction', () => {
       expect(flag(await cargowallArgs(), '--api-failure-mode')).toBe('local')
     })
 
+    it('does not treat an invalid mode as explicitly set', async () => {
+      withInputs({ 'api-url': 'https://app.codecargo.com', mode: 'bogus' })
+
+      const args = await cargowallArgs()
+
+      // A typo'd mode falls back to enforce as a lenient recovery, not a user
+      // instruction — so the audit default must still apply on API outages.
+      expect(flag(args, '--api-failure-mode')).toBe('audit')
+      expect(args).not.toContain('--audit-mode')
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Invalid mode "bogus"'))
+    })
+
     it('translates the public "enforce" spelling to cargowall\'s "local"', async () => {
       withInputs({ 'api-url': 'https://app.codecargo.com', 'api-failure-mode': 'enforce' })
       expect(flag(await cargowallArgs(), '--api-failure-mode')).toBe('local')

@@ -25513,7 +25513,7 @@ async function generateSummary(opts = { render: true }) {
       ignoreReturnCode: true,
       listeners: {
         stdout: (data) => {
-          summaryOutput += data.toString();
+          if (render) summaryOutput += data.toString();
         }
       }
     });
