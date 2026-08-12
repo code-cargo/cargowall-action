@@ -21553,6 +21553,7 @@ function getIDToken(aud) {
 }
 
 // src/setup.ts
+var import_crypto = require("crypto");
 var import_fs2 = require("fs");
 var os6 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
@@ -21561,38 +21562,89 @@ var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
 var CARGOWALL_VERSION = "v1.3.6";
+var CARGOWALL_DIGESTS = {
+  amd64: "ac511897cb7952bc61c0a8b99d9bf73fd95148dd8062562aa3862d6c72e53865",
+  arm64: "08b56f7d25c3bd5f6c65f3bd4932bc587f049c6eb1c1a0bfc7343e8875c158f7"
+};
+function linuxArch() {
+  const archRaw = os6.arch();
+  switch (archRaw) {
+    case "x64":
+      return "amd64";
+    case "arm64":
+      return "arm64";
+    default:
+      throw new Error(`Unsupported architecture: ${archRaw}`);
+  }
+}
 var http2 = new HttpClient("cargowall-action");
-async function downloadAsset(url, dest) {
+var DOWNLOAD_RETRY_DELAYS_MS = [500, 2e3, 5e3, 1e4];
+function withJitter(baseMs) {
+  return Math.round(baseMs / 2 + Math.random() * baseMs);
+}
+function isRetryableStatus(status) {
+  return status >= 500 || status === 408 || status === 429;
+}
+function isThrottleStatus(status) {
+  return status === 403 || status === 503;
+}
+async function downloadAsset(url, dest, token = "") {
+  const asset = url.split("/").pop() || url;
+  let authenticated = false;
   const attempt = async () => {
-    const res = await http2.get(url);
-    const status2 = res.message.statusCode ?? 0;
-    if (status2 < 200 || status2 >= 300) {
-      res.message.resume();
-      return status2;
+    try {
+      const headers = authenticated ? { authorization: `Bearer ${token}` } : void 0;
+      const res = await http2.get(url, headers);
+      const status = res.message.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        res.message.resume();
+        return {
+          ok: false,
+          reason: `HTTP ${status}`,
+          status,
+          retryable: isRetryableStatus(status)
+        };
+      }
+      await (0, import_promises.pipeline)(res.message, (0, import_fs2.createWriteStream)(dest));
+      return { ok: true };
+    } catch (error2) {
+      return {
+        ok: false,
+        reason: error2 instanceof Error ? error2.message : String(error2),
+        status: 0,
+        retryable: true
+      };
     }
-    await (0, import_promises.pipeline)(res.message, (0, import_fs2.createWriteStream)(dest));
-    return status2;
   };
-  let status;
-  try {
-    status = await attempt();
-  } catch {
+  for (let i = 0; ; i++) {
+    const result = await attempt();
+    if (result.ok) {
+      if (i > 0) info(`Downloaded ${asset} on attempt ${i + 1}`);
+      return;
+    }
     await import_fs2.promises.unlink(dest).catch(() => {
     });
-    await (0, import_promises2.setTimeout)(500);
-    return attempt();
+    const escalate = token !== "" && !authenticated && (isThrottleStatus(result.status) || result.retryable && i >= 1);
+    if (escalate) {
+      authenticated = true;
+      info(`Download of ${asset} hit ${result.reason} \u2014 retrying authenticated`);
+    } else if (!result.retryable) {
+      throw new Error(`Failed to download ${url}: ${result.reason}`);
+    }
+    if (i >= DOWNLOAD_RETRY_DELAYS_MS.length) {
+      throw new Error(`Failed to download ${url} after ${i + 1} attempts: ${result.reason}`);
+    }
+    const delay = withJitter(DOWNLOAD_RETRY_DELAYS_MS[i]);
+    info(
+      `Download of ${asset} failed (${result.reason}); retrying in ${delay} ms \u2014 attempt ${i + 2} of ${DOWNLOAD_RETRY_DELAYS_MS.length + 1}`
+    );
+    await (0, import_promises2.setTimeout)(delay);
   }
-  if (status >= 500) {
-    await import_fs2.promises.unlink(dest).catch(() => {
-    });
-    await (0, import_promises2.setTimeout)(500);
-    return attempt();
-  }
-  if (status < 200 || status >= 300) {
-    await import_fs2.promises.unlink(dest).catch(() => {
-    });
-  }
-  return status;
+}
+async function sha256File(file) {
+  const hash = (0, import_crypto.createHash)("sha256");
+  await (0, import_promises.pipeline)((0, import_fs2.createReadStream)(file), hash);
+  return hash.digest("hex");
 }
 async function setup() {
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
@@ -21631,24 +21683,11 @@ async function installFromLocalPath(binaryPath) {
   } catch {
     throw new Error(`Binary not found at ${binaryPath}`);
   }
-  await exec("chmod", ["+x", binaryPath]);
-  await exec("sudo", ["cp", binaryPath, path4.join(INSTALL_DIR, BINARY_NAME)]);
-  info("Installed cargowall from local path");
+  await installBinary(binaryPath);
   await verifyInstallation();
 }
 async function downloadAndInstall() {
-  const archRaw = os6.arch();
-  let arch3;
-  switch (archRaw) {
-    case "x64":
-      arch3 = "amd64";
-      break;
-    case "arm64":
-      arch3 = "arm64";
-      break;
-    default:
-      throw new Error(`Unsupported architecture: ${archRaw}`);
-  }
+  const arch3 = linuxArch();
   info(`Detected architecture: ${arch3}`);
   const platform3 = os6.platform();
   if (platform3 !== "linux") {
@@ -21661,66 +21700,28 @@ async function downloadAndInstall() {
   info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`);
   const tempDir = await import_fs2.promises.mkdtemp(path4.join(os6.tmpdir(), "cargowall-"));
   const binaryDest = path4.join(tempDir, BINARY_NAME);
+  const token = getInput("github-token");
   try {
-    const binStatus = await downloadAsset(`${releaseBase}/${binaryAsset}`, binaryDest);
-    if (binStatus < 200 || binStatus >= 300) {
-      throw new Error(`Failed to download cargowall binary (HTTP ${binStatus})`);
-    }
-    const checksumDest = path4.join(tempDir, "checksums.txt");
-    const csStatus = await downloadAsset(`${releaseBase}/checksums.txt`, checksumDest);
-    if (csStatus < 200 || csStatus >= 300) {
-      throw new Error(`Failed to download checksums.txt (HTTP ${csStatus})`);
-    }
-    info("Verifying checksum...");
-    const checksums = await import_fs2.promises.readFile(checksumDest, "utf8");
-    const expectedLine = checksums.split("\n").find((l) => l.includes(binaryAsset));
-    if (!expectedLine) {
-      throw new Error(`No checksum entry for ${binaryAsset} in checksums.txt`);
-    }
-    const expectedChecksum = expectedLine.trim().split(/\s+/)[0];
-    let actualChecksum = "";
-    await exec("sha256sum", [binaryDest], {
-      listeners: {
-        stdout: (data) => {
-          actualChecksum += data.toString();
-        }
-      }
-    });
-    actualChecksum = actualChecksum.trim().split(/\s+/)[0];
-    if (expectedChecksum !== actualChecksum) {
+    await downloadAsset(`${releaseBase}/${binaryAsset}`, binaryDest, token);
+    info("Verifying checksum against pinned digest...");
+    const actualDigest = await sha256File(binaryDest);
+    if (actualDigest !== CARGOWALL_DIGESTS[arch3]) {
       throw new Error(`Checksum verification failed
-Expected: ${expectedChecksum}
-Actual: ${actualChecksum}`);
+Expected: ${CARGOWALL_DIGESTS[arch3]}
+Actual: ${actualDigest}`);
     }
     info("Checksum verified");
-    const bundleDest = path4.join(tempDir, "attestations.sigstore.json");
-    const bundleStatus = await downloadAsset(`${releaseBase}/attestations.sigstore.json`, bundleDest);
-    if (bundleStatus < 200 || bundleStatus >= 300) {
-      throw new Error(`Failed to download attestations.sigstore.json (HTTP ${bundleStatus})`);
-    }
-    info("Verifying provenance...");
-    try {
-      await which("gh", true);
-    } catch {
-      throw new Error("gh CLI not found on this runner \u2014 required for provenance verification");
-    }
-    const verifyResult = await exec(
-      "gh",
-      ["attestation", "verify", binaryDest, "--bundle", bundleDest, "--repo", repo],
-      { ignoreReturnCode: true }
-    );
-    if (verifyResult !== 0) {
-      throw new Error("Provenance verification failed \u2014 binary attestation could not be confirmed");
-    }
-    info("Provenance verified");
-    await exec("chmod", ["+x", binaryDest]);
-    await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
-    info(`Installed cargowall to ${INSTALL_DIR}/${BINARY_NAME}`);
+    await installBinary(binaryDest);
   } finally {
     await import_fs2.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
     });
   }
   await verifyInstallation();
+}
+async function installBinary(from) {
+  await exec("chmod", ["+x", from]);
+  await exec("sudo", ["cp", from, path4.join(INSTALL_DIR, BINARY_NAME)]);
+  info(`Installed cargowall to ${INSTALL_DIR}/${BINARY_NAME}`);
 }
 async function verifyInstallation() {
   try {

@@ -247,11 +247,11 @@ For complex configurations, use a JSON or YAML config file:
 | `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                                                                                                                                                                                                              |                                                |
 | `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                                                                                                                                                                                                                         | auto-detect                                    |
 | `allow-existing-connections` | Allow pre-existing TCP connections at startup                                                                                                                                                                                                                                          | `true`                                         |
-| `binary-path`                | Path to a pre-built cargowall binary (skips download)                                                                                                                                                                                                                                  |                                                |
+| `binary-path`                | Path to a pre-built cargowall binary. Skips the download, and with it the pinned-digest verification — see [Setup fails downloading the binary](#setup-fails-downloading-the-binary)                                                                                                    |                                                |
 | `debug`                      | Enable debug logging                                                                                                                                                                                                                                                                   | `false`                                        |
 | `audit-summary`              | Render the audit summary into the workflow run summary. **Rendering only** — event collection and the CodeCargo API push happen either way; use `offline: true` to stop API communication                                                                                               | `true`                                         |
 | `skip-actions-api`           | Skip the GitHub Actions API call that enriches audit-summary step names/status (falls back to local `_diag` data); set `true` when near the per-repo rate limit                                                                                                                        | `false`                                        |
-| `github-token`               | GitHub token for fetching step timing in the audit summary                                                                                                                                                                                                                             | `${{ github.token }}`                          |
+| `github-token`               | GitHub token for fetching step timing in the audit summary, and for retrying the binary download authenticated when the anonymous request is throttled                                                                                                                                 | `${{ github.token }}`                          |
 | `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)                                                                                                                                                                                                       | `https://app.codecargo.com`                    |
 | `api-failure-mode`           | Posture when the policy can't be retrieved from the CodeCargo API: `audit`, `enforce`, or `fail`. Only genuine retrieval failures act on it — but an *unreachable* API counts, so the `audit` default affects non-platform repos too. See [When the CodeCargo Policy Can't Be Fetched](#when-the-codecargo-policy-cant-be-fetched)                                               | `audit` (`enforce` if `mode` is set)           |
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                                                                                                                                                                                                                   | `false`                                        |
@@ -387,6 +387,22 @@ With this configuration, `sudo apt-get install ...` and `sudo docker build ...` 
 
 Sudo lockdown also removes the current user from the `docker` group. This is because Docker group membership grants the ability to run containers with root-level access, which could be used to bypass the firewall.
 
+### Binary Verification
+
+The cargowall binary is pinned to a version *and* a SHA-256 digest baked into
+each release of this action, so pinning the action by tag or SHA pins the
+binary too. At runtime, setup downloads the binary and checks it against the
+pinned digest — nothing served alongside the binary is trusted, and a
+substituted asset fails the check regardless of what the download host claims.
+
+Build provenance is verified where the pin is made, not in every job: the
+Sigstore attestation's subject *is* the binary's SHA-256, so a byte-for-byte
+match with the pin proves the same artifact the attestation signs. The
+`check-digests` CI workflow downloads the published binaries, verifies each
+against the pin, and runs `gh attestation verify` on each — on every change
+and on a weekly schedule — so an unattested or tampered release asset fails in
+this repository's CI, never in your job.
+
 ## Runner Compatibility
 
 | Runner Type                   | eBPF Support | Notes                            |
@@ -421,6 +437,67 @@ If DNS queries are timing out:
 1. Ensure Docker is running before the action
 2. CargoWall automatically configures Docker DNS
 3. Check `/etc/docker/daemon.json` was updated
+
+### Setup fails downloading the binary
+
+A failure in the `CargoWall Setup` group — `socket hang up`, `HTTP 503`, or
+`Failed to download https://github.com/...` — happens **before the firewall
+starts**, so nothing was blocked. The message is a plain network failure
+fetching the release asset from GitHub's CDN, not a policy decision. (The
+"CargoWall firewall is active" annotation on the same run comes from other
+jobs; annotations are aggregated per run.)
+
+The action downloads a single asset — the binary — with five attempts and
+backoff, and logs every retry —
+so a blip that recovered is visible in the log rather than silent. If asset
+delivery is degraded for longer than that, vendor the binary and skip the
+download entirely with `binary-path`:
+
+```yaml
+- name: Fetch cargowall
+  run: |
+    gh release download v1.3.6 \
+      --repo code-cargo/cargowall \
+      --pattern "cargowall-linux-${ARCH}" \
+      --output "$RUNNER_TEMP/cargowall"
+    gh attestation verify "$RUNNER_TEMP/cargowall" --repo code-cargo/cargowall
+  env:
+    GH_TOKEN: ${{ github.token }}
+    ARCH: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
+
+- uses: code-cargo/cargowall-action@v1
+  with:
+    binary-path: ${{ runner.temp }}/cargowall
+```
+
+Pair it with `actions/cache` to make the download a cold-start-only cost:
+
+```yaml
+- id: cache
+  uses: actions/cache@v4
+  with:
+    path: ${{ runner.temp }}/cargowall
+    key: cargowall-v1.3.6-${{ runner.arch }}
+
+- if: steps.cache.outputs.cache-hit != 'true'
+  run: gh release download v1.3.6 --repo code-cargo/cargowall --pattern "cargowall-linux-${ARCH}" --output "$RUNNER_TEMP/cargowall"
+  env:
+    GH_TOKEN: ${{ github.token }}
+    ARCH: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
+
+# Unconditional: a cache entry is writable by any workflow in the repository,
+# so the restored binary needs verifying just as much as a fresh download.
+- run: gh attestation verify "$RUNNER_TEMP/cargowall" --repo code-cargo/cargowall
+  env:
+    GH_TOKEN: ${{ github.token }}
+
+- uses: code-cargo/cargowall-action@v1
+  with:
+    binary-path: ${{ runner.temp }}/cargowall
+```
+
+`binary-path` skips the action's own pinned-digest verification — the binary is
+used as given — so verify it yourself as above.
 
 ## CodeCargo Platform
 

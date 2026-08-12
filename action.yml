@@ -78,7 +78,7 @@ inputs:
     description: 'Allow pre-existing TCP connections at startup (prevents blocking connections established before cargowall)'
     default: 'true'
   binary-path:
-    description: 'Path to a pre-built cargowall binary (skips download, useful for CI testing)'
+    description: 'Path to a pre-built cargowall binary. Skips the download and the action''s checksum/provenance verification — the binary is used as given, so verify it in the step that fetches it'
     required: false
   debug:
     description: 'Enable debug logging'
@@ -90,7 +90,7 @@ inputs:
     description: 'Skip the GitHub Actions API call used to enrich audit-summary step names and job status. Falls back to local _diag data. Set to true on installations near the per-repo rate limit (1,000 req/hr).'
     default: 'false'
   github-token:
-    description: 'GitHub token for fetching step timing in audit summary'
+    description: 'GitHub token for fetching step timing in audit summary, and for retrying the binary download authenticated when the anonymous request is throttled (403/503)'
     default: ${{ github.token }}
   api-url:
     description: 'CodeCargo API URL for audit upload and policy fetch (policy requires CodeCargo GitHub App installation). Requires permissions: id-token: write'

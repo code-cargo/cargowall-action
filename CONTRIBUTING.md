@@ -20,6 +20,23 @@ npm run build
 
 The `dist/` directory must be committed — GitHub Actions runs the compiled output directly.
 
+### Bumping the cargowall version
+
+`CARGOWALL_VERSION` in `src/setup.ts` is pinned alongside `CARGOWALL_DIGESTS`,
+the SHA-256 of each published binary. Both must move together — the pinned
+digest is the *only* verification setup performs at runtime, so it carries the
+provenance story too (the Sigstore attestation's subject is this digest).
+
+```sh
+curl -sSL https://github.com/code-cargo/cargowall/releases/download/vX.Y.Z/checksums.txt
+```
+
+`.github/workflows/check-digests.yml` downloads the published binaries,
+compares them to the pins, and runs `gh attestation verify` on each — on every
+push/PR and weekly. A forgotten update, a digest without provenance, or a
+tampered release asset is caught in this repo's CI rather than in a consumer's
+job.
+
 ### Project Structure
 
 - `src/main.ts` — Action entry point

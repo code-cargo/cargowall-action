@@ -1,0 +1,64 @@
+name: Check digests
+
+# CARGOWALL_DIGESTS in src/setup.ts is the runtime trust anchor: setup verifies
+# the downloaded binary against the pin and nothing else. That is sound because
+# the Sigstore attestation's subject IS the binary's SHA-256 — byte-equality
+# with the pin proves the same artifact the attestation signs — but it makes
+# this workflow the place provenance is actually verified. So it downloads the
+# real binaries, checks each against the pin, and runs `gh attestation verify`
+# on each; the weekly run re-attests the published assets between releases.
+# A stale or unattested pin fails here, not in a consumer's job.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1' # weekly re-attestation of the pinned release
+
+jobs:
+  check-digests:
+    name: Pinned digests match attested release binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify pinned digests and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version=$(grep -oP "CARGOWALL_VERSION = '\K[^']+" src/setup.ts)
+          echo "Pinned version: $version"
+
+          status=0
+          for arch in amd64 arm64; do
+            asset="cargowall-linux-$arch"
+            pinned=$(grep -oP "^  $arch: '\K[0-9a-f]{64}" src/setup.ts)
+
+            gh release download "$version" \
+              --repo code-cargo/cargowall \
+              --pattern "$asset" \
+              --output "$asset"
+
+            actual=$(sha256sum "$asset" | awk '{print $1}')
+            if [ "$pinned" != "$actual" ]; then
+              echo "::error::Digest drift for $arch — pinned $pinned, published binary is $actual"
+              status=1
+              continue
+            fi
+
+            if ! gh attestation verify "$asset" --repo code-cargo/cargowall; then
+              echo "::error::Provenance verification failed for $asset $version"
+              status=1
+              continue
+            fi
+
+            echo "$arch OK ($pinned, provenance verified)"
+          done
+
+          exit $status

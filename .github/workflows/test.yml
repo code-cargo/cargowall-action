@@ -42,17 +42,14 @@ jobs:
           fi
 
       - name: Test allowed connection (github.com)
-        run: |
-          curl -sf --max-time 10 https://github.com > /dev/null
-          echo "Successfully connected to github.com"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
 
       - name: Test allowed connection (api.github.com)
-        run: |
-          # -f omitted on purpose: unauthenticated api.github.com often 403s (per-IP
-          # rate limit shared across hosted runners). Any HTTP response proves the
-          # firewall allowed the connection, which is what this step tests.
-          curl -s --max-time 10 -o /dev/null https://api.github.com
-          echo "Successfully connected to api.github.com"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://api.github.com
 
       - name: Test blocked connection (example.com)
         run: |
@@ -89,17 +86,14 @@ jobs:
             api.github.com
 
       - name: Test allowed connection (github.com)
-        run: |
-          curl -sf --max-time 10 https://github.com > /dev/null
-          echo "Successfully connected to github.com"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
 
       - name: Test allowed connection (api.github.com)
-        run: |
-          # -f omitted on purpose: unauthenticated api.github.com often 403s (per-IP
-          # rate limit shared across hosted runners). Any HTTP response proves the
-          # firewall allowed the connection, which is what this step tests.
-          curl -s --max-time 10 -o /dev/null https://api.github.com
-          echo "Successfully connected to api.github.com"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://api.github.com
 
       - name: Test blocked connection (example.com)
         run: |
@@ -176,11 +170,10 @@ jobs:
           allowed-hosts: |
             app.codecargo.com
 
-      - name: Test connection to allowed CIDR
-        run: |
-          # github.com IPs are in the allowed CIDR
-          curl -sf --max-time 10 https://github.com > /dev/null
-          echo "Successfully connected via allowed CIDR"
+      - name: Test connection to allowed CIDR (github.com IPs)
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
 
   test-graceful-degradation:
     name: Graceful Degradation
@@ -260,14 +253,14 @@ jobs:
             *.ubuntu.com
 
       - name: Test allowed connection (archive.ubuntu.com matches *.ubuntu.com)
-        run: |
-          curl -sf --max-time 10 https://archive.ubuntu.com > /dev/null
-          echo "Successfully connected to archive.ubuntu.com via *.ubuntu.com wildcard"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://archive.ubuntu.com
 
       - name: Test allowed connection (security.ubuntu.com matches *.ubuntu.com)
-        run: |
-          curl -sf --max-time 10 https://security.ubuntu.com > /dev/null
-          echo "Successfully connected to security.ubuntu.com via *.ubuntu.com wildcard"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://security.ubuntu.com
 
       - name: Test bare domain not matched (ubuntu.com should not match *.ubuntu.com)
         run: |
@@ -571,9 +564,9 @@ jobs:
           ps -o comm= -p "$PID" | tr -d '[:space:]' | grep -qx cargowall
 
       - name: Test allowed connection (github.com)
-        run: |
-          curl -sf --max-time 10 https://github.com > /dev/null
-          echo "Successfully connected to github.com"
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
 
       - name: Test blocked connection (example.com)
         run: |
@@ -680,14 +673,18 @@ jobs:
           # way — see the audit-summary:false assertion below.
           test -f /tmp/cargowall-audit.json
 
-      - name: Verify audit posture reaches BOTH datapaths
+      - name: Verify audit posture reaches the DNS datapath
         run: |
-          # example.com is not in allowed-hosts. In audit mode the eBPF layer
-          # must not block it AND the DNS proxy must not refuse it — the split
-          # that made audit-summary:false look like enforcement.
+          # example.com is not in allowed-hosts. In audit mode the DNS proxy
+          # must not refuse it — half of the split that made
+          # audit-summary:false look like enforcement.
           getent hosts example.com
-          curl -sf --max-time 10 https://example.com > /dev/null
-          echo "example.com reachable, as audit mode requires"
+
+      - name: Verify audit posture reaches the eBPF datapath
+        # The other half: the eBPF layer must not block the connection either.
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://example.com
 
   test-api-failure-not-onboarded:
     name: API 404 does not change posture
@@ -717,7 +714,7 @@ jobs:
             github.com
             api.github.com
 
-      - name: Assert enforcement is intact
+      - name: Assert no downgrade was recorded
         run: |
           test '${{ steps.cargowall.outputs.supported }}' = 'true'
 
@@ -727,9 +724,13 @@ jobs:
             exit 1
           fi
 
-          curl -sf --max-time 10 https://github.com > /dev/null
-          echo "github.com still allowed"
+      - name: Assert github.com is still allowed
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
 
+      - name: Assert example.com is still blocked
+        run: |
           if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
             echo "ERROR: example.com should still be blocked — posture was downgraded on an authoritative 404"
             exit 1
@@ -815,7 +816,9 @@ jobs:
             api.github.com
 
       - name: Generate some traffic
-        run: curl -sf --max-time 10 https://github.com > /dev/null
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
 
       - name: Assert events are still collected
         run: |
