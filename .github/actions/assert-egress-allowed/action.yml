@@ -1,0 +1,36 @@
+name: Assert egress allowed
+description: >-
+  Assert that the firewall allows egress to a URL. Any HTTP response counts,
+  including 4xx/5xx — github.com's edge intermittently sheds load to
+  hosted-runner IPs (#79), and these probes test cargowall's verdict, not the
+  remote's HTTP health. A genuine block yields no response at all (refused DNS
+  or a connect timeout) and still fails. The retry loop lives in the shell, not
+  in curl: the edge has also served bodies mangled enough for a write error
+  (exit 23), which curl aborts on without retrying even under
+  --retry-all-errors.
+inputs:
+  url:
+    description: URL to probe
+    required: true
+  attempts:
+    description: Maximum probe attempts
+    required: false
+    default: '5'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        URL: ${{ inputs.url }}
+        ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        for i in $(seq 1 "$ATTEMPTS"); do
+          if curl -s --connect-timeout 5 --max-time 30 -o /dev/null "$URL"; then
+            echo "HTTP response received from $URL (attempt $i) — egress allowed"
+            exit 0
+          fi
+          echo "attempt $i: no HTTP response from $URL, retrying in 3 s"
+          sleep 3
+        done
+        echo "ERROR: no HTTP response from $URL after $ATTEMPTS attempts — egress appears blocked"
+        exit 1
