@@ -49,7 +49,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +63,9 @@ jobs:
       - run: npm test
 ```
 
-> **Note:** The action connects to the [CodeCargo platform](https://www.codecargo.com) by default. For full integration, your job needs these permissions: `id-token: write` (OIDC authentication), `actions: read` (correlate network events to steps), and `contents: read`. If `id-token: write` is not granted, the action will warn and continue without API integration. Set `offline: true` to skip API communication entirely.
+> **Note:** The action connects to the [CodeCargo platform](https://www.codecargo.com) by default. For full integration, your job needs these permissions: `id-token: write` (OIDC authentication) and `contents: read`. If `id-token: write` is not granted, the action will warn and continue without API integration. Set `offline: true` to skip API communication entirely.
+>
+> The action makes **no GitHub API calls** — `actions: read` is not used. Per-step attribution is causal (eBPF process/socket tagging in the cargowall binary) and step names come from the runner's local Worker log, which shares the runner's clock with the kernel events.
 
 ### How Hostnames Match
 
@@ -248,13 +249,14 @@ For complex configurations, use a JSON or YAML config file:
 | `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                                                                                                                                                                                                                         | auto-detect                                    |
 | `allow-existing-connections` | Allow pre-existing TCP connections at startup                                                                                                                                                                                                                                          | `true`                                         |
 | `binary-path`                | Path to a pre-built cargowall binary. Skips the download, and with it the pinned-digest verification — see [Setup fails downloading the binary](#setup-fails-downloading-the-binary)                                                                                                    |                                                |
+| `source-ref`                 | Build cargowall from source at this branch/tag of `code-cargo/cargowall` instead of downloading a release (testing only; no checksum/provenance verification). `binary-path` takes precedence                                                                                           |                                                |
 | `debug`                      | Enable debug logging                                                                                                                                                                                                                                                                   | `false`                                        |
 | `audit-summary`              | Render the audit summary into the workflow run summary. **Rendering only** — event collection and the CodeCargo API push happen either way; use `offline: true` to stop API communication                                                                                               | `true`                                         |
-| `skip-actions-api`           | Skip the GitHub Actions API call that enriches audit-summary step names/status (falls back to local `_diag` data); set `true` when near the per-repo rate limit                                                                                                                        | `false`                                        |
-| `github-token`               | GitHub token for fetching step timing in the audit summary, and for retrying the binary download authenticated when the anonymous request is throttled                                                                                                                                 | `${{ github.token }}`                          |
+| `github-token`               | GitHub token used only to retry the binary download authenticated when the anonymous request is throttled — the action makes no other GitHub API calls                                                                                                                                 | `${{ github.token }}`                          |
 | `api-url`                    | CodeCargo API URL for audit upload and policy fetch (policy requires GitHub App)                                                                                                                                                                                                       | `https://app.codecargo.com`                    |
 | `api-failure-mode`           | Posture when the policy can't be retrieved from the CodeCargo API: `audit`, `enforce`, or `fail`. Only genuine retrieval failures act on it — but an *unreachable* API counts, so the `audit` default affects non-platform repos too. See [When the CodeCargo Policy Can't Be Fetched](#when-the-codecargo-policy-cant-be-fetched)                                               | `audit` (`enforce` if `mode` is set)           |
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                                                                                                                                                                                                                   | `false`                                        |
+| `skip-policy-fetch`          | Skip only the policy fetch, so the job runs exactly this step's configuration (a fetched policy would replace it) while the audit push still reports the job to the dashboard. Needs `id-token: write` and firewall rules that allow the `api-url` host; `offline: true` wins            | `false`                                        |
 | `job-id`                     | Check run ID of the current job (from workflow context by default; override if needed)                                                                                                                                                                                                 | `${{ job.check_run_id }}`                      |
 
 ## Outputs

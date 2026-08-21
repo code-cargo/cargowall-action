@@ -30,12 +30,6 @@ vi.mock('@actions/github', () => ({ context: { job: 'build' } }))
 vi.mock('./dns', () => ({
   detectDnsUpstream: vi.fn(async () => ({ primary: '10.0.0.1:53' })),
 }))
-// No _diag dir → no watcher spawn, so the only spawn() call is cargowall itself.
-vi.mock('./diag', () => ({
-  findDiagDir: vi.fn(async () => null),
-  parseJobPlan: vi.fn(async () => ({})),
-  parseExecutedSteps: vi.fn(async () => []),
-}))
 vi.mock('child_process', () => ({
   spawn: vi.fn(() => ({ pid: 4242, unref: vi.fn() })),
 }))
@@ -251,6 +245,32 @@ describe('start() argument construction', () => {
       // lies dormant behind offline:true would surface as a silent posture
       // choice the day the API path is enabled.
       withInputs({ offline: 'true', 'api-failure-mode': 'abort' })
+      await expect(start()).rejects.toThrow(/Invalid "api-failure-mode" value "abort"/)
+    })
+  })
+
+  describe('skip-policy-fetch', () => {
+    it('omits the policy-fetch flags while leaving the rest of startup intact', async () => {
+      withInputs({ 'api-url': 'https://app.codecargo.com', 'skip-policy-fetch': 'true' })
+
+      const args = await cargowallArgs()
+
+      expect(flag(args, '--api-url')).toBeUndefined()
+      expect(flag(args, '--job-key')).toBeUndefined()
+      expect(flag(args, '--token')).toBeUndefined()
+      expect(flag(args, '--api-failure-mode')).toBeUndefined()
+      // Not offline: the audit log still feeds the post-step push, which is
+      // the whole point of this input existing next to `offline`.
+      expect(flag(args, '--audit-log')).toBe('/tmp/cargowall-audit.json')
+    })
+
+    it('passes the policy-fetch flags when left at its default', async () => {
+      withInputs({ 'api-url': 'https://app.codecargo.com' })
+      expect(flag(await cargowallArgs(), '--api-url')).toBe('https://app.codecargo.com')
+    })
+
+    it('still validates api-failure-mode even though it can never apply', async () => {
+      withInputs({ 'skip-policy-fetch': 'true', 'api-failure-mode': 'abort' })
       await expect(start()).rejects.toThrow(/Invalid "api-failure-mode" value "abort"/)
     })
   })

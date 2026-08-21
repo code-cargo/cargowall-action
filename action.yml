@@ -80,17 +80,17 @@ inputs:
   binary-path:
     description: 'Path to a pre-built cargowall binary. Skips the download and the action''s checksum/provenance verification — the binary is used as given, so verify it in the step that fetches it'
     required: false
+  source-ref:
+    description: 'Build cargowall from source at this branch/tag of code-cargo/cargowall instead of downloading a release (testing only; no checksum/provenance verification). binary-path takes precedence.'
+    required: false
   debug:
     description: 'Enable debug logging'
     default: 'false'
   audit-summary:
     description: 'Render the audit summary into the workflow run summary. Rendering only — event collection and the CodeCargo API push happen regardless (use `offline: true` to stop API communication)'
     default: 'true'
-  skip-actions-api:
-    description: 'Skip the GitHub Actions API call used to enrich audit-summary step names and job status. Falls back to local _diag data. Set to true on installations near the per-repo rate limit (1,000 req/hr).'
-    default: 'false'
   github-token:
-    description: 'GitHub token for fetching step timing in audit summary, and for retrying the binary download authenticated when the anonymous request is throttled (403/503)'
+    description: 'GitHub token used to retry the binary download authenticated when the anonymous request is throttled (403/503). The action makes no other GitHub API calls — step attribution needs no permissions.'
     default: ${{ github.token }}
   api-url:
     description: 'CodeCargo API URL for audit upload and policy fetch (policy requires CodeCargo GitHub App installation). Requires permissions: id-token: write'
@@ -98,6 +98,16 @@ inputs:
     default: 'https://app.codecargo.com'
   offline:
     description: 'Skip all CodeCargo API communication (audit upload and policy fetch)'
+    default: 'false'
+  skip-policy-fetch:
+    description: >-
+      Skip only the CodeCargo policy fetch, so the job runs exactly this step's
+      configuration (a fetched policy would replace it). Unlike `offline`, the
+      audit push in the post step still runs, keeping the job visible on the
+      dashboard — the push needs `permissions: id-token: write` and the
+      firewall rules must allow the `api-url` host. `api-failure-mode` never
+      applies (no fetch happens) but is still validated. `offline: true` wins
+      over this input.
     default: 'false'
   job-id:
     description: 'The check run ID of the current job (populated from the workflow context by default; override if needed)'

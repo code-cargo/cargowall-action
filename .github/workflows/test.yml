@@ -9,13 +9,14 @@ on:
 
 
 jobs:
-  test-basic-actions-read:
-    name: Basic Functionality (Actions Read)
+  test-basic:
+    name: Basic Functionality
     runs-on: ubuntu-latest
+    # Deliberately minimal permissions: core function (offline) needs neither
+    # actions:read nor id-token — the action makes no GitHub API calls and
+    # step attribution comes from the runner's local Worker log.
     permissions:
       contents: read
-      id-token: write
-      actions: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -67,50 +68,6 @@ jobs:
           fi
           echo "Correctly blocked httpbin.org"
 
-  test-basic-no-actions-read:
-    name: Basic Functionality (No Actions Read)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Setup CargoWall
-        uses: ./
-        with:
-          offline: 'true'
-          skip-actions-api: 'true'
-          allowed-hosts: |
-            github.com
-            githubusercontent.com
-            api.github.com
-
-      - name: Test allowed connection (github.com)
-        uses: ./.github/actions/assert-egress-allowed
-        with:
-          url: https://github.com
-
-      - name: Test allowed connection (api.github.com)
-        uses: ./.github/actions/assert-egress-allowed
-        with:
-          url: https://api.github.com
-
-      - name: Test blocked connection (example.com)
-        run: |
-          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
-            echo "ERROR: example.com should be blocked"
-            exit 1
-          fi
-          echo "Correctly blocked example.com"
-
-      - name: Test blocked connection (httpbin.org)
-        run: |
-          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
-            echo "ERROR: httpbin.org should be blocked"
-            exit 1
-          fi
-          echo "Correctly blocked httpbin.org"
-
   test-dns-filtering:
     name: DNS Tunneling Prevention
     runs-on: ubuntu-latest
@@ -124,6 +81,11 @@ jobs:
       - name: Setup CargoWall with strict hosts
         uses: ./
         with:
+          # Fully offline, not skip-policy-fetch: this job's denial (the
+          # refused attacker domain) IS the assertion, and the CodeCargo check
+          # fails any reported job with denied hosts — so it must not report.
+          # A fetched SaaS policy would also REPLACE the rules under test.
+          offline: 'true'
           allowed-hosts: |
             app.codecargo.com
             github.com
@@ -165,6 +127,10 @@ jobs:
       - name: Setup CargoWall with CIDR rules
         uses: ./
         with:
+          # Hermetic policy: the CIDR rule below is the thing under test, and a
+          # fetched SaaS policy would replace it before it ever loads. Fetch
+          # only — the audit push still runs so the job stays on the dashboard.
+          skip-policy-fetch: 'true'
           allowed-cidrs: |
             "140.82.112.0/20"  # GitHub's IP range
           allowed-hosts: |
@@ -211,6 +177,11 @@ jobs:
       - name: Setup CargoWall
         uses: ./
         with:
+          # Fully offline, not skip-policy-fetch: blocking example.com inside
+          # the container IS the assertion, and the CodeCargo check fails any
+          # reported job with denied hosts — so it must not report. A fetched
+          # SaaS policy would also replace the rules under test.
+          offline: 'true'
           allowed-hosts: |
             github.com
             app.codecargo.com
@@ -489,6 +460,13 @@ jobs:
         id: cargowall
         uses: ./
         with:
+          # Fully offline, not skip-policy-fetch: the narrow allow-list means
+          # apt's system noise (esm/motd/packages.microsoft) is denied by
+          # design, and the CodeCargo check fails any reported job with denied
+          # hosts — so it must not report. A fetched SaaS policy would also
+          # make the lockdown config under test ambiguous (policy can carry its
+          # own sudo-lockdown settings).
+          offline: 'true'
           allowed-hosts: |
             app.codecargo.com
             github.com
