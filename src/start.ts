@@ -185,7 +185,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
   if (skipPolicyFetch && apiUrl && !offline) {
-    core.info("  Policy fetch: skipped — running this step's configuration; audit push still enabled")
+    core.info("  Policy fetch: skipped — running this step's configuration; post-step audit push still attempted (needs id-token: write)")
   }
 
   // Backup current resolv.conf

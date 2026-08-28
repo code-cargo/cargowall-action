@@ -232,7 +232,7 @@ async function installFromLocalPath(binaryPath: string): Promise<void> {
  * works without clang; hosted runners have Go preinstalled and GOTOOLCHAIN
  * auto-fetches the version go.mod demands if the preinstalled one is older.
  */
-async function buildFromSource(ref: string): Promise<void> {
+export async function buildFromSource(ref: string): Promise<void> {
   core.info(`Building cargowall from source: ${CARGOWALL_REPO}@${ref}`)
 
   const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cargowall-src-'))
@@ -252,11 +252,18 @@ async function buildFromSource(ref: string): Promise<void> {
     core.info(`Building ${CARGOWALL_REPO}@${ref} (${sha})`)
 
     const binaryDest = path.join(srcDir, BINARY_NAME)
+    // The go tool re-splits the -ldflags value on whitespace, so a stamp
+    // containing a space or a quote would spill into adjacent linker flags
+    // rather than fail cleanly. Refnames already forbid those characters, so
+    // this only ever fires on input git would have rejected first — but the
+    // stamp is user-supplied text reaching a flag parser, so it is scrubbed
+    // to the characters a refname may legally contain.
+    const versionStamp = `${ref}-${sha}`.replace(/[^A-Za-z0-9._/+-]/g, '_')
     // Mirror the Makefile's build target (GOOS/CGO/ldflags) so the binary
     // matches a release build, with the ref+sha as the version stamp.
     await exec.exec('go', [
       'build',
-      '-ldflags', `-w -s -X main.version=${ref}-${sha}`,
+      '-ldflags', `-w -s -X main.version=${versionStamp}`,
       '-o', binaryDest,
       './cargowall.go',
     ], {
@@ -265,7 +272,7 @@ async function buildFromSource(ref: string): Promise<void> {
     })
 
     await exec.exec('sudo', ['mv', binaryDest, path.join(INSTALL_DIR, BINARY_NAME)])
-    core.info(`Installed cargowall (${ref}-${sha}) to ${INSTALL_DIR}/${BINARY_NAME}`)
+    core.info(`Installed cargowall (${versionStamp}) to ${INSTALL_DIR}/${BINARY_NAME}`)
   } finally {
     await fs.rm(srcDir, { recursive: true, force: true }).catch(() => {})
   }

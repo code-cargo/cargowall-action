@@ -21714,10 +21714,11 @@ async function buildFromSource(ref) {
     sha = sha.trim();
     info(`Building ${CARGOWALL_REPO}@${ref} (${sha})`);
     const binaryDest = path4.join(srcDir, BINARY_NAME);
+    const versionStamp = `${ref}-${sha}`.replace(/[^A-Za-z0-9._/+-]/g, "_");
     await exec("go", [
       "build",
       "-ldflags",
-      `-w -s -X main.version=${ref}-${sha}`,
+      `-w -s -X main.version=${versionStamp}`,
       "-o",
       binaryDest,
       "./cargowall.go"
@@ -21726,7 +21727,7 @@ async function buildFromSource(ref) {
       env: { ...process.env, GOOS: "linux", CGO_ENABLED: "0" }
     });
     await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
-    info(`Installed cargowall (${ref}-${sha}) to ${INSTALL_DIR}/${BINARY_NAME}`);
+    info(`Installed cargowall (${versionStamp}) to ${INSTALL_DIR}/${BINARY_NAME}`);
   } finally {
     await import_fs2.promises.rm(srcDir, { recursive: true, force: true }).catch(() => {
     });
@@ -25881,7 +25882,7 @@ async function start() {
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
   if (skipPolicyFetch && apiUrl && !offline) {
-    info("  Policy fetch: skipped \u2014 running this step's configuration; audit push still enabled");
+    info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
   }
   try {
     await import_fs5.promises.access("/etc/resolv.conf");
