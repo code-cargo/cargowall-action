@@ -4,9 +4,7 @@ import * as github from '@actions/github'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
-import * as path from 'path'
 import { detectDnsUpstream } from './dns'
-import { findDiagDir, parseExecutedSteps, parseJobPlan } from './diag'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -20,8 +18,6 @@ const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 const RESOLV_CONF_BACKUP = '/etc/resolv.conf.cargowall.bak'
 const STARTUP_TIMEOUT = 30
-const STEP_PLAN_FILE = '/tmp/cargowall-step-plan.json'
-const STEP_TIMESTAMPS_FILE = '/tmp/cargowall-step-timestamps.jsonl'
 
 const VALID_MODES = ['enforce', 'audit'] as const
 
@@ -79,59 +75,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   core.startGroup('Starting CargoWall Firewall')
 
-  // Start the block file watcher as early as possible.
-  // Block files get cleaned up during the run, so the watcher must capture
-  // timestamps in real-time. Starting it before binary download gives it
-  // the full setup duration (~8-10s) to capture earlier steps' block files.
-  try {
-    const diagDir = await findDiagDir()
-    if (diagDir) {
-      core.saveState('diag-dir', diagDir)
-
-      // Try to parse and persist the step plan if available
-      try {
-        const stepPlan = await parseJobPlan(diagDir)
-        if (Object.keys(stepPlan).length > 0) {
-          await fs.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan))
-          core.info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`)
-        } else {
-          core.info('Step plan is empty or unavailable; proceeding without mapped steps.')
-        }
-      } catch (planErr) {
-        core.info(`Unable to parse step plan: ${planErr}`)
-      }
-
-      // Save the current step name so the post step knows where CW started.
-      // This must run regardless of whether the plan parsed successfully,
-      // because buildStepsFromDiag needs it even without a plan.
-      try {
-        const executedSoFar = await parseExecutedSteps(diagDir)
-        if (executedSoFar.length > 0) {
-          core.saveState('cw-step-name', executedSoFar[executedSoFar.length - 1])
-        }
-      } catch {
-        // Worker log may not be available yet — not critical
-      }
-
-      // Spawn watcher as detached node process.
-      // Must run whenever diagDir exists so timestamps are available
-      // even if the step plan is empty or could not be parsed.
-      const blocksDir = path.join(diagDir, 'blocks')
-      const watcherScript = path.join(__dirname, '..', 'watcher', 'index.js')
-      const watcher = spawn('node', [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
-        detached: true,
-        stdio: 'ignore',
-      })
-      watcher.unref()
-      if (watcher.pid) {
-        core.saveState('watcher-pid', String(watcher.pid))
-        core.info(`Blocks watcher started (PID: ${watcher.pid})`)
-      }
-    }
-  } catch (err) {
-    core.info(`Sub-second timestamp setup: ${err}`)
-  }
-
   // Auto-detect DNS upstream before we overwrite resolv.conf
   const dnsResult = await detectDnsUpstream(core.getInput('dns-upstream'))
   const dnsUpstream = dnsResult.primary
@@ -182,6 +125,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // from the CodeCargo SaaS API.
   const offline = core.getInput('offline') === 'true'
   const apiUrl = core.getInput('api-url')
+  // Suppresses only the policy fetch: a fetched policy REPLACES this step's
+  // rules and mode, and some jobs exist precisely to test the step's own
+  // configuration. Unlike `offline`, the post-step audit push still runs, so
+  // the job stays visible on the CodeCargo dashboard.
+  const skipPolicyFetch = core.getInput('skip-policy-fetch') === 'true'
   // Resolved unconditionally so an invalid value fails the step even when the
   // API path is disabled (offline / empty api-url) — a typo must surface at
   // configuration time, not lie dormant until the day the API path is enabled.
@@ -192,7 +140,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // Non-null only while the API flags survive, so the configuration log never
   // advertises a posture that was dropped along with them below.
   let apiFailureLabel: string | null = null
-  if (apiUrl && !offline) {
+  if (apiUrl && !offline && !skipPolicyFetch) {
     args.push(`--api-url=${apiUrl}`)
     args.push(`--job-key=${github.context.job}`)
     args.push(`--api-failure-mode=${apiFailure.value}`)
@@ -236,6 +184,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   core.info(`  Sudo lockdown: ${sudoLockdown}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
+  if (skipPolicyFetch && apiUrl && !offline) {
+    core.info("  Policy fetch: skipped — running this step's configuration; post-step audit push still attempted (needs id-token: write)")
+  }
 
   // Backup current resolv.conf
   try {

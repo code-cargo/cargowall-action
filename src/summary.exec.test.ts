@@ -19,7 +19,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('@actions/core', () => ({
   getInput: vi.fn(),
-  getState: vi.fn(() => ''),
   getIDToken: vi.fn(async () => 'oidc-token'),
   startGroup: vi.fn(),
   endGroup: vi.fn(),
@@ -37,8 +36,7 @@ vi.mock('@actions/github', () => ({
 }))
 vi.mock('./diag', () => ({
   findDiagDir: vi.fn(async () => null),
-  parseExecutedSteps: vi.fn(async () => []),
-  scanBlocks: vi.fn(async () => []),
+  readWorkerSteps: vi.fn(async () => []),
 }))
 vi.mock('fs', () => ({
   promises: {
@@ -78,7 +76,6 @@ function execArgs(n: number): string[] {
 describe('generateSummary outcome split', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(core.getState).mockReturnValue('')
     vi.mocked(fsp.stat).mockResolvedValue({ size: 1024 } as Awaited<ReturnType<typeof fsp.stat>>)
     vi.mocked(fsp.readFile).mockRejectedValue(new Error('ENOENT'))
     withInputs({})

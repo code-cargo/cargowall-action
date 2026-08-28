@@ -1064,14 +1064,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path7 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path5 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path7 && path7[0] !== "/") {
-          path7 = `/${path7}`;
+        if (path5 && path5[0] !== "/") {
+          path5 = `/${path5}`;
         }
-        return new URL(`${origin}${path7}`);
+        return new URL(`${origin}${path5}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1522,39 +1522,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin }
+          request: { method, path: path5, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path7);
+        debuglog("sending request to %s %s/%s", method, origin, path5);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin },
+          request: { method, path: path5, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path7,
+          path5,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin }
+          request: { method, path: path5, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path7);
+        debuglog("trailers received from %s %s/%s", method, origin, path5);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin },
+          request: { method, path: path5, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path7,
+          path5,
           error2.message
         );
       });
@@ -1603,9 +1603,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path7, origin }
+            request: { method, path: path5, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path7);
+          debuglog("sending request to %s %s/%s", method, origin, path5);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1668,7 +1668,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path7,
+        path: path5,
         method,
         body,
         headers,
@@ -1683,11 +1683,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path7 !== "string") {
+        if (typeof path5 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path7[0] !== "/" && !(path7.startsWith("http://") || path7.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path5[0] !== "/" && !(path5.startsWith("http://") || path5.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path7)) {
+        } else if (invalidPathRegex.test(path5)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1753,7 +1753,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path7, query) : path7;
+        this.path = query ? buildURL(path5, query) : path5;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -6279,7 +6279,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path7, host, upgrade, blocking, reset } = request2;
+      const { method, path: path5, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6345,7 +6345,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path7} HTTP/1.1\r
+      let header = `${method} ${path5} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -6871,7 +6871,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path7, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path5, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -6938,7 +6938,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path7;
+      headers[HTTP2_HEADER_PATH] = path5;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7291,9 +7291,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path7 = search ? `${pathname}${search}` : pathname;
+        const path5 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path7;
+        this.opts.path = path5;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -8528,10 +8528,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path7 = "/",
+          path: path5 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path7;
+        opts.path = origin + path5;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -10452,20 +10452,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path7) {
-      if (typeof path7 !== "string") {
-        return path7;
+    function safeUrl(path5) {
+      if (typeof path5 !== "string") {
+        return path5;
       }
-      const pathSegments = path7.split("?");
+      const pathSegments = path5.split("?");
       if (pathSegments.length !== 2) {
-        return path7;
+        return path5;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path7, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path7);
+    function matchKey(mockDispatch2, { path: path5, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path5);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10487,7 +10487,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path7 }) => matchValue(safeUrl(path7), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path5 }) => matchValue(safeUrl(path5), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10525,9 +10525,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path7, method, body, headers, query } = opts;
+      const { path: path5, method, body, headers, query } = opts;
       return {
-        path: path7,
+        path: path5,
         method,
         body,
         headers,
@@ -10990,10 +10990,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path7, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path5, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path7,
+            Path: path5,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -15874,9 +15874,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path7) {
-      for (let i = 0; i < path7.length; ++i) {
-        const code = path7.charCodeAt(i);
+    function validateCookiePath(path5) {
+      for (let i = 0; i < path5.length; ++i) {
+        const code = path5.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -18553,11 +18553,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path7 = opts.path;
+          let path5 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path7 = `/${path7}`;
+            path5 = `/${path5}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path7);
+          url = new URL(util.parseOrigin(url).origin + path5);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -21561,10 +21561,11 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.3.6";
+var CARGOWALL_VERSION = "v2.0.0-rc.3";
+var CARGOWALL_REPO = "code-cargo/cargowall";
 var CARGOWALL_DIGESTS = {
-  amd64: "ac511897cb7952bc61c0a8b99d9bf73fd95148dd8062562aa3862d6c72e53865",
-  arm64: "08b56f7d25c3bd5f6c65f3bd4932bc587f049c6eb1c1a0bfc7343e8875c158f7"
+  amd64: "6ab052d1ec65e6799453c148f6da362c317abeebe0bc8a715d07a54cd89ed5e8",
+  arm64: "fcfb59df1f5559d91c5eb9207e5db90677034aded7cf8a8dd01552c759c28263"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -21649,10 +21650,13 @@ async function sha256File(file) {
 async function setup() {
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const binaryPath = getInput("binary-path");
+  const sourceRef = getInput("source-ref");
   startGroup("CargoWall Setup");
   try {
     if (binaryPath) {
       await installFromLocalPath(binaryPath);
+    } else if (sourceRef) {
+      await buildFromSource(sourceRef);
     } else {
       await downloadAndInstall();
     }
@@ -21684,6 +21688,50 @@ async function installFromLocalPath(binaryPath) {
     throw new Error(`Binary not found at ${binaryPath}`);
   }
   await installBinary(binaryPath);
+  await verifyInstallation();
+}
+async function buildFromSource(ref) {
+  info(`Building cargowall from source: ${CARGOWALL_REPO}@${ref}`);
+  const srcDir = await import_fs2.promises.mkdtemp(path4.join(os6.tmpdir(), "cargowall-src-"));
+  try {
+    await exec("git", [
+      "clone",
+      "--depth",
+      "1",
+      "--branch",
+      ref,
+      `https://github.com/${CARGOWALL_REPO}.git`,
+      srcDir
+    ]);
+    let sha = "";
+    await exec("git", ["-C", srcDir, "rev-parse", "--short", "HEAD"], {
+      listeners: {
+        stdout: (data) => {
+          sha += data.toString();
+        }
+      }
+    });
+    sha = sha.trim();
+    info(`Building ${CARGOWALL_REPO}@${ref} (${sha})`);
+    const binaryDest = path4.join(srcDir, BINARY_NAME);
+    const versionStamp = `${ref}-${sha}`.replace(/[^A-Za-z0-9._/+-]/g, "_");
+    await exec("go", [
+      "build",
+      "-ldflags",
+      `-w -s -X main.version=${versionStamp}`,
+      "-o",
+      binaryDest,
+      "./cargowall.go"
+    ], {
+      cwd: srcDir,
+      env: { ...process.env, GOOS: "linux", CGO_ENABLED: "0" }
+    });
+    await exec("sudo", ["mv", binaryDest, path4.join(INSTALL_DIR, BINARY_NAME)]);
+    info(`Installed cargowall (${versionStamp}) to ${INSTALL_DIR}/${BINARY_NAME}`);
+  } finally {
+    await import_fs2.promises.rm(srcDir, { recursive: true, force: true }).catch(() => {
+    });
+  }
   await verifyInstallation();
 }
 async function downloadAndInstall() {
@@ -21838,8 +21886,8 @@ var Context = class {
       if ((0, import_fs3.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs3.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path7 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path7} does not exist${import_os3.EOL}`);
+        const path5 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path5} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -25534,9 +25582,8 @@ var context2 = new Context();
 
 // src/start.ts
 var import_child_process = require("child_process");
+var import_fs5 = require("fs");
 var import_fs6 = require("fs");
-var import_fs7 = require("fs");
-var path6 = __toESM(require("path"));
 
 // src/dns.ts
 var import_fs4 = require("fs");
@@ -25712,118 +25759,6 @@ async function detectDnsUpstream(userInput) {
   return { primary: fallback, all: [fallback], source: "fallback" };
 }
 
-// src/diag.ts
-var import_fs5 = require("fs");
-var path5 = __toESM(require("path"));
-async function findDiagDir() {
-  const versionedCandidates = await findVersionedDiagDirs();
-  const candidates = [
-    ...versionedCandidates,
-    "/home/runner/actions-runner/cached/_diag",
-    "/home/runner/actions-runner/_diag"
-  ];
-  for (const candidate of candidates) {
-    try {
-      await import_fs5.promises.access(candidate);
-      return candidate;
-    } catch {
-    }
-  }
-  try {
-    const entries = await import_fs5.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
-    for (const e of entries.filter((e2) => e2.isDirectory())) {
-      const candidate = path5.join("/home/runner/actions-runner", e.name, "_diag");
-      try {
-        await import_fs5.promises.access(candidate);
-        return candidate;
-      } catch {
-      }
-    }
-  } catch {
-  }
-  return null;
-}
-async function findVersionedDiagDirs() {
-  const results = [];
-  try {
-    const entries = await import_fs5.promises.readdir("/home/runner/actions-runner/cached", { withFileTypes: true });
-    for (const e of entries.filter((e2) => e2.isDirectory() && /^\d/.test(e2.name))) {
-      results.push(path5.join("/home/runner/actions-runner/cached", e.name, "_diag"));
-    }
-  } catch {
-  }
-  return results;
-}
-async function parseJobPlan(diagDir) {
-  const stepIdToName = {};
-  const files = await import_fs5.promises.readdir(diagDir);
-  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
-  if (workerLogFiles.length === 0) return stepIdToName;
-  const workerContent = await import_fs5.promises.readFile(
-    path5.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
-    "utf8"
-  );
-  const workerLines = workerContent.split("\n");
-  const planStart = workerLines.findIndex((l) => /"steps"\s*:\s*\[/.test(l));
-  if (planStart < 0) return stepIdToName;
-  let bracketDepth = 0;
-  let planJson = "";
-  let started = false;
-  for (let i = planStart; i < workerLines.length && i < planStart + 500; i++) {
-    const line = workerLines[i];
-    if (!started && line.includes('"steps"')) {
-      planJson = "{";
-      started = true;
-    }
-    if (started) {
-      planJson += line + "\n";
-      bracketDepth += (line.match(/\[/g) || []).length - (line.match(/\]/g) || []).length;
-      if (bracketDepth <= 0 && started) {
-        planJson += "}";
-        break;
-      }
-    }
-  }
-  const stepsIdx = planJson.indexOf('"steps"');
-  if (stepsIdx > 1) {
-    planJson = "{ " + planJson.substring(stepsIdx);
-  }
-  try {
-    const parsed = JSON.parse(planJson);
-    if (Array.isArray(parsed.steps)) {
-      for (const step of parsed.steps) {
-        if (step.id && (step.displayName || step.name)) {
-          stepIdToName[step.id] = step.displayName || step.name;
-        }
-      }
-      return stepIdToName;
-    }
-  } catch {
-  }
-  const stepRegex = /"id"\s*:\s*"([^"]+)"[\s\S]*?"(?:displayName|name)"\s*:\s*"([^"]+)"/g;
-  let match;
-  while ((match = stepRegex.exec(planJson)) !== null) {
-    stepIdToName[match[1]] = match[2];
-  }
-  return stepIdToName;
-}
-async function parseExecutedSteps(diagDir) {
-  const files = await import_fs5.promises.readdir(diagDir);
-  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
-  if (workerLogFiles.length === 0) return [];
-  const workerContent = await import_fs5.promises.readFile(
-    path5.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
-    "utf8"
-  );
-  const names = [];
-  const regex = /Processing step: DisplayName='([^']+)'/g;
-  let match;
-  while ((match = regex.exec(workerContent)) !== null) {
-    names.push(match[1]);
-  }
-  return names;
-}
-
 // src/start.ts
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
@@ -25833,8 +25768,6 @@ var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
-var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
-var STEP_TIMESTAMPS_FILE = "/tmp/cargowall-step-timestamps.jsonl";
 var VALID_MODES = ["enforce", "audit"];
 var STALE_SLACK_MS = 2e3;
 async function showLastLog() {
@@ -25872,43 +25805,6 @@ async function start() {
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const allowExistingConnections = getInput("allow-existing-connections") !== "false";
   startGroup("Starting CargoWall Firewall");
-  try {
-    const diagDir = await findDiagDir();
-    if (diagDir) {
-      saveState("diag-dir", diagDir);
-      try {
-        const stepPlan = await parseJobPlan(diagDir);
-        if (Object.keys(stepPlan).length > 0) {
-          await import_fs6.promises.writeFile(STEP_PLAN_FILE, JSON.stringify(stepPlan));
-          info(`Step plan: ${Object.keys(stepPlan).length} steps mapped`);
-        } else {
-          info("Step plan is empty or unavailable; proceeding without mapped steps.");
-        }
-      } catch (planErr) {
-        info(`Unable to parse step plan: ${planErr}`);
-      }
-      try {
-        const executedSoFar = await parseExecutedSteps(diagDir);
-        if (executedSoFar.length > 0) {
-          saveState("cw-step-name", executedSoFar[executedSoFar.length - 1]);
-        }
-      } catch {
-      }
-      const blocksDir = path6.join(diagDir, "blocks");
-      const watcherScript = path6.join(__dirname, "..", "watcher", "index.js");
-      const watcher = (0, import_child_process.spawn)("node", [watcherScript, blocksDir, STEP_TIMESTAMPS_FILE], {
-        detached: true,
-        stdio: "ignore"
-      });
-      watcher.unref();
-      if (watcher.pid) {
-        saveState("watcher-pid", String(watcher.pid));
-        info(`Blocks watcher started (PID: ${watcher.pid})`);
-      }
-    }
-  } catch (err) {
-    info(`Sub-second timestamp setup: ${err}`);
-  }
   const dnsResult = await detectDnsUpstream(getInput("dns-upstream"));
   const dnsUpstream = dnsResult.primary;
   const args = [
@@ -25944,12 +25840,13 @@ async function start() {
   }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
+  const skipPolicyFetch = getInput("skip-policy-fetch") === "true";
   const apiFailure = resolveApiFailureMode({
     input: getInput("api-failure-mode"),
     modeSupplied
   });
   let apiFailureLabel = null;
-  if (apiUrl && !offline) {
+  if (apiUrl && !offline && !skipPolicyFetch) {
     args.push(`--api-url=${apiUrl}`);
     args.push(`--job-key=${context2.job}`);
     args.push(`--api-failure-mode=${apiFailure.value}`);
@@ -25984,8 +25881,11 @@ async function start() {
   info(`  Sudo lockdown: ${sudoLockdown}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
+  if (skipPolicyFetch && apiUrl && !offline) {
+    info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
+  }
   try {
-    await import_fs6.promises.access("/etc/resolv.conf");
+    await import_fs5.promises.access("/etc/resolv.conf");
     await exec("sudo", ["cp", "/etc/resolv.conf", RESOLV_CONF_BACKUP]);
     info("Backed up /etc/resolv.conf");
   } catch {
@@ -26010,7 +25910,7 @@ async function start() {
     CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
     CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
   };
-  const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
+  const logFd = (0, import_fs6.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
   const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
@@ -26019,7 +25919,7 @@ async function start() {
     env
   });
   child2.unref();
-  (0, import_fs7.closeSync)(logFd);
+  (0, import_fs6.closeSync)(logFd);
   const spawnedPid = child2.pid;
   if (!spawnedPid) {
     throw new Error("Failed to start cargowall process");
@@ -26030,7 +25930,7 @@ async function start() {
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
+      if ((await import_fs5.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
         ready = true;
         break;
       }
@@ -26104,10 +26004,10 @@ async function sudoKillZero(pid) {
 }
 async function readPidFile(spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs5.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
-    const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
+    const out = await import_fs5.promises.readFile(PID_FILE, "utf8");
     const pid = parseInt(out.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -26136,7 +26036,7 @@ function sentinelReason(raw) {
 }
 async function readFailureFile(spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs5.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
@@ -26148,15 +26048,15 @@ async function readFailureFile(spawnedAtMs) {
 var MAX_STATE_FILE_BYTES = 8192;
 async function readStateFile(filePath) {
   try {
-    if (!(await import_fs6.promises.lstat(filePath)).isFile()) return null;
+    if (!(await import_fs5.promises.lstat(filePath)).isFile()) return null;
   } catch {
     return null;
   }
   let handle;
   try {
-    handle = await import_fs6.promises.open(
+    handle = await import_fs5.promises.open(
       filePath,
-      import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW | import_fs7.constants.O_NONBLOCK
+      import_fs6.constants.O_RDONLY | import_fs6.constants.O_NOFOLLOW | import_fs6.constants.O_NONBLOCK
     );
   } catch {
     return null;
@@ -26175,7 +26075,7 @@ async function readStateFile(filePath) {
 }
 async function readDowngradeFile(spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs5.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
@@ -26238,7 +26138,7 @@ function handlePolicyLockdown(reason) {
 }
 async function restoreDns() {
   try {
-    await import_fs6.promises.access(RESOLV_CONF_BACKUP);
+    await import_fs5.promises.access(RESOLV_CONF_BACKUP);
     await exec("sudo", ["cp", RESOLV_CONF_BACKUP, "/etc/resolv.conf"]);
   } catch {
   }

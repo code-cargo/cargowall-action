@@ -1064,14 +1064,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path6 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path5 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path6 && path6[0] !== "/") {
-          path6 = `/${path6}`;
+        if (path5 && path5[0] !== "/") {
+          path5 = `/${path5}`;
         }
-        return new URL(`${origin}${path6}`);
+        return new URL(`${origin}${path5}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1522,39 +1522,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin }
+          request: { method, path: path5, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path6);
+        debuglog("sending request to %s %s/%s", method, origin, path5);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin },
+          request: { method, path: path5, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path6,
+          path5,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin }
+          request: { method, path: path5, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path6);
+        debuglog("trailers received from %s %s/%s", method, origin, path5);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin },
+          request: { method, path: path5, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path6,
+          path5,
           error2.message
         );
       });
@@ -1603,9 +1603,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path6, origin }
+            request: { method, path: path5, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path6);
+          debuglog("sending request to %s %s/%s", method, origin, path5);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1668,7 +1668,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path6,
+        path: path5,
         method,
         body,
         headers,
@@ -1683,11 +1683,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path6 !== "string") {
+        if (typeof path5 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path6[0] !== "/" && !(path6.startsWith("http://") || path6.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path5[0] !== "/" && !(path5.startsWith("http://") || path5.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path6)) {
+        } else if (invalidPathRegex.test(path5)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1753,7 +1753,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path6, query) : path6;
+        this.path = query ? buildURL(path5, query) : path5;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -6279,7 +6279,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path6, host, upgrade, blocking, reset } = request2;
+      const { method, path: path5, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6345,7 +6345,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path6} HTTP/1.1\r
+      let header = `${method} ${path5} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -6871,7 +6871,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path6, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path5, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -6938,7 +6938,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path6;
+      headers[HTTP2_HEADER_PATH] = path5;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7291,9 +7291,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path6 = search ? `${pathname}${search}` : pathname;
+        const path5 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path6;
+        this.opts.path = path5;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -8528,10 +8528,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path6 = "/",
+          path: path5 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path6;
+        opts.path = origin + path5;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -10452,20 +10452,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path6) {
-      if (typeof path6 !== "string") {
-        return path6;
+    function safeUrl(path5) {
+      if (typeof path5 !== "string") {
+        return path5;
       }
-      const pathSegments = path6.split("?");
+      const pathSegments = path5.split("?");
       if (pathSegments.length !== 2) {
-        return path6;
+        return path5;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path6, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path6);
+    function matchKey(mockDispatch2, { path: path5, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path5);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10487,7 +10487,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path6 }) => matchValue(safeUrl(path6), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path5 }) => matchValue(safeUrl(path5), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10525,9 +10525,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path6, method, body, headers, query } = opts;
+      const { path: path5, method, body, headers, query } = opts;
       return {
-        path: path6,
+        path: path5,
         method,
         body,
         headers,
@@ -10990,10 +10990,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path6, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path5, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path6,
+            Path: path5,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -15874,9 +15874,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path6) {
-      for (let i = 0; i < path6.length; ++i) {
-        const code = path6.charCodeAt(i);
+    function validateCookiePath(path5) {
+      for (let i = 0; i < path5.length; ++i) {
+        const code = path5.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -18553,11 +18553,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path6 = opts.path;
+          let path5 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path6 = `/${path6}`;
+            path5 = `/${path5}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path6);
+          url = new URL(util.parseOrigin(url).origin + path5);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -21472,9 +21472,6 @@ function getInput(name, options) {
   }
   return val.trim();
 }
-function isDebug() {
-  return process.env["RUNNER_DEBUG"] === "1";
-}
 function debug(message) {
   issueCommand("debug", {}, message);
 }
@@ -21500,7 +21497,7 @@ function getIDToken(aud) {
 }
 
 // src/post.ts
-var import_fs7 = require("fs");
+var import_fs6 = require("fs");
 
 // src/cleanup.ts
 var import_fs2 = require("fs");
@@ -21530,8 +21527,8 @@ var Context = class {
       if ((0, import_fs3.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs3.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path6 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path6} does not exist${import_os3.EOL}`);
+        const path5 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path5} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -21597,14 +21594,6 @@ var __awaiter10 = function(thisArg, _arguments, P, generator) {
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
 };
-function getAuthString(token, options) {
-  if (!token && !options.auth) {
-    throw new Error("Parameter token or opts.auth is required");
-  } else if (token && options.auth) {
-    throw new Error("Parameters token and opts.auth may not both be specified");
-  }
-  return typeof options.auth === "string" ? options.auth : `token ${token}`;
-}
 function getProxyAgent(destinationUrl) {
   const hc = new httpClient.HttpClient();
   return hc.getAgent(destinationUrl);
@@ -21622,19 +21611,6 @@ function getProxyFetch(destinationUrl) {
 }
 function getApiBaseUrl() {
   return process.env["GITHUB_API_URL"] || "https://api.github.com";
-}
-function getUserAgentWithOrchestrationId(baseUserAgent) {
-  var _a;
-  const orchId = (_a = process.env["ACTIONS_ORCHESTRATION_ID"]) === null || _a === void 0 ? void 0 : _a.trim();
-  if (orchId) {
-    const sanitizedId = orchId.replace(/[^a-z0-9_.-]/gi, "_");
-    const tag = `actions_orchestration_id/${sanitizedId}`;
-    if (baseUserAgent === null || baseUserAgent === void 0 ? void 0 : baseUserAgent.includes(tag))
-      return baseUserAgent;
-    const ua = baseUserAgent ? `${baseUserAgent} ` : "";
-    return `${ua}${tag}`;
-  }
-  return baseUserAgent;
 }
 
 // node_modules/universal-user-agent/index.js
@@ -25241,77 +25217,19 @@ var defaults = {
   }
 };
 var GitHub = Octokit.plugin(restEndpointMethods, paginateRest).defaults(defaults);
-function getOctokitOptions(token, options) {
-  const opts = Object.assign({}, options || {});
-  const auth2 = getAuthString(token, opts);
-  if (auth2) {
-    opts.auth = auth2;
-  }
-  const userAgent2 = getUserAgentWithOrchestrationId(opts.userAgent);
-  if (userAgent2) {
-    opts.userAgent = userAgent2;
-  }
-  return opts;
-}
 
 // node_modules/@actions/github/lib/github.js
 var context2 = new Context();
-function getOctokit(token, options, ...additionalPlugins) {
-  const GitHubWithPlugins = GitHub.plugin(...additionalPlugins);
-  return new GitHubWithPlugins(getOctokitOptions(token, options));
-}
+
+// src/start.ts
+var STALE_SLACK_MS = 2e3;
+
+// src/summary.ts
+var import_fs5 = require("fs");
 
 // src/diag.ts
-var import_fs5 = require("fs");
-var path5 = __toESM(require("path"));
-
-// src/blocks.ts
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
-var TIMESTAMP_REGEX = /^\uFEFF?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/;
-function parseBlockFilename(file) {
-  const dotIdx = file.lastIndexOf(".");
-  const base = dotIdx >= 0 ? file.substring(0, dotIdx) : file;
-  const underIdx = base.indexOf("_");
-  if (underIdx < 0) return null;
-  const stepId = base.substring(underIdx + 1);
-  return stepId || null;
-}
-async function readBlockTimestamp(filePath) {
-  const fh = await import_fs4.promises.open(filePath, "r");
-  try {
-    const buf = Buffer.alloc(256);
-    const { bytesRead } = await fh.read(buf, 0, 256, 0);
-    if (bytesRead === 0) return null;
-    const firstLine = buf.toString("utf8", 0, bytesRead).split("\n")[0] || "";
-    if (!firstLine) return null;
-    const match = firstLine.match(TIMESTAMP_REGEX);
-    return match ? match[1] : null;
-  } finally {
-    await fh.close();
-  }
-}
-async function scanBlocksDir(blocksDir) {
-  const earliest = /* @__PURE__ */ new Map();
-  const files = await import_fs4.promises.readdir(blocksDir);
-  for (const file of files) {
-    const stepId = parseBlockFilename(file);
-    if (!stepId) continue;
-    try {
-      const ts = await readBlockTimestamp(path4.join(blocksDir, file));
-      if (ts) {
-        const current = earliest.get(stepId);
-        if (!current || ts < current) {
-          earliest.set(stepId, ts);
-        }
-      }
-    } catch {
-    }
-  }
-  return [...earliest.entries()].map(([id, ts]) => ({ id, ts }));
-}
-
-// src/diag.ts
 async function findDiagDir() {
   const versionedCandidates = await findVersionedDiagDirs();
   const candidates = [
@@ -25321,17 +25239,17 @@ async function findDiagDir() {
   ];
   for (const candidate of candidates) {
     try {
-      await import_fs5.promises.access(candidate);
+      await import_fs4.promises.access(candidate);
       return candidate;
     } catch {
     }
   }
   try {
-    const entries = await import_fs5.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
+    const entries = await import_fs4.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
     for (const e of entries.filter((e2) => e2.isDirectory())) {
-      const candidate = path5.join("/home/runner/actions-runner", e.name, "_diag");
+      const candidate = path4.join("/home/runner/actions-runner", e.name, "_diag");
       try {
-        await import_fs5.promises.access(candidate);
+        await import_fs4.promises.access(candidate);
         return candidate;
       } catch {
       }
@@ -25343,51 +25261,47 @@ async function findDiagDir() {
 async function findVersionedDiagDirs() {
   const results = [];
   try {
-    const entries = await import_fs5.promises.readdir("/home/runner/actions-runner/cached", { withFileTypes: true });
+    const entries = await import_fs4.promises.readdir("/home/runner/actions-runner/cached", { withFileTypes: true });
     for (const e of entries.filter((e2) => e2.isDirectory() && /^\d/.test(e2.name))) {
-      results.push(path5.join("/home/runner/actions-runner/cached", e.name, "_diag"));
+      results.push(path4.join("/home/runner/actions-runner/cached", e.name, "_diag"));
     }
   } catch {
   }
   return results;
 }
-async function scanBlocks(diagDir) {
-  return scanBlocksDir(path5.join(diagDir, "blocks"));
+var STEP_LINE_REGEX = /^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z [^\]]*\].*?Processing step: DisplayName='([^']+)'/;
+function parseWorkerSteps(content) {
+  const steps = [];
+  for (const line of content.split("\n")) {
+    const m = line.match(STEP_LINE_REGEX);
+    if (m) {
+      steps.push({ name: m[3], started_at: `${m[1]}T${m[2]}Z`, completed_at: null });
+      continue;
+    }
+    const nameOnly = line.match(/Processing step: DisplayName='([^']+)'/);
+    if (nameOnly) {
+      steps.push({ name: nameOnly[1], started_at: null, completed_at: null });
+    }
+  }
+  for (let i = 0; i + 1 < steps.length; i++) {
+    steps[i].completed_at = steps[i + 1].started_at;
+  }
+  return steps;
 }
-async function parseExecutedSteps(diagDir) {
-  const files = await import_fs5.promises.readdir(diagDir);
-  const workerLogFiles = files.filter((f) => f.startsWith("Worker_")).sort();
-  if (workerLogFiles.length === 0) return [];
-  const workerContent = await import_fs5.promises.readFile(
-    path5.join(diagDir, workerLogFiles[workerLogFiles.length - 1]),
+async function readWorkerSteps(diagDir) {
+  const files = await import_fs4.promises.readdir(diagDir);
+  const workerLogs = files.filter((f) => f.startsWith("Worker_")).sort();
+  if (workerLogs.length === 0) return [];
+  const content = await import_fs4.promises.readFile(
+    path4.join(diagDir, workerLogs[workerLogs.length - 1]),
     "utf8"
   );
-  const names = [];
-  const regex = /Processing step: DisplayName='([^']+)'/g;
-  let match;
-  while ((match = regex.exec(workerContent)) !== null) {
-    names.push(match[1]);
-  }
-  return names;
+  return parseWorkerSteps(content);
 }
-
-// src/start.ts
-var STALE_SLACK_MS = 2e3;
 
 // src/summary.ts
-var import_fs6 = require("fs");
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG2 = "/tmp/cargowall.log";
-var STEP_PLAN_FILE = "/tmp/cargowall-step-plan.json";
-var STEP_TIMESTAMPS_FILE = "/tmp/cargowall-step-timestamps.jsonl";
-var WATCHER_LOG_FILE = "/tmp/cargowall-watcher.log";
-function shouldCallActionsApi(args) {
-  if (!args.token) return false;
-  if (!args.runId) return false;
-  if (args.skipInput === "true") return false;
-  if (args.skipEnv === "true") return false;
-  return true;
-}
 function shouldRunSummary(args) {
   return args.haveEvents || args.canPush;
 }
@@ -25398,7 +25312,7 @@ async function generateSummary(opts = { render: true }) {
   const canPush = !!apiUrl && !offline;
   let haveEvents = false;
   try {
-    haveEvents = (await import_fs6.promises.stat(AUDIT_LOG)).size > 0;
+    haveEvents = (await import_fs5.promises.stat(AUDIT_LOG)).size > 0;
   } catch {
   }
   if (!shouldRunSummary({ haveEvents, canPush })) {
@@ -25408,97 +25322,35 @@ async function generateSummary(opts = { render: true }) {
   startGroup("Generating Audit Summary");
   try {
     let stepsJson = "[]";
-    let jobStatus = "success";
-    let currentJobName = "";
-    const token = getInput("github-token");
-    const runId = context2.runId;
-    let apiSteps = null;
-    let apiCallMade = false;
-    const callApi = shouldCallActionsApi({
-      token,
-      runId,
-      skipInput: getInput("skip-actions-api"),
-      skipEnv: process.env.CARGOWALL_SKIP_ACTIONS_API
-    });
-    if (callApi) {
-      try {
-        apiCallMade = true;
-        info("Fetching step timing from GitHub API...");
-        const octokit = getOctokit(token);
-        const { data } = await octokit.rest.actions.listJobsForWorkflowRun({
-          owner: context2.repo.owner,
-          repo: context2.repo.repo,
-          run_id: runId
-        });
-        if (data.jobs && data.jobs.length > 0) {
-          const currentJob = data.jobs.find(
-            (j) => j.runner_name === process.env.RUNNER_NAME
-          ) ?? data.jobs[0];
-          currentJobName = currentJob.name;
-          if (currentJob.conclusion) {
-            jobStatus = currentJob.conclusion === "cancelled" ? "canceled" : currentJob.conclusion;
-          } else if (currentJob.steps?.some((s) => s.conclusion === "cancelled")) {
-            jobStatus = "canceled";
-          } else if (currentJob.steps?.some((s) => s.conclusion === "failure")) {
-            jobStatus = "failure";
-          }
-          if (currentJob.steps && currentJob.steps.length > 0) {
-            apiSteps = currentJob.steps.map((s) => ({
-              name: s.name,
-              started_at: s.started_at,
-              completed_at: s.completed_at
-            }));
-            info(`GitHub API returned ${apiSteps.length} steps`);
-          }
-        }
-      } catch (error2) {
-        info(`GitHub API step fetch failed: ${error2}`);
-      }
-    }
-    if (!apiCallMade && getState("watcher-pid")) {
-      const deadline = Date.now() + 2e3;
-      while (Date.now() < deadline) {
-        const content = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
-        const lines = content.trim().split("\n").filter(Boolean).length;
-        if (lines > 0) break;
-        await new Promise((resolve2) => setTimeout(resolve2, 200));
-      }
-    }
-    const diagData = await collectDiagData();
-    if (apiSteps) {
-      stepsJson = JSON.stringify(enhanceApiStepsWithDiag(apiSteps, diagData));
-    } else {
-      const diagSteps = buildStepsFromDiag(diagData);
-      if (diagSteps.length > 0) {
-        stepsJson = JSON.stringify(diagSteps);
-        info(`Built ${diagSteps.length} steps from _diag data (no API)`);
+    try {
+      const diagDir = await findDiagDir();
+      const workerSteps = diagDir ? await readWorkerSteps(diagDir) : [];
+      if (workerSteps.length > 0) {
+        stepsJson = JSON.stringify(workerSteps);
+        info(`Built ${workerSteps.length} steps from the runner Worker log`);
       } else {
-        info("No step data available");
+        info("No step data available \u2014 step ordinals will render unnamed");
       }
-    }
-    if (!currentJobName) {
-      currentJobName = context2.job;
+    } catch (err) {
+      info(`Worker log step read failed: ${err}`);
     }
     const summaryArgs = ["summary", "--audit-log", AUDIT_LOG, "--steps", stepsJson];
     if (canPush) {
       summaryArgs.push("--api-url", apiUrl);
       summaryArgs.push("--job-key", context2.job);
-      summaryArgs.push("--job-name", currentJobName);
+      summaryArgs.push("--job-name", context2.job);
       const jobId = getInput("job-id");
       if (jobId) {
         summaryArgs.push("--job-run-id", jobId);
       }
       let effectiveMode = getInput("mode") || "enforce";
       try {
-        const modeFromFile = (await import_fs6.promises.readFile("/tmp/cargowall-mode", "utf8")).trim();
+        const modeFromFile = (await import_fs5.promises.readFile("/tmp/cargowall-mode", "utf8")).trim();
         if (modeFromFile) effectiveMode = modeFromFile;
       } catch {
       }
       summaryArgs.push("--mode", effectiveMode);
       summaryArgs.push("--default-action", "deny");
-      if (apiSteps) {
-        summaryArgs.push("--job-status", jobStatus);
-      }
       try {
         const idToken = await getIDToken("codecargo");
         summaryArgs.push("--token", idToken);
@@ -25506,7 +25358,7 @@ async function generateSummary(opts = { render: true }) {
         info(
           `No OIDC token available for the API push \u2014 skipping it. For CodeCargo platform integration the workflow needs "permissions: id-token: write". (${error2})`
         );
-        for (const flag of ["--api-url", "--job-key", "--job-name", "--job-run-id", "--mode", "--default-action", "--job-status"]) {
+        for (const flag of ["--api-url", "--job-key", "--job-name", "--job-run-id", "--mode", "--default-action"]) {
           const idx = summaryArgs.findIndex((a) => a === flag);
           if (idx !== -1) summaryArgs.splice(idx, 2);
         }
@@ -25549,171 +25401,14 @@ async function generateSummary(opts = { render: true }) {
   }
   if (render) {
     try {
-      const log = await import_fs6.promises.readFile(CARGOWALL_LOG2, "utf8");
+      const log = await import_fs5.promises.readFile(CARGOWALL_LOG2, "utf8");
       if (log) {
-        await summary.addRaw("<details><summary>CargoWall Process Log</summary>\n\n```\n").addRaw(log).addRaw("\n```\n</details>\n").write();
+        await summary.addRaw("\n---\n\n### CargoWall Process Log\n\n").addRaw("Raw daemon log, unbucketed \u2014 not part of the attribution tables above.\n\n").addRaw("<details><summary>Expand full log</summary>\n\n```\n").addRaw(log).addRaw("\n```\n</details>\n").write();
       }
     } catch {
     }
   }
   endGroup();
-}
-async function collectDiagData() {
-  const empty = { planStepIds: /* @__PURE__ */ new Set(), planSteps: [], tsEntries: [], executedNames: [] };
-  try {
-    const watcherPid = getState("watcher-pid");
-    if (watcherPid) {
-      await exec("kill", [watcherPid], { ignoreReturnCode: true, silent: true });
-    }
-    const watcherLog = await import_fs6.promises.readFile(WATCHER_LOG_FILE, "utf8").catch(() => "");
-    if (watcherLog) info(`Watcher log:
-${watcherLog.trimEnd()}`);
-    const planContent = await import_fs6.promises.readFile(STEP_PLAN_FILE, "utf8").catch(() => "{}");
-    let stepPlan = {};
-    try {
-      stepPlan = JSON.parse(planContent);
-    } catch (e) {
-      info(`Step plan JSON parse failed, continuing without plan: ${e}`);
-    }
-    const planSteps = Object.entries(stepPlan);
-    const planStepIds = new Set(Object.keys(stepPlan));
-    const tsEntries = [];
-    const tsContent = await import_fs6.promises.readFile(STEP_TIMESTAMPS_FILE, "utf8").catch(() => "");
-    for (const line of tsContent.trim().split("\n").filter(Boolean)) {
-      try {
-        tsEntries.push(JSON.parse(line));
-      } catch {
-        info(`Skipping malformed timestamp line: ${line.substring(0, 80)}`);
-      }
-    }
-    const diagDir = getState("diag-dir") || await findDiagDir();
-    info(`Step plan: ${planStepIds.size} steps, watcher timestamps: ${tsEntries.length}`);
-    if (diagDir) {
-      try {
-        const byId = new Map(tsEntries.map((e) => [e.id, e]));
-        const scanned = await scanBlocks(diagDir);
-        let added = 0;
-        for (const s of scanned) {
-          const existing = byId.get(s.id);
-          if (!existing) {
-            tsEntries.push(s);
-            byId.set(s.id, s);
-            added++;
-          } else if (s.ts < existing.ts) {
-            existing.ts = s.ts;
-          }
-        }
-        if (added > 0) {
-          info(`Block scan found ${added} entries watcher missed`);
-        }
-      } catch {
-      }
-    }
-    let executedNames = [];
-    if (diagDir) {
-      executedNames = await parseExecutedSteps(diagDir);
-      info(`Worker log executed steps: ${executedNames.length}`);
-      if (isDebug()) {
-        debug(`Worker log executed step names: ${executedNames.join(", ")}`);
-      }
-    }
-    return { planStepIds, planSteps, tsEntries, executedNames };
-  } catch (err) {
-    info(`_diag data collection failed: ${err}`);
-    return empty;
-  }
-}
-function enhanceApiStepsWithDiag(apiSteps, diag) {
-  if (diag.tsEntries.length === 0) {
-    info("No _diag timestamps available, using API steps as-is");
-    return apiSteps;
-  }
-  const tsById = new Map(diag.tsEntries.map((e) => [e.id, e.ts]));
-  const stepTimestamps = [];
-  for (const [stepId, name] of diag.planSteps) {
-    stepTimestamps.push({ name, ts: tsById.get(stepId) ?? null });
-  }
-  if (stepTimestamps.length === 0) return apiSteps;
-  const result = [...apiSteps.map((s) => ({ ...s }))];
-  let apiIdx = 0;
-  while (apiIdx < result.length && result[apiIdx].name === "Set up job") apiIdx++;
-  let enhanced = 0;
-  for (const st of stepTimestamps) {
-    if (apiIdx >= result.length) break;
-    if (st.ts) {
-      result[apiIdx].started_at = st.ts;
-      if (apiIdx > 0 && result[apiIdx - 1].started_at) {
-        result[apiIdx - 1].completed_at = st.ts;
-      }
-      enhanced++;
-    }
-    apiIdx++;
-  }
-  for (const step of result) {
-    if (step.started_at && step.completed_at) {
-      const start = new Date(step.started_at).getTime();
-      const end = new Date(step.completed_at).getTime();
-      if (start > end) {
-        step.completed_at = null;
-      }
-    }
-  }
-  info(`Enhanced ${enhanced} steps with sub-second timestamps`);
-  return result;
-}
-function buildStepsFromDiag(diag) {
-  if (diag.tsEntries.length === 0) return [];
-  const cwStepName = getState("cw-step-name");
-  const cwNameIdx = cwStepName ? diag.executedNames.indexOf(cwStepName) : 0;
-  const nameOffset = cwNameIdx >= 0 ? cwNameIdx : 0;
-  const planIds = diag.planSteps.map(([id]) => id);
-  const watcherIds = new Set(diag.tsEntries.map((e) => e.id));
-  const executedPlanIds = planIds.slice(nameOffset).filter((id) => watcherIds.has(id));
-  const firstExecPlanIdx = executedPlanIds.length > 0 ? planIds.indexOf(executedPlanIds[0]) : nameOffset;
-  const idToName = /* @__PURE__ */ new Map();
-  for (let i = 0; i < executedPlanIds.length && i + firstExecPlanIdx < diag.executedNames.length; i++) {
-    idToName.set(executedPlanIds[i], diag.executedNames[i + firstExecPlanIdx]);
-  }
-  const allSorted = [...diag.tsEntries].sort((a, b) => a.ts.localeCompare(b.ts));
-  const cwPlanId = nameOffset < planIds.length ? planIds[nameOffset] : null;
-  let startIdx = -1;
-  if (cwPlanId && watcherIds.has(cwPlanId)) {
-    startIdx = allSorted.findIndex((e) => e.id === cwPlanId);
-  } else {
-    for (let i = nameOffset + 1; i < planIds.length; i++) {
-      if (watcherIds.has(planIds[i])) {
-        startIdx = allSorted.findIndex((e) => e.id === planIds[i]);
-        break;
-      }
-    }
-  }
-  if (startIdx < 0) {
-    startIdx = diag.planStepIds.size > 0 ? allSorted.findIndex((e) => diag.planStepIds.has(e.id)) : Math.min(nameOffset, allSorted.length - 1);
-  }
-  if (startIdx < 0) return [];
-  const relevant = allSorted.slice(startIdx);
-  const mainNameCount = nameOffset + executedPlanIds.length;
-  const postNames = diag.executedNames.slice(mainNameCount);
-  let postIdx = 0;
-  const steps = [];
-  for (let i = 0; i < relevant.length; i++) {
-    const entry = relevant[i];
-    const isPlan = diag.planStepIds.has(entry.id);
-    let name;
-    if (diag.planStepIds.size === 0) {
-      const nameIdx = nameOffset + i;
-      name = nameIdx < diag.executedNames.length ? diag.executedNames[nameIdx] : `Step ${steps.length + 1}`;
-    } else if (isPlan) {
-      name = idToName.get(entry.id) || `Step ${steps.length + 1}`;
-    } else {
-      name = postIdx < postNames.length ? postNames[postIdx] : `Post step ${postIdx + 1}`;
-      postIdx++;
-    }
-    const started_at = entry.ts;
-    const completed_at = i + 1 < relevant.length ? relevant[i + 1].ts : null;
-    steps.push({ name, started_at, completed_at });
-  }
-  return steps;
 }
 
 // src/post.ts
@@ -25730,7 +25425,7 @@ async function run() {
     let downgraded = false;
     if (spawnedAtMs > 0) {
       try {
-        downgraded = (await import_fs7.promises.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS;
+        downgraded = (await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS;
       } catch {
       }
     }

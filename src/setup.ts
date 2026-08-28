@@ -11,7 +11,8 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
-const CARGOWALL_VERSION = 'v1.3.6'
+const CARGOWALL_VERSION = 'v2.0.0-rc.3'
+const CARGOWALL_REPO = 'code-cargo/cargowall'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
 // checksums.txt: a digest served by the same CDN as the binary was never a
@@ -26,8 +27,8 @@ const CARGOWALL_VERSION = 'v1.3.6'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: 'ac511897cb7952bc61c0a8b99d9bf73fd95148dd8062562aa3862d6c72e53865',
-  arm64: '08b56f7d25c3bd5f6c65f3bd4932bc587f049c6eb1c1a0bfc7343e8875c158f7'
+  amd64: '6ab052d1ec65e6799453c148f6da362c317abeebe0bc8a715d07a54cd89ed5e8',
+  arm64: 'fcfb59df1f5559d91c5eb9207e5db90677034aded7cf8a8dd01552c759c28263'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS
@@ -79,8 +80,7 @@ type AttemptResult = { ok: true } | { ok: false; reason: string; status: number;
 //
 // The first attempt is deliberately anonymous: release-asset URLs 302 to a
 // pre-signed objects.githubusercontent.com URL that rejects stray auth, and
-// staying anonymous keeps us off the per-repo REST budget that
-// `skip-actions-api` exists to protect.
+// staying anonymous keeps us off the per-repo authenticated REST budget.
 //
 // #79: that also puts every request on the anonymous per-source-IP budget, and
 // hosted-runner egress is some of the hottest shared IP space there is. So on a
@@ -173,12 +173,15 @@ export async function sha256File(file: string): Promise<string> {
 export async function setup(): Promise<boolean> {
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'
   const binaryPath = core.getInput('binary-path')
+  const sourceRef = core.getInput('source-ref')
 
   core.startGroup('CargoWall Setup')
 
   try {
     if (binaryPath) {
       await installFromLocalPath(binaryPath)
+    } else if (sourceRef) {
+      await buildFromSource(sourceRef)
     } else {
       await downloadAndInstall()
     }
@@ -218,6 +221,62 @@ async function installFromLocalPath(binaryPath: string): Promise<void> {
   }
 
   await installBinary(binaryPath)
+  await verifyInstallation()
+}
+
+/**
+ * Build cargowall from source at a branch/tag of the public repo, for testing
+ * unreleased changes against the full action. No checksum or provenance to
+ * verify — there is no release to verify against; the trust anchor is the
+ * repo itself. The generated BPF objects are committed, so a plain `go build`
+ * works without clang; hosted runners have Go preinstalled and GOTOOLCHAIN
+ * auto-fetches the version go.mod demands if the preinstalled one is older.
+ */
+export async function buildFromSource(ref: string): Promise<void> {
+  core.info(`Building cargowall from source: ${CARGOWALL_REPO}@${ref}`)
+
+  const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cargowall-src-'))
+  try {
+    await exec.exec('git', [
+      'clone', '--depth', '1', '--branch', ref,
+      `https://github.com/${CARGOWALL_REPO}.git`, srcDir,
+    ])
+
+    let sha = ''
+    await exec.exec('git', ['-C', srcDir, 'rev-parse', '--short', 'HEAD'], {
+      listeners: {
+        stdout: (data: Buffer) => { sha += data.toString() }
+      }
+    })
+    sha = sha.trim()
+    core.info(`Building ${CARGOWALL_REPO}@${ref} (${sha})`)
+
+    const binaryDest = path.join(srcDir, BINARY_NAME)
+    // The go tool re-splits the -ldflags value on whitespace, so a stamp
+    // containing a space or a quote would spill into adjacent linker flags
+    // rather than fail cleanly. Refnames already forbid those characters, so
+    // this only ever fires on input git would have rejected first — but the
+    // stamp is user-supplied text reaching a flag parser, so it is scrubbed
+    // to the characters a refname may legally contain.
+    const versionStamp = `${ref}-${sha}`.replace(/[^A-Za-z0-9._/+-]/g, '_')
+    // Mirror the Makefile's build target (GOOS/CGO/ldflags) so the binary
+    // matches a release build, with the ref+sha as the version stamp.
+    await exec.exec('go', [
+      'build',
+      '-ldflags', `-w -s -X main.version=${versionStamp}`,
+      '-o', binaryDest,
+      './cargowall.go',
+    ], {
+      cwd: srcDir,
+      env: { ...process.env, GOOS: 'linux', CGO_ENABLED: '0' },
+    })
+
+    await exec.exec('sudo', ['mv', binaryDest, path.join(INSTALL_DIR, BINARY_NAME)])
+    core.info(`Installed cargowall (${versionStamp}) to ${INSTALL_DIR}/${BINARY_NAME}`)
+  } finally {
+    await fs.rm(srcDir, { recursive: true, force: true }).catch(() => {})
+  }
+
   await verifyInstallation()
 }
 
