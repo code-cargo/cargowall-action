@@ -309,6 +309,24 @@ describe('start() argument construction', () => {
       expect(args.some(a => a.startsWith('--container-egress'))).toBe(false)
     })
 
+    it('notices the experimental enforcement when it can actually drop', async () => {
+      withInputs({ 'container-egress': 'enforce' })
+      await cargowallArgs()
+      expect(core.notice).toHaveBeenCalledWith(
+        expect.stringContaining('v2 preview enforcement is ON')
+      )
+    })
+
+    it('stays silent about enforcement under mode: audit, which defers every drop', async () => {
+      withInputs({ mode: 'audit', 'container-egress': 'enforce', 'tls-sni': 'enforce' })
+      await cargowallArgs()
+      // The step already carries "connections logged but NOT blocked"; a second
+      // annotation claiming enforcement would contradict it.
+      expect(core.notice).not.toHaveBeenCalledWith(
+        expect.stringContaining('v2 preview enforcement')
+      )
+    })
+
     it('fails the step before the DNS rewrite when the combination is illegal', async () => {
       withInputs({ 'tls-sni': 'enforce' })
       // Rejected here rather than by the binary: a refused flag never writes a

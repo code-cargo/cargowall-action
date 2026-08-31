@@ -25771,10 +25771,6 @@ var STARTUP_TIMEOUT = 30;
 var VALID_MODES = ["enforce", "audit"];
 var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
 var TLS_SNI_VALUES = ["off", "observe", "enforce", "enforce-pinned"];
-var PRESET_CONTAINER_EGRESS = "observe";
-function tlsSniAtLeast(posture, floor) {
-  return TLS_SNI_VALUES.indexOf(posture) >= TLS_SNI_VALUES.indexOf(floor);
-}
 var STALE_SLACK_MS = 2e3;
 async function showLastLog() {
   try {
@@ -25810,7 +25806,7 @@ async function start() {
   const debug2 = getInput("debug") === "true";
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const allowExistingConnections = getInput("allow-existing-connections") !== "false";
-  const postures = resolveEgressPostures({
+  const postureFlags = resolveEgressPostures({
     containerEgress: getInput("container-egress"),
     tlsSni: getInput("tls-sni")
   });
@@ -25848,10 +25844,10 @@ async function start() {
   if (allowExistingConnections) {
     args.push("--allow-existing-connections");
   }
-  args.push(...postures.flags);
-  if (postures.containerEgress === "enforce" || tlsSniAtLeast(postures.tlsSni, "enforce")) {
+  args.push(...postureFlags);
+  if (mode !== "audit" && postureFlags.includes("--container-egress=enforce")) {
     notice(
-      `CargoWall v2 preview enforcement is ON (container-egress: ${postures.containerEgress}, tls-sni: ${postures.tlsSni}) - these knobs are experimental and can block traffic that an L4-only policy allowed`
+      `CargoWall v2 preview enforcement is ON (${postureFlags.join(" ")}) - these knobs are experimental and can block traffic that an L4-only policy allowed`
     );
   }
   const offline = getInput("offline") === "true";
@@ -25895,12 +25891,7 @@ async function start() {
   const jobId = getInput("job-id");
   if (jobId) info(`  Job run ID: ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
-  info(
-    `  Container egress hook: ${postures.containerEgress}` + (postures.containerEgressSupplied ? "" : " (GitHub Actions preset default)")
-  );
-  info(
-    `  L7 destination identity (tls-sni): ${postures.tlsSni}` + (postures.tlsSniSupplied ? "" : " (default)")
-  );
+  if (postureFlags.length > 0) info(`  v2 preview postures: ${postureFlags.join(" ")}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
   if (skipPolicyFetch && apiUrl && !offline) {
@@ -26183,36 +26174,28 @@ function resolveApiFailureMode(args) {
   );
 }
 function resolveEgressPostures(args) {
-  const egressInput = args.containerEgress.trim().toLowerCase();
-  const sniInput = args.tlsSni.trim().toLowerCase();
-  if (egressInput !== "" && !CONTAINER_EGRESS_VALUES.includes(egressInput)) {
-    const offNote = egressInput === "off" ? ' The GitHub Actions preset raises "off" to "observe", so the cgroup egress hook cannot be turned off from this action.' : "";
+  const containerEgress = args.containerEgress.trim().toLowerCase();
+  const tlsSni = args.tlsSni.trim().toLowerCase();
+  if (containerEgress !== "" && !CONTAINER_EGRESS_VALUES.includes(containerEgress)) {
+    const offNote = containerEgress === "off" ? ' The GitHub Actions preset raises "off" to "observe", so the cgroup egress hook cannot be turned off from this action.' : "";
     throw new Error(
       `Invalid "container-egress" value "${args.containerEgress}" \u2014 expected ${CONTAINER_EGRESS_VALUES.map((v) => `"${v}"`).join(" or ")}.${offNote}`
     );
   }
-  if (sniInput !== "" && !TLS_SNI_VALUES.includes(sniInput)) {
+  if (tlsSni !== "" && !TLS_SNI_VALUES.includes(tlsSni)) {
     throw new Error(
       `Invalid "tls-sni" value "${args.tlsSni}" \u2014 expected ${TLS_SNI_VALUES.map((v) => `"${v}"`).join(", ")}.`
     );
   }
-  const containerEgress = egressInput || PRESET_CONTAINER_EGRESS;
-  const tlsSni = sniInput || "off";
-  if (tlsSniAtLeast(tlsSni, "enforce") && containerEgress !== "enforce") {
+  if ((tlsSni === "enforce" || tlsSni === "enforce-pinned") && containerEgress !== "enforce") {
     throw new Error(
       `"tls-sni: ${tlsSni}" requires "container-egress: enforce" \u2014 L7 rides the root-cgroup egress hook, and an observing hook drops nothing for it to narrow. Use "tls-sni: observe" to measure what enforcement would drop first.`
     );
   }
   const flags = [];
-  if (egressInput !== "") flags.push(`--container-egress=${containerEgress}`);
-  if (sniInput !== "") flags.push(`--tls-sni=${tlsSni}`);
-  return {
-    containerEgress,
-    tlsSni,
-    containerEgressSupplied: egressInput !== "",
-    tlsSniSupplied: sniInput !== "",
-    flags
-  };
+  if (containerEgress !== "") flags.push(`--container-egress=${containerEgress}`);
+  if (tlsSni !== "") flags.push(`--tls-sni=${tlsSni}`);
+  return flags;
 }
 function requireNonEmptyHostList(name) {
   const hosts = parseList(getMultilineInput(name));

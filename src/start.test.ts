@@ -209,42 +209,38 @@ describe('downgradeMessage', () => {
 })
 
 describe('resolveEgressPostures', () => {
-  const unset = { containerEgress: '', tlsSni: '' }
-
   it('passes no flag when neither knob is set, leaving the preset in charge', () => {
-    const r = resolveEgressPostures(unset)
-    expect(r.flags).toEqual([])
-    // Still reports what the binary will run, which the cross-check needs.
-    expect(r.containerEgress).toBe('observe')
-    expect(r.tlsSni).toBe('off')
-    expect(r.containerEgressSupplied).toBe(false)
+    // A default the action restated here would be a second copy of the
+    // preset's, free to drift from the binary's.
+    expect(resolveEgressPostures({ containerEgress: '', tlsSni: '' })).toEqual([])
   })
 
   it('passes each posture through when supplied', () => {
-    const r = resolveEgressPostures({ containerEgress: 'enforce', tlsSni: 'enforce-pinned' })
-    expect(r.flags).toEqual(['--container-egress=enforce', '--tls-sni=enforce-pinned'])
-    expect(r.tlsSniSupplied).toBe(true)
+    expect(
+      resolveEgressPostures({ containerEgress: 'enforce', tlsSni: 'enforce-pinned' })
+    ).toEqual(['--container-egress=enforce', '--tls-sni=enforce-pinned'])
   })
 
   it('normalises case and surrounding whitespace', () => {
-    expect(resolveEgressPostures({ containerEgress: ' Observe ', tlsSni: 'OFF' }).flags).toEqual([
+    expect(resolveEgressPostures({ containerEgress: ' Observe ', tlsSni: 'OFF' })).toEqual([
       '--container-egress=observe',
       '--tls-sni=off',
     ])
   })
 
   it('allows observe-only L7 on the preset hook, which is the rollout path', () => {
-    const r = resolveEgressPostures({ containerEgress: '', tlsSni: 'observe' })
-    expect(r.flags).toEqual(['--tls-sni=observe'])
+    expect(resolveEgressPostures({ containerEgress: '', tlsSni: 'observe' })).toEqual([
+      '--tls-sni=observe',
+    ])
   })
 
   it('rejects an L7 enforce rung while the hook it rides only observes', () => {
     expect(() => resolveEgressPostures({ containerEgress: '', tlsSni: 'enforce' })).toThrow(
       /requires "container-egress: enforce"/
     )
-    expect(() => resolveEgressPostures({ containerEgress: 'observe', tlsSni: 'enforce-pinned' })).toThrow(
-      /requires "container-egress: enforce"/
-    )
+    expect(() =>
+      resolveEgressPostures({ containerEgress: 'observe', tlsSni: 'enforce-pinned' })
+    ).toThrow(/requires "container-egress: enforce"/)
   })
 
   it('explains that the preset makes container-egress: off unreachable', () => {
