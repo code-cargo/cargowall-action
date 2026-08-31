@@ -287,6 +287,37 @@ describe('start() argument construction', () => {
     })
   })
 
+  describe('v2-preview postures (container-egress / tls-sni)', () => {
+    it('passes neither flag by default, so the --github-action preset owns the posture', async () => {
+      withInputs({})
+      const args = await cargowallArgs()
+      expect(args.some(a => a.startsWith('--container-egress'))).toBe(false)
+      expect(args.some(a => a.startsWith('--tls-sni'))).toBe(false)
+    })
+
+    it('passes the postures a caller asked for', async () => {
+      withInputs({ 'container-egress': 'enforce', 'tls-sni': 'enforce-pinned' })
+      const args = await cargowallArgs()
+      expect(flag(args, '--container-egress')).toBe('enforce')
+      expect(flag(args, '--tls-sni')).toBe('enforce-pinned')
+    })
+
+    it('passes --tls-sni=observe against the preset hook without naming the hook', async () => {
+      withInputs({ 'tls-sni': 'observe' })
+      const args = await cargowallArgs()
+      expect(flag(args, '--tls-sni')).toBe('observe')
+      expect(args.some(a => a.startsWith('--container-egress'))).toBe(false)
+    })
+
+    it('fails the step before the DNS rewrite when the combination is illegal', async () => {
+      withInputs({ 'tls-sni': 'enforce' })
+      // Rejected here rather than by the binary: a refused flag never writes a
+      // sentinel, so the caller would otherwise get a wait-ready timeout.
+      await expect(start()).rejects.toThrow(/requires "container-egress: enforce"/)
+      expect(spawn).not.toHaveBeenCalled()
+    })
+  })
+
   describe('posture downgrade reporting', () => {
     it('warns when cargowall recorded an audit fallback', async () => {
       withInputs({})

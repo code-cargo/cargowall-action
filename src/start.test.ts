@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   requireNonEmptyHostList,
   resolveApiFailureMode,
+  resolveEgressPostures,
   isLockdownRecord,
   downgradeMessage,
   sentinelReason,
@@ -204,5 +205,62 @@ describe('downgradeMessage', () => {
 
   it('returns null for an empty record rather than warning about nothing', () => {
     expect(downgradeMessage('   ')).toBeNull()
+  })
+})
+
+describe('resolveEgressPostures', () => {
+  const unset = { containerEgress: '', tlsSni: '' }
+
+  it('passes no flag when neither knob is set, leaving the preset in charge', () => {
+    const r = resolveEgressPostures(unset)
+    expect(r.flags).toEqual([])
+    // Still reports what the binary will run, which the cross-check needs.
+    expect(r.containerEgress).toBe('observe')
+    expect(r.tlsSni).toBe('off')
+    expect(r.containerEgressSupplied).toBe(false)
+  })
+
+  it('passes each posture through when supplied', () => {
+    const r = resolveEgressPostures({ containerEgress: 'enforce', tlsSni: 'enforce-pinned' })
+    expect(r.flags).toEqual(['--container-egress=enforce', '--tls-sni=enforce-pinned'])
+    expect(r.tlsSniSupplied).toBe(true)
+  })
+
+  it('normalises case and surrounding whitespace', () => {
+    expect(resolveEgressPostures({ containerEgress: ' Observe ', tlsSni: 'OFF' }).flags).toEqual([
+      '--container-egress=observe',
+      '--tls-sni=off',
+    ])
+  })
+
+  it('allows observe-only L7 on the preset hook, which is the rollout path', () => {
+    const r = resolveEgressPostures({ containerEgress: '', tlsSni: 'observe' })
+    expect(r.flags).toEqual(['--tls-sni=observe'])
+  })
+
+  it('rejects an L7 enforce rung while the hook it rides only observes', () => {
+    expect(() => resolveEgressPostures({ containerEgress: '', tlsSni: 'enforce' })).toThrow(
+      /requires "container-egress: enforce"/
+    )
+    expect(() => resolveEgressPostures({ containerEgress: 'observe', tlsSni: 'enforce-pinned' })).toThrow(
+      /requires "container-egress: enforce"/
+    )
+  })
+
+  it('explains that the preset makes container-egress: off unreachable', () => {
+    expect(() => resolveEgressPostures({ containerEgress: 'off', tlsSni: '' })).toThrow(
+      /cannot be turned off from this action/
+    )
+  })
+
+  it('rejects an unknown posture rather than letting the binary refuse to start', () => {
+    // A flag the binary rejects never writes a sentinel, so the caller sees a
+    // 30-second wait-ready timeout instead of the typo they made.
+    expect(() => resolveEgressPostures({ containerEgress: 'enforcing', tlsSni: '' })).toThrow(
+      /Invalid "container-egress" value "enforcing"/
+    )
+    expect(() => resolveEgressPostures({ containerEgress: '', tlsSni: 'pinned' })).toThrow(
+      /Invalid "tls-sni" value "pinned"/
+    )
   })
 })

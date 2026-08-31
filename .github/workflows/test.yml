@@ -774,6 +774,133 @@ jobs:
           sudo kill -0 "$(cat /tmp/cargowall.pid)"
           grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf
 
+  # The two v2-preview knobs (container-egress / tls-sni). Both probe the same
+  # shape the L7 layer exists to close: a flow to an ALLOWED IP presenting a
+  # hostname no rule allows. `curl --resolve` is what makes it reachable —
+  # it dials the allowed address with no DNS lookup at all, so the L4 verdict
+  # says allow (the IP is github.com's) and only the presented SNI is left to
+  # tell the two apart.
+  test-tls-sni-observe:
+    name: L7 SNI observe-mode measurement (v2 preview)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with L7 in observe mode
+        id: cargowall
+        uses: ./
+        with:
+          # Fully offline, not skip-policy-fetch: a fetched policy would
+          # replace the narrow allow-list this job's assertions depend on.
+          offline: 'true'
+          tls-sni: observe
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Test allowed connection (github.com)
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
+
+      - name: Present a foreign SNI to an allowed IP
+        run: |
+          IP=$(getent ahostsv4 github.com | awk '{print $1; exit}')
+          test -n "$IP"
+          echo "github.com resolved to $IP"
+          # Observe mode drops NOTHING, so this must reach the edge and get a
+          # TLS answer of some kind. -k because the cert will not cover the
+          # name we present; the handshake completing is the point, not the
+          # HTTP result.
+          curl -sk --connect-timeout 5 --max-time 20 -o /dev/null \
+            --resolve tls-sni-probe.example.com:443:"$IP" \
+            https://tls-sni-probe.example.com/ || true
+
+      - name: Assert the would-block was measured, not enforced
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          # Poll: the verdict is computed in userspace after the kernel punts
+          # the sample, so the record lands shortly after curl returns.
+          for i in $(seq 1 15); do
+            grep -q '"event_type":"l7_would_block"' /tmp/cargowall-audit.json && break
+            sleep 1
+          done
+          # observe-first rollout: the record is how an operator sizes the
+          # blast radius before turning drops on. A real drop (l7_blocked)
+          # here would mean observe mode is enforcing.
+          if ! grep -q '"event_type":"l7_would_block"' /tmp/cargowall-audit.json; then
+            echo "ERROR: no l7_would_block record for the foreign SNI"
+            grep -o '"event_type":"[^"]*"' /tmp/cargowall-audit.json | sort | uniq -c
+            exit 1
+          fi
+          if grep -q '"event_type":"l7_blocked"' /tmp/cargowall-audit.json; then
+            echo "ERROR: observe mode must not drop anything"
+            exit 1
+          fi
+          echo "l7_would_block recorded, nothing dropped"
+
+  test-tls-sni-enforce:
+    name: L7 SNI enforcement drops a foreign name (v2 preview)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with L7 enforcement
+        id: cargowall
+        uses: ./
+        with:
+          # Fully offline: dropping the foreign-SNI flow IS the assertion, and
+          # the CodeCargo check fails any reported job with denied hosts.
+          offline: 'true'
+          container-egress: enforce
+          tls-sni: enforce
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Test allowed connection still works (github.com)
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
+
+      - name: Assert a foreign SNI to an allowed IP is dropped
+        run: |
+          IP=$(getent ahostsv4 github.com | awk '{print $1; exit}')
+          test -n "$IP"
+          echo "github.com resolved to $IP"
+          # The L4 verdict allows this IP. Only the presented name is left to
+          # deny on, which is the whole feature.
+          if curl -sk --connect-timeout 5 --max-time 20 -o /dev/null \
+               --resolve tls-sni-probe.example.com:443:"$IP" \
+               https://tls-sni-probe.example.com/; then
+            echo "ERROR: foreign SNI to an allowed IP should be dropped"
+            exit 1
+          fi
+          echo "Correctly dropped the foreign SNI"
+
+      - name: Assert the drop was recorded as an enforced L7 block
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          for i in $(seq 1 15); do
+            grep -q '"event_type":"l7_blocked"' /tmp/cargowall-audit.json && break
+            sleep 1
+          done
+          if ! grep -q '"event_type":"l7_blocked"' /tmp/cargowall-audit.json; then
+            echo "ERROR: no l7_blocked record for the dropped flow"
+            grep -o '"event_type":"[^"]*"' /tmp/cargowall-audit.json | sort | uniq -c
+            exit 1
+          fi
+          # The denial must name what the flow PRESENTED, not the allowed
+          # origin the shared IP resolves to — blaming github.com here would
+          # send an operator to add a rule they already have.
+          grep '"event_type":"l7_blocked"' /tmp/cargowall-audit.json \
+            | grep -q '"l7_name":"tls-sni-probe.example.com"'
+          echo "l7_blocked recorded against the presented name"
+
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)
     runs-on: ubuntu-latest

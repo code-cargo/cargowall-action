@@ -22,6 +22,36 @@ const STARTUP_TIMEOUT = 30
 const VALID_MODES = ['enforce', 'audit'] as const
 
 /**
+ * Postures the v2 preview exposes for cargowall's root-cgroup egress hook and
+ * the L7 (TLS SNI / HTTP Host / QUIC) identity layer that rides it, in
+ * ascending strictness — each rung strictly contains the one below.
+ *
+ * `off` is absent from the container-egress list on purpose: cargowall's
+ * `--github-action` preset RAISES an off posture to observe, so no value this
+ * action could pass would turn the hook off, and offering the word would be a
+ * knob that silently does nothing.
+ */
+const CONTAINER_EGRESS_VALUES = ['observe', 'enforce'] as const
+const TLS_SNI_VALUES = ['off', 'observe', 'enforce', 'enforce-pinned'] as const
+
+/** What `--github-action` implies when `container-egress` is left unset. */
+const PRESET_CONTAINER_EGRESS: ContainerEgress = 'observe'
+
+type ContainerEgress = typeof CONTAINER_EGRESS_VALUES[number]
+type TlsSni = typeof TLS_SNI_VALUES[number]
+
+/**
+ * Whether an L7 posture is at least as strict as `floor`, mirroring
+ * cargowall's own `rung()` comparison. Asking by rung rather than by name
+ * keeps the enforce rungs (`enforce`, `enforce-pinned`) from having to be
+ * enumerated at each use — and from being matched by prefix, which a future
+ * rung named something else would silently escape.
+ */
+function tlsSniAtLeast(posture: TlsSni, floor: TlsSni): boolean {
+  return TLS_SNI_VALUES.indexOf(posture) >= TLS_SNI_VALUES.indexOf(floor)
+}
+
+/**
  * Slack for the state-file staleness anchor, mirroring wait-ready's
  * staleSlack: a genuinely fresh file may carry an mtime a moment before the
  * spawn anchor (write ordering, coarse filesystem timestamps — not something
@@ -72,6 +102,13 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const debug = core.getInput('debug') === 'true'
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'
   const allowExistingConnections = core.getInput('allow-existing-connections') !== 'false'
+  // Resolved here, with the other inputs, so an invalid posture fails the step
+  // before /etc/resolv.conf is rewritten — a throw after that point leaves the
+  // runner pointing at a DNS proxy that will never start.
+  const postures = resolveEgressPostures({
+    containerEgress: core.getInput('container-egress'),
+    tlsSni: core.getInput('tls-sni'),
+  })
 
   core.startGroup('Starting CargoWall Firewall')
 
@@ -118,6 +155,18 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   if (allowExistingConnections) {
     args.push('--allow-existing-connections')
+  }
+
+  // Empty unless a v2-preview posture was explicitly asked for; the
+  // `--github-action` preset owns the defaults otherwise.
+  args.push(...postures.flags)
+
+  if (postures.containerEgress === 'enforce' || tlsSniAtLeast(postures.tlsSni, 'enforce')) {
+    core.notice(
+      `CargoWall v2 preview enforcement is ON (container-egress: ${postures.containerEgress}, ` +
+        `tls-sni: ${postures.tlsSni}) - these knobs are experimental and can block traffic that ` +
+        `an L4-only policy allowed`
+    )
   }
 
   // When api-url is configured and offline mode is not enabled, fetch OIDC
@@ -182,6 +231,14 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const jobId = core.getInput('job-id')
   if (jobId) core.info(`  Job run ID: ${jobId}`)
   core.info(`  Sudo lockdown: ${sudoLockdown}`)
+  core.info(
+    `  Container egress hook: ${postures.containerEgress}` +
+      (postures.containerEgressSupplied ? '' : ' (GitHub Actions preset default)')
+  )
+  core.info(
+    `  L7 destination identity (tls-sni): ${postures.tlsSni}` +
+      (postures.tlsSniSupplied ? '' : ' (default)')
+  )
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
   if (skipPolicyFetch && apiUrl && !offline) {
@@ -741,6 +798,85 @@ export function resolveApiFailureMode(args: { input: string; modeSupplied: boole
   throw new Error(
     `Invalid "api-failure-mode" value "${args.input}" — expected "audit", "enforce", or "fail".`
   )
+}
+
+export type EgressPostures = {
+  /** Effective posture, including the one the preset supplies when unset. */
+  containerEgress: ContainerEgress
+  tlsSni: TlsSni
+  /** Whether the caller named each posture, rather than inheriting it. */
+  containerEgressSupplied: boolean
+  tlsSniSupplied: boolean
+  /** Flags to hand the binary — empty when neither input was supplied. */
+  flags: string[]
+}
+
+/**
+ * Resolve the v2-preview `container-egress` and `tls-sni` postures.
+ *
+ * An unset input pushes NO flag: the `--github-action` preset already supplies
+ * the default posture (observe for the cgroup hook, off for L7), and passing a
+ * second copy of it from here would be a default that can drift from the
+ * binary's. `containerEgress` still reports the preset's value, because the
+ * cross-check below has to reason about what the binary will actually run.
+ *
+ * The cross-checks mirror cargowall's own `AfterApply`, deliberately
+ * duplicated rather than left to the binary: a rejected flag means the process
+ * exits before it writes any sentinel, which reaches the caller as a generic
+ * 30-second wait-ready timeout with the real reason buried in the daemon log.
+ * The same reasoning makes an unknown value fatal here, as it is for
+ * `api-failure-mode`. The binary stays authoritative — this only turns its
+ * "no" into one that names the input the caller typed.
+ */
+export function resolveEgressPostures(args: {
+  containerEgress: string
+  tlsSni: string
+}): EgressPostures {
+  const egressInput = args.containerEgress.trim().toLowerCase()
+  const sniInput = args.tlsSni.trim().toLowerCase()
+
+  if (egressInput !== '' && !CONTAINER_EGRESS_VALUES.includes(egressInput as ContainerEgress)) {
+    const offNote =
+      egressInput === 'off'
+        ? ' The GitHub Actions preset raises "off" to "observe", so the cgroup egress hook cannot be turned off from this action.'
+        : ''
+    throw new Error(
+      `Invalid "container-egress" value "${args.containerEgress}" — expected ` +
+        `${CONTAINER_EGRESS_VALUES.map(v => `"${v}"`).join(' or ')}.${offNote}`
+    )
+  }
+  if (sniInput !== '' && !TLS_SNI_VALUES.includes(sniInput as TlsSni)) {
+    throw new Error(
+      `Invalid "tls-sni" value "${args.tlsSni}" — expected ` +
+        `${TLS_SNI_VALUES.map(v => `"${v}"`).join(', ')}.`
+    )
+  }
+
+  const containerEgress = (egressInput || PRESET_CONTAINER_EGRESS) as ContainerEgress
+  const tlsSni = (sniInput || 'off') as TlsSni
+
+  // L7 can only ever narrow a pass into a drop, so dropping on the presented
+  // name means nothing while the hook it rides still passes everything it
+  // would have blocked.
+  if (tlsSniAtLeast(tlsSni, 'enforce') && containerEgress !== 'enforce') {
+    throw new Error(
+      `"tls-sni: ${tlsSni}" requires "container-egress: enforce" — L7 rides the ` +
+        `root-cgroup egress hook, and an observing hook drops nothing for it to narrow. ` +
+        `Use "tls-sni: observe" to measure what enforcement would drop first.`
+    )
+  }
+
+  const flags: string[] = []
+  if (egressInput !== '') flags.push(`--container-egress=${containerEgress}`)
+  if (sniInput !== '') flags.push(`--tls-sni=${tlsSni}`)
+
+  return {
+    containerEgress,
+    tlsSni,
+    containerEgressSupplied: egressInput !== '',
+    tlsSniSupplied: sniInput !== '',
+    flags,
+  }
 }
 
 /**

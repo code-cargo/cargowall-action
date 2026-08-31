@@ -21561,11 +21561,11 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v2.0.0-rc.3";
+var CARGOWALL_VERSION = "v2.0.0-rc.5";
 var CARGOWALL_REPO = "code-cargo/cargowall";
 var CARGOWALL_DIGESTS = {
-  amd64: "6ab052d1ec65e6799453c148f6da362c317abeebe0bc8a715d07a54cd89ed5e8",
-  arm64: "fcfb59df1f5559d91c5eb9207e5db90677034aded7cf8a8dd01552c759c28263"
+  amd64: "39f2f5e6e511e3c15bf60fb81eaa6348633164d5a81fb01f8853e58e9d8f5165",
+  arm64: "a782cdfb225f38947f8204e7f1489e14b2d4ec1600fab7fa704f6892758b320d"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -25769,6 +25769,12 @@ var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
 var VALID_MODES = ["enforce", "audit"];
+var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
+var TLS_SNI_VALUES = ["off", "observe", "enforce", "enforce-pinned"];
+var PRESET_CONTAINER_EGRESS = "observe";
+function tlsSniAtLeast(posture, floor) {
+  return TLS_SNI_VALUES.indexOf(posture) >= TLS_SNI_VALUES.indexOf(floor);
+}
 var STALE_SLACK_MS = 2e3;
 async function showLastLog() {
   try {
@@ -25804,6 +25810,10 @@ async function start() {
   const debug2 = getInput("debug") === "true";
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const allowExistingConnections = getInput("allow-existing-connections") !== "false";
+  const postures = resolveEgressPostures({
+    containerEgress: getInput("container-egress"),
+    tlsSni: getInput("tls-sni")
+  });
   startGroup("Starting CargoWall Firewall");
   const dnsResult = await detectDnsUpstream(getInput("dns-upstream"));
   const dnsUpstream = dnsResult.primary;
@@ -25837,6 +25847,12 @@ async function start() {
   }
   if (allowExistingConnections) {
     args.push("--allow-existing-connections");
+  }
+  args.push(...postures.flags);
+  if (postures.containerEgress === "enforce" || tlsSniAtLeast(postures.tlsSni, "enforce")) {
+    notice(
+      `CargoWall v2 preview enforcement is ON (container-egress: ${postures.containerEgress}, tls-sni: ${postures.tlsSni}) - these knobs are experimental and can block traffic that an L4-only policy allowed`
+    );
   }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
@@ -25879,6 +25895,12 @@ async function start() {
   const jobId = getInput("job-id");
   if (jobId) info(`  Job run ID: ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
+  info(
+    `  Container egress hook: ${postures.containerEgress}` + (postures.containerEgressSupplied ? "" : " (GitHub Actions preset default)")
+  );
+  info(
+    `  L7 destination identity (tls-sni): ${postures.tlsSni}` + (postures.tlsSniSupplied ? "" : " (default)")
+  );
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
   if (skipPolicyFetch && apiUrl && !offline) {
@@ -26159,6 +26181,38 @@ function resolveApiFailureMode(args) {
   throw new Error(
     `Invalid "api-failure-mode" value "${args.input}" \u2014 expected "audit", "enforce", or "fail".`
   );
+}
+function resolveEgressPostures(args) {
+  const egressInput = args.containerEgress.trim().toLowerCase();
+  const sniInput = args.tlsSni.trim().toLowerCase();
+  if (egressInput !== "" && !CONTAINER_EGRESS_VALUES.includes(egressInput)) {
+    const offNote = egressInput === "off" ? ' The GitHub Actions preset raises "off" to "observe", so the cgroup egress hook cannot be turned off from this action.' : "";
+    throw new Error(
+      `Invalid "container-egress" value "${args.containerEgress}" \u2014 expected ${CONTAINER_EGRESS_VALUES.map((v) => `"${v}"`).join(" or ")}.${offNote}`
+    );
+  }
+  if (sniInput !== "" && !TLS_SNI_VALUES.includes(sniInput)) {
+    throw new Error(
+      `Invalid "tls-sni" value "${args.tlsSni}" \u2014 expected ${TLS_SNI_VALUES.map((v) => `"${v}"`).join(", ")}.`
+    );
+  }
+  const containerEgress = egressInput || PRESET_CONTAINER_EGRESS;
+  const tlsSni = sniInput || "off";
+  if (tlsSniAtLeast(tlsSni, "enforce") && containerEgress !== "enforce") {
+    throw new Error(
+      `"tls-sni: ${tlsSni}" requires "container-egress: enforce" \u2014 L7 rides the root-cgroup egress hook, and an observing hook drops nothing for it to narrow. Use "tls-sni: observe" to measure what enforcement would drop first.`
+    );
+  }
+  const flags = [];
+  if (egressInput !== "") flags.push(`--container-egress=${containerEgress}`);
+  if (sniInput !== "") flags.push(`--tls-sni=${tlsSni}`);
+  return {
+    containerEgress,
+    tlsSni,
+    containerEgressSupplied: egressInput !== "",
+    tlsSniSupplied: sniInput !== "",
+    flags
+  };
 }
 function requireNonEmptyHostList(name) {
   const hosts = parseList(getMultilineInput(name));
