@@ -21561,11 +21561,11 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v2.0.0-rc.3";
+var CARGOWALL_VERSION = "v2.0.0-rc.6";
 var CARGOWALL_REPO = "code-cargo/cargowall";
 var CARGOWALL_DIGESTS = {
-  amd64: "6ab052d1ec65e6799453c148f6da362c317abeebe0bc8a715d07a54cd89ed5e8",
-  arm64: "fcfb59df1f5559d91c5eb9207e5db90677034aded7cf8a8dd01552c759c28263"
+  amd64: "7ccb9639e63738fd2a470e6f0ecfd28b9ec7d5e05b1ac611eb0bea81a0d019af",
+  arm64: "0309fd90f81d1a00fd140a703f1a435fba89c8f0883855241d65e8fc71f6f6f0"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -25769,6 +25769,8 @@ var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
 var VALID_MODES = ["enforce", "audit"];
+var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
+var TLS_SNI_VALUES = ["off", "observe", "enforce", "enforce-pinned"];
 var STALE_SLACK_MS = 2e3;
 async function showLastLog() {
   try {
@@ -25804,6 +25806,10 @@ async function start() {
   const debug2 = getInput("debug") === "true";
   const failOnUnsupported = getInput("fail-on-unsupported") === "true";
   const allowExistingConnections = getInput("allow-existing-connections") !== "false";
+  const postureFlags = resolveEgressPostures({
+    containerEgress: getInput("container-egress"),
+    tlsSni: getInput("tls-sni")
+  });
   startGroup("Starting CargoWall Firewall");
   const dnsResult = await detectDnsUpstream(getInput("dns-upstream"));
   const dnsUpstream = dnsResult.primary;
@@ -25837,6 +25843,12 @@ async function start() {
   }
   if (allowExistingConnections) {
     args.push("--allow-existing-connections");
+  }
+  args.push(...postureFlags);
+  if (mode !== "audit" && postureFlags.includes("--container-egress=enforce")) {
+    notice(
+      `CargoWall v2 preview enforcement is ON (${postureFlags.join(" ")}) - these knobs are experimental and can block traffic that an L4-only policy allowed`
+    );
   }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
@@ -25879,6 +25891,7 @@ async function start() {
   const jobId = getInput("job-id");
   if (jobId) info(`  Job run ID: ${jobId}`);
   info(`  Sudo lockdown: ${sudoLockdown}`);
+  if (postureFlags.length > 0) info(`  v2 preview postures: ${postureFlags.join(" ")}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
   if (skipPolicyFetch && apiUrl && !offline) {
@@ -26159,6 +26172,30 @@ function resolveApiFailureMode(args) {
   throw new Error(
     `Invalid "api-failure-mode" value "${args.input}" \u2014 expected "audit", "enforce", or "fail".`
   );
+}
+function resolveEgressPostures(args) {
+  const containerEgress = args.containerEgress.trim().toLowerCase();
+  const tlsSni = args.tlsSni.trim().toLowerCase();
+  if (containerEgress !== "" && !CONTAINER_EGRESS_VALUES.includes(containerEgress)) {
+    const offNote = containerEgress === "off" ? ' The GitHub Actions preset raises "off" to "observe", so the cgroup egress hook cannot be turned off from this action.' : "";
+    throw new Error(
+      `Invalid "container-egress" value "${args.containerEgress}" \u2014 expected ${CONTAINER_EGRESS_VALUES.map((v) => `"${v}"`).join(" or ")}.${offNote}`
+    );
+  }
+  if (tlsSni !== "" && !TLS_SNI_VALUES.includes(tlsSni)) {
+    throw new Error(
+      `Invalid "tls-sni" value "${args.tlsSni}" \u2014 expected ${TLS_SNI_VALUES.map((v) => `"${v}"`).join(", ")}.`
+    );
+  }
+  if ((tlsSni === "enforce" || tlsSni === "enforce-pinned") && containerEgress !== "enforce") {
+    throw new Error(
+      `"tls-sni: ${tlsSni}" requires "container-egress: enforce" \u2014 L7 rides the root-cgroup egress hook, and an observing hook drops nothing for it to narrow. Use "tls-sni: observe" to measure what enforcement would drop first.`
+    );
+  }
+  const flags = [];
+  if (containerEgress !== "") flags.push(`--container-egress=${containerEgress}`);
+  if (tlsSni !== "") flags.push(`--tls-sni=${tlsSni}`);
+  return flags;
 }
 function requireNonEmptyHostList(name) {
   const hosts = parseList(getMultilineInput(name));

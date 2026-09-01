@@ -112,6 +112,31 @@ inputs:
   job-id:
     description: 'The check run ID of the current job (populated from the workflow context by default; override if needed)'
     default: ${{ job.check_run_id }}
+  container-egress:
+    # Experimental knobs for the v2 preview — see README. Deliberately no
+    # `default:` on either: an unset input must leave the flag off the command
+    # line entirely so the `--github-action` preset stays the single source of
+    # the default posture, rather than the action pinning a second copy of it
+    # that can drift from the binary's.
+    description: >-
+      EXPERIMENTAL (v2 preview — may change or be removed): root-cgroup egress
+      hook posture. "observe" correlates Docker containers and execs to
+      workflow steps and reports what the hook would block, blocking nothing;
+      "enforce" makes that hook authoritative for traffic with a local socket
+      (pre-NAT, in socket context), with the TC egress hook remaining the
+      backstop. Unset keeps the GitHub Actions preset's "observe" — the preset
+      raises "off" to "observe", so the hook cannot be turned off from here.
+    required: false
+  tls-sni:
+    description: >-
+      EXPERIMENTAL (v2 preview — may change or be removed): L7
+      destination-identity posture (TLS SNI / HTTP Host / QUIC), which pins
+      WHICH hostname a flow to a shared CDN or edge IP may reach. "off"
+      (default), "observe" (parse the presented name and record what it would
+      drop, dropping nothing), "enforce" (drop flows whose name no rule allows
+      on that IP), "enforce-pinned" (also drop when the name never resolved to
+      that destination). The enforce rungs require `container-egress: enforce`.
+    required: false
 
 outputs:
   supported:

@@ -232,6 +232,77 @@ For complex configurations, use a JSON or YAML config file:
 }
 ```
 
+### Experimental: L7 Destination Identity (v2 Preview)
+
+> **Experimental.** `container-egress` and `tls-sni` expose cargowall v2
+> postures that are still being measured on real CI. They may change spelling
+> or disappear before this action ships v2.0.0 — pin a commit SHA if you depend
+> on them.
+
+An L4 verdict allows a destination *IP*. When a hostname rule resolves to a
+shared CDN or edge address (Cloudflare, Akamai, Fastly), that `/32` is open to
+**every** tenant behind it — an attacker who puts their own domain on the same
+CDN reaches an already-allowed IP, and the packet filter cannot tell the two
+apart. The L7 layer pins *which* hostname a flow to that IP may reach, reading
+the TLS SNI, the HTTP `Host` header, or the QUIC Initial. It never widens an L4
+allow; it only narrows one.
+
+It rides cargowall's root-cgroup egress hook, so the two knobs move together:
+
+| `container-egress` | What the cgroup hook does                                                                                   |
+|--------------------|-------------------------------------------------------------------------------------------------------------|
+| `observe`          | *(default)* Correlates Docker containers and execs to workflow steps and records what it **would** block     |
+| `enforce`          | Authoritative for traffic with a local socket (pre-NAT, in socket context); the TC hook stays as a backstop   |
+
+| `tls-sni`        | What the L7 layer does                                                                          |
+|------------------|-------------------------------------------------------------------------------------------------|
+| `off`            | *(default)* No name is parsed                                                                    |
+| `observe`        | Parses the presented name and records what it **would** drop, dropping nothing                   |
+| `enforce`        | Drops a flow whose presented name no rule allows on that IP                                      |
+| `enforce-pinned` | Also drops when the name never resolved to *that* destination through cargowall's own DNS proxy   |
+
+Roll out observe-first — the `l7_would_block` records in the audit log are how
+you find out what enforcement would cost before it costs it:
+
+```yaml
+- uses: code-cargo/cargowall-action@<sha>
+  with:
+    allowed-hosts: |
+      github.com
+    tls-sni: observe          # measure only; blocks nothing
+```
+
+Then, once the would-block set is empty (or understood), turn the drops on.
+The enforce rungs require `container-egress: enforce`, because L7 can only
+narrow a pass into a drop and there is nothing to narrow while the hook it
+rides is still passing everything it would have blocked:
+
+```yaml
+- uses: code-cargo/cargowall-action@<sha>
+  with:
+    allowed-hosts: |
+      github.com
+    container-egress: enforce
+    tls-sni: enforce
+```
+
+Worth knowing before you enable it:
+
+- **Scope is port-based.** TCP/443 is read as TLS, TCP/80 as `Host`, UDP/443 as
+  QUIC, plus the CDN alternate ports the same shared edges terminate on. Every
+  other port stays governed by the L4 verdict alone — `ssh.github.com:22` is
+  unaffected.
+- **`mode: audit` still wins.** Audit mode remains the run's single source of
+  "log, never block", so an enforce rung under it records and drops nothing.
+- **A new flow costs one retransmit.** The presented name is matched in
+  userspace against the live policy, so a new TLS flow is held until the
+  verdict lands rather than leaking its first flight.
+- **`container-egress` has no `off`.** The action's `--github-action` preset
+  raises `off` to `observe`, so the hook cannot be disabled from here.
+- **Degradation reopens the gap.** If the cgroup hook cannot attach, the run
+  falls back to the TC hook's L4-only verdict and the shared-edge hole reopens
+  for that run.
+
 ## Inputs
 
 | Input                        | Description                                                                                                                                                                                                                                                                            | Default                                        |
@@ -258,6 +329,8 @@ For complex configurations, use a JSON or YAML config file:
 | `offline`                    | Skip all CodeCargo API communication (audit upload and policy fetch)                                                                                                                                                                                                                   | `false`                                        |
 | `skip-policy-fetch`          | Skip only the policy fetch, so the job runs exactly this step's configuration (a fetched policy would replace it) while the audit push still reports the job to the dashboard. Needs `id-token: write` and firewall rules that allow the `api-url` host; `offline: true` wins            | `false`                                        |
 | `job-id`                     | Check run ID of the current job (from workflow context by default; override if needed)                                                                                                                                                                                                 | `${{ job.check_run_id }}`                      |
+| `container-egress`           | **Experimental (v2 preview)** — root-cgroup egress hook posture: `observe` (report what it would block) or `enforce` (authoritative for traffic with a local socket). See [L7 Destination Identity](#experimental-l7-destination-identity-v2-preview)                                    | `observe` (from the preset)                    |
+| `tls-sni`                    | **Experimental (v2 preview)** — L7 destination-identity posture: `off`, `observe`, `enforce`, or `enforce-pinned`. The enforce rungs need `container-egress: enforce`. See [L7 Destination Identity](#experimental-l7-destination-identity-v2-preview)                                  | `off`                                          |
 
 ## Outputs
 
