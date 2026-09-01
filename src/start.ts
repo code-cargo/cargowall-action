@@ -22,11 +22,11 @@ const STARTUP_TIMEOUT = 30
 const VALID_MODES = ['enforce', 'audit'] as const
 
 /**
- * Postures the v2 preview can spell for cargowall's root-cgroup egress hook
+ * Posture values this action accepts for cargowall's root-cgroup egress hook
  * and the L7 (TLS SNI / HTTP Host / QUIC) layer that rides it. `off` is absent
  * from container-egress on purpose: cargowall's `--github-action` preset
- * raises an off posture to observe, so the word would be a knob that silently
- * does nothing.
+ * raises an off posture to observe, so accepting the value would be a knob
+ * that silently does nothing.
  */
 const CONTAINER_EGRESS_VALUES = ['observe', 'enforce'] as const
 const TLS_SNI_VALUES = ['off', 'observe', 'enforce', 'enforce-pinned'] as const
