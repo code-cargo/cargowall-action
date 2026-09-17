@@ -25230,12 +25230,24 @@ var import_fs5 = require("fs");
 // src/diag.ts
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
-async function findDiagDir() {
-  const versionedCandidates = await findVersionedDiagDirs();
+async function findDiagDir(startPid = process.pid) {
+  const root = await findRunnerRootFromAncestry(startPid);
+  if (root) {
+    const diag = path4.join(root, "_diag");
+    try {
+      await import_fs4.promises.access(diag);
+      return diag;
+    } catch {
+    }
+  }
+  return findDiagDirFromKnownLayouts();
+}
+async function findDiagDirFromKnownLayouts() {
   const candidates = [
-    ...versionedCandidates,
+    ...await findVersionedDiagDirs(),
     "/home/runner/actions-runner/cached/_diag",
-    "/home/runner/actions-runner/_diag"
+    "/home/runner/actions-runner/_diag",
+    "/home/runner/_diag"
   ];
   for (const candidate of candidates) {
     try {
@@ -25257,6 +25269,41 @@ async function findDiagDir() {
   } catch {
   }
   return null;
+}
+async function findRunnerRootFromAncestry(startPid = process.pid) {
+  let pid = startPid;
+  for (let hop = 0; hop < 64 && pid > 1; hop++) {
+    try {
+      const root = runnerRootFromExe(await import_fs4.promises.readlink(`/proc/${pid}/exe`));
+      if (root) return root;
+    } catch {
+    }
+    let stat2;
+    try {
+      stat2 = await import_fs4.promises.readFile(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      return null;
+    }
+    const ppid = parsePpid(stat2);
+    if (ppid === null) return null;
+    pid = ppid;
+  }
+  return null;
+}
+function runnerRootFromExe(exe) {
+  const cleaned = exe.replace(/ \(deleted\)$/, "");
+  const base = path4.posix.basename(cleaned);
+  if (base !== "Runner.Worker" && base !== "Runner.Listener") return null;
+  const bin = path4.posix.dirname(cleaned);
+  if (path4.posix.basename(bin) !== "bin") return null;
+  return path4.posix.dirname(bin);
+}
+function parsePpid(stat2) {
+  const end = stat2.lastIndexOf(")");
+  if (end < 0) return null;
+  const fields = stat2.slice(end + 1).trim().split(/\s+/);
+  const ppid = Number(fields[1]);
+  return Number.isInteger(ppid) ? ppid : null;
 }
 async function findVersionedDiagDirs() {
   const results = [];
