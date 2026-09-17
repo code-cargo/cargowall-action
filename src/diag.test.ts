@@ -4,13 +4,25 @@ vi.mock('fs', () => ({
   promises: {
     readFile: vi.fn(),
     readlink: vi.fn(),
+    access: vi.fn(),
+    readdir: vi.fn(),
   },
 }))
 
 import { promises as fsp } from 'fs'
-import { findRunnerRootFromAncestry, parsePpid, parseWorkerSteps, runnerRootFromExe } from './diag'
+import {
+  findDiagDir,
+  findRunnerRootFromAncestry,
+  parsePpid,
+  parseWorkerSteps,
+  runnerRootFromExe,
+} from './diag'
 
-/** One /proc entry per pid, as the ancestry walk reads them. */
+/**
+ * One /proc entry per pid, as the ancestry walk reads them. `exe` is what
+ * the walk matches on; `comm` only lands in the stat line, which is where
+ * it belongs — a test that passes with a misleading comm is the point.
+ */
 type ProcEntry = { comm: string; ppid: number; exe?: string }
 
 /**
@@ -22,16 +34,27 @@ function withProc(table: Record<number, ProcEntry>): void {
   const pidOf = (p: string): number => Number(p.split('/')[2])
   vi.mocked(fsp.readFile).mockImplementation((async (p: string) => {
     const entry = table[pidOf(p)]
-    if (!entry) throw new Error('ENOENT')
-    if (p.endsWith('/comm')) return `${entry.comm}\n`
-    if (p.endsWith('/stat')) return `${pidOf(p)} (${entry.comm}) S ${entry.ppid} 0 0 0 -1 4194560 100`
-    throw new Error('ENOENT')
+    if (!entry || !p.endsWith('/stat')) throw new Error('ENOENT')
+    return `${pidOf(p)} (${entry.comm}) S ${entry.ppid} 0 0 0 -1 4194560 100`
   }) as unknown as typeof fsp.readFile)
   vi.mocked(fsp.readlink).mockImplementation((async (p: string) => {
     const exe = table[pidOf(p)]?.exe
     if (!exe) throw new Error('EACCES')
     return exe
   }) as unknown as typeof fsp.readlink)
+}
+
+/** The directories that exist, plus the entries each readable one lists. */
+function withPaths(accessible: string[], dirs: Record<string, string[]> = {}): void {
+  const present = new Set(accessible)
+  vi.mocked(fsp.access).mockImplementation((async (p: string) => {
+    if (!present.has(p)) throw new Error('ENOENT')
+  }) as unknown as typeof fsp.access)
+  vi.mocked(fsp.readdir).mockImplementation((async (p: string) => {
+    const names = dirs[p]
+    if (!names) throw new Error('ENOENT')
+    return names.map(name => ({ name, isDirectory: () => true }))
+  }) as unknown as typeof fsp.readdir)
 }
 
 const LOG = `[2026-08-06 18:23:40Z INFO HostContext] Well known directory 'Root': '/home/runner/actions-runner'
@@ -112,6 +135,24 @@ describe('runnerRootFromExe', () => {
   it('maps the ARC image layout to /home/runner', () => {
     expect(runnerRootFromExe('/home/runner/bin/Runner.Worker')).toBe('/home/runner')
   })
+
+  it('accepts the Listener as well as the Worker', () => {
+    expect(runnerRootFromExe('/opt/self-hosted/bin/Runner.Listener')).toBe('/opt/self-hosted')
+  })
+
+  it('strips the kernel\'s (deleted) suffix from a replaced binary', () => {
+    expect(runnerRootFromExe('/home/runner/bin/Runner.Worker (deleted)')).toBe('/home/runner')
+  })
+
+  it('rejects an exe that is not a runner binary', () => {
+    expect(runnerRootFromExe('/usr/bin/node')).toBeNull()
+    expect(runnerRootFromExe('/bin/bash')).toBeNull()
+  })
+
+  it('rejects a runner-named binary outside a bin directory', () => {
+    expect(runnerRootFromExe('/tmp/Runner.Worker')).toBeNull()
+    expect(runnerRootFromExe('/home/runner/sbin/Runner.Worker')).toBeNull()
+  })
 })
 
 describe('findRunnerRootFromAncestry', () => {
@@ -119,12 +160,12 @@ describe('findRunnerRootFromAncestry', () => {
     vi.clearAllMocks()
   })
 
-  it('walks past the shell and node to Runner.Worker on an ARC image', async () => {
+  it('walks past the shell and node to the worker on an ARC image', async () => {
     // The real chain in an ARC pod: the action's node under the step's bash
     // under the worker, whose exe is <root>/bin/Runner.Worker.
     withProc({
-      500: { comm: 'node', ppid: 400 },
-      400: { comm: 'bash', ppid: 300 },
+      500: { comm: 'node', ppid: 400, exe: '/usr/bin/node' },
+      400: { comm: 'bash', ppid: 300, exe: '/bin/bash' },
       300: { comm: 'Runner.Worker', ppid: 200, exe: '/home/runner/bin/Runner.Worker' },
       200: { comm: 'Runner.Listener', ppid: 1, exe: '/home/runner/bin/Runner.Listener' },
     })
@@ -133,7 +174,7 @@ describe('findRunnerRootFromAncestry', () => {
 
   it('resolves the versioned root on a hosted runner', async () => {
     withProc({
-      90: { comm: 'node', ppid: 80 },
+      90: { comm: 'node', ppid: 80, exe: '/usr/bin/node' },
       80: {
         comm: 'Runner.Worker',
         ppid: 1,
@@ -144,26 +185,31 @@ describe('findRunnerRootFromAncestry', () => {
       .resolves.toBe('/home/runner/actions-runner/cached/2.337.0')
   })
 
-  it('stops at Runner.Listener when the worker is not in the chain', async () => {
+  it('keeps walking past a worker whose exe is unreadable and matches the listener', async () => {
+    // Yama or a hardened /proc hides the worker's exe link. Giving up there
+    // would lose a root the listener above it still carries.
     withProc({
-      70: { comm: 'node', ppid: 60 },
-      60: { comm: 'Runner.Listener', ppid: 1, exe: '/home/runner/bin/Runner.Listener' },
+      500: { comm: 'node', ppid: 400, exe: '/usr/bin/node' },
+      400: { comm: 'Runner.Worker', ppid: 300 },
+      300: { comm: 'Runner.Listener', ppid: 1, exe: '/home/runner/bin/Runner.Listener' },
     })
-    await expect(findRunnerRootFromAncestry(70)).resolves.toBe('/home/runner')
+    await expect(findRunnerRootFromAncestry(500)).resolves.toBe('/home/runner')
   })
 
-  it('returns null when the runner exe link cannot be read', async () => {
+  it('ignores a process merely named like the runner', async () => {
+    // comm is a truncated label anyone can hold; only the exe path is a root.
     withProc({
-      50: { comm: 'node', ppid: 40 },
-      40: { comm: 'Runner.Worker', ppid: 1 },
+      60: { comm: 'node', ppid: 50, exe: '/usr/bin/node' },
+      50: { comm: 'Runner.Worker', ppid: 40, exe: '/tmp/evil/Runner.Worker' },
+      40: { comm: 'Runner.Listener', ppid: 1, exe: '/home/runner/bin/Runner.Listener' },
     })
-    await expect(findRunnerRootFromAncestry(50)).resolves.toBeNull()
+    await expect(findRunnerRootFromAncestry(60)).resolves.toBe('/home/runner')
   })
 
   it('returns null when the chain ends without a runner — a container job', async () => {
     withProc({
-      30: { comm: 'node', ppid: 20 },
-      20: { comm: 'docker-init', ppid: 1 },
+      30: { comm: 'node', ppid: 20, exe: '/usr/bin/node' },
+      20: { comm: 'docker-init', ppid: 1, exe: '/sbin/docker-init' },
     })
     await expect(findRunnerRootFromAncestry(30)).resolves.toBeNull()
   })
@@ -172,5 +218,45 @@ describe('findRunnerRootFromAncestry', () => {
     withProc({})
     await expect(findRunnerRootFromAncestry(1234)).resolves.toBeNull()
     await expect(findRunnerRootFromAncestry(1)).resolves.toBeNull()
+  })
+})
+
+describe('findDiagDir', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  /** node under the worker, as every job runs it. */
+  const chainTo = (exe: string): void => withProc({
+    500: { comm: 'node', ppid: 400, exe: '/usr/bin/node' },
+    400: { comm: 'Runner.Worker', ppid: 1, exe },
+  })
+
+  it('returns the _diag beside the runner root ancestry found', async () => {
+    chainTo('/home/runner/bin/Runner.Worker')
+    withPaths(['/home/runner/_diag'])
+    await expect(findDiagDir()).resolves.toBe('/home/runner/_diag')
+  })
+
+  it('falls through to the versioned layout when the derived _diag does not exist', async () => {
+    chainTo('/home/runner/bin/Runner.Worker')
+    withPaths(
+      ['/home/runner/actions-runner/cached/2.337.0/_diag', '/home/runner/actions-runner/cached/_diag'],
+      { '/home/runner/actions-runner/cached': ['2.337.0'] },
+    )
+    await expect(findDiagDir())
+      .resolves.toBe('/home/runner/actions-runner/cached/2.337.0/_diag')
+  })
+
+  it('uses the known layouts when there is no runner ancestor', async () => {
+    withProc({ 500: { comm: 'node', ppid: 1, exe: '/usr/bin/node' } })
+    withPaths(['/home/runner/_diag'])
+    await expect(findDiagDir()).resolves.toBe('/home/runner/_diag')
+  })
+
+  it('returns null when neither model finds anything', async () => {
+    withProc({})
+    withPaths([])
+    await expect(findDiagDir()).resolves.toBeNull()
   })
 })

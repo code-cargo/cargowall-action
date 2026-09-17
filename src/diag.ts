@@ -17,28 +17,47 @@ import type { StepEntry } from './summary'
 /**
  * Find the runner's _diag directory. Returns the path or null if not found.
  *
- * The runner root is taken from the process that owns this job first: the
- * action's node process descends from Runner.Worker, whose /proc/<pid>/exe
- * resolves to <root>/bin/Runner.Worker, and _diag is a sibling of bin. That
- * is layout-agnostic — hosted runners live under
- * /home/runner/actions-runner/cached/<version>, ARC images install the
- * runner at /home/runner itself, a self-hosted install can be anywhere —
- * where the fixed candidate list is not (ARC runs used to fall through it
- * and post `--steps []`, leaving every ordinal unnamed).
+ * Two discovery models, tried in that order and kept apart. The primary one
+ * is the process that owns this job: the action's node process descends
+ * from Runner.Worker, whose /proc/<pid>/exe is <root>/bin/Runner.Worker,
+ * and _diag is a sibling of bin. That is layout-agnostic — hosted runners
+ * live under /home/runner/actions-runner/cached/<version>, ARC images
+ * install the runner at /home/runner itself, a self-hosted install can be
+ * anywhere — where the fixed candidate list is not (ARC runs used to fall
+ * through it and post `--steps []`, leaving every ordinal unnamed).
+ *
+ * The known layouts run only when ancestry cannot produce an accessible
+ * _diag, never merged into one candidate list: an existing directory is a
+ * weak acceptance test (a runner image can ship an empty cached/_diag), so
+ * a derived path must not be allowed to win on existence alone over the
+ * versioned path those fallbacks deliberately try first.
  */
 export async function findDiagDir(): Promise<string | null> {
-  const candidates: string[] = []
   const root = await findRunnerRootFromAncestry()
-  if (root) candidates.push(path.join(root, '_diag'))
+  if (root) {
+    const diag = path.join(root, '_diag')
+    try {
+      await fs.access(diag)
+      return diag
+    } catch { /* runner root without a _diag — try the known layouts */ }
+  }
+  return findDiagDirFromKnownLayouts()
+}
 
-  // Known layouts. The versioned path (e.g. cached/2.333.1/_diag) takes
-  // priority — some runner images have a cached/_diag without logs.
-  candidates.push(
+/**
+ * The fixed GitHub-hosted and ARC install locations, for when the ancestry
+ * walk comes up empty (a container job, where the worker runs on the host,
+ * or a /proc this process cannot read). The versioned path
+ * (e.g. cached/2.333.1/_diag) takes priority — some runner images have a
+ * cached/_diag without logs.
+ */
+async function findDiagDirFromKnownLayouts(): Promise<string | null> {
+  const candidates = [
     ...(await findVersionedDiagDirs()),
     '/home/runner/actions-runner/cached/_diag',
     '/home/runner/actions-runner/_diag',
     '/home/runner/_diag',
-  )
+  ]
 
   for (const candidate of candidates) {
     try {
@@ -62,31 +81,30 @@ export async function findDiagDir(): Promise<string | null> {
   return null
 }
 
-const RUNNER_COMMS = new Set(['Runner.Worker', 'Runner.Listener'])
-
 /**
- * Walk the parent chain from startPid looking for the runner process and
- * return its install root, or null when /proc is unavailable (non-Linux),
- * the chain ends without one (a container job, where the worker lives on
- * the host), or the exe link cannot be read.
+ * Walk the parent chain from startPid for the runner that owns this job and
+ * return its install root, or null when no ancestor is one: a container job
+ * (the worker lives on the host), or a /proc that cannot be read at all.
+ *
+ * The match is the exe path, not the process name — the install root is
+ * what /proc/<pid>/exe carries, while comm is a truncated 16-byte label
+ * that cannot produce one. So an unreadable exe (EACCES under Yama, a
+ * deleted binary) means "not this pid" and the walk continues: a Worker
+ * whose exe is hidden still leaves the Listener above it to match.
  */
 export async function findRunnerRootFromAncestry(startPid: number = process.pid): Promise<string | null> {
   let pid = startPid
   for (let hop = 0; hop < 64 && pid > 1; hop++) {
-    let comm: string
+    try {
+      const root = runnerRootFromExe(await fs.readlink(`/proc/${pid}/exe`))
+      if (root) return root
+    } catch { /* unreadable exe — keep walking */ }
+
     let stat: string
     try {
-      comm = (await fs.readFile(`/proc/${pid}/comm`, 'utf8')).trim()
       stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8')
     } catch {
       return null
-    }
-    if (RUNNER_COMMS.has(comm)) {
-      try {
-        return runnerRootFromExe(await fs.readlink(`/proc/${pid}/exe`))
-      } catch {
-        return null
-      }
     }
     const ppid = parsePpid(stat)
     if (ppid === null) return null
@@ -95,9 +113,19 @@ export async function findRunnerRootFromAncestry(startPid: number = process.pid)
   return null
 }
 
-/** `<root>/bin/Runner.Worker` → `<root>`. */
-export function runnerRootFromExe(exe: string): string {
-  return path.dirname(path.dirname(exe))
+/**
+ * `<root>/bin/Runner.Worker` → `<root>`, and null for anything that is not
+ * a runner binary in a bin directory — the check that keeps a process which
+ * merely looks like the runner from yielding a made-up root. /proc paths are
+ * Linux, so they are parsed as posix wherever the tests run.
+ */
+export function runnerRootFromExe(exe: string): string | null {
+  const cleaned = exe.replace(/ \(deleted\)$/, '')
+  const base = path.posix.basename(cleaned)
+  if (base !== 'Runner.Worker' && base !== 'Runner.Listener') return null
+  const bin = path.posix.dirname(cleaned)
+  if (path.posix.basename(bin) !== 'bin') return null
+  return path.posix.dirname(bin)
 }
 
 /**

@@ -25231,15 +25231,24 @@ var import_fs5 = require("fs");
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
 async function findDiagDir() {
-  const candidates = [];
   const root = await findRunnerRootFromAncestry();
-  if (root) candidates.push(path4.join(root, "_diag"));
-  candidates.push(
+  if (root) {
+    const diag = path4.join(root, "_diag");
+    try {
+      await import_fs4.promises.access(diag);
+      return diag;
+    } catch {
+    }
+  }
+  return findDiagDirFromKnownLayouts();
+}
+async function findDiagDirFromKnownLayouts() {
+  const candidates = [
     ...await findVersionedDiagDirs(),
     "/home/runner/actions-runner/cached/_diag",
     "/home/runner/actions-runner/_diag",
     "/home/runner/_diag"
-  );
+  ];
   for (const candidate of candidates) {
     try {
       await import_fs4.promises.access(candidate);
@@ -25261,24 +25270,19 @@ async function findDiagDir() {
   }
   return null;
 }
-var RUNNER_COMMS = /* @__PURE__ */ new Set(["Runner.Worker", "Runner.Listener"]);
 async function findRunnerRootFromAncestry(startPid = process.pid) {
   let pid = startPid;
   for (let hop = 0; hop < 64 && pid > 1; hop++) {
-    let comm;
+    try {
+      const root = runnerRootFromExe(await import_fs4.promises.readlink(`/proc/${pid}/exe`));
+      if (root) return root;
+    } catch {
+    }
     let stat2;
     try {
-      comm = (await import_fs4.promises.readFile(`/proc/${pid}/comm`, "utf8")).trim();
       stat2 = await import_fs4.promises.readFile(`/proc/${pid}/stat`, "utf8");
     } catch {
       return null;
-    }
-    if (RUNNER_COMMS.has(comm)) {
-      try {
-        return runnerRootFromExe(await import_fs4.promises.readlink(`/proc/${pid}/exe`));
-      } catch {
-        return null;
-      }
     }
     const ppid = parsePpid(stat2);
     if (ppid === null) return null;
@@ -25287,7 +25291,12 @@ async function findRunnerRootFromAncestry(startPid = process.pid) {
   return null;
 }
 function runnerRootFromExe(exe) {
-  return path4.dirname(path4.dirname(exe));
+  const cleaned = exe.replace(/ \(deleted\)$/, "");
+  const base = path4.posix.basename(cleaned);
+  if (base !== "Runner.Worker" && base !== "Runner.Listener") return null;
+  const bin = path4.posix.dirname(cleaned);
+  if (path4.posix.basename(bin) !== "bin") return null;
+  return path4.posix.dirname(bin);
 }
 function parsePpid(stat2) {
   const end = stat2.lastIndexOf(")");
