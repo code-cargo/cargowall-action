@@ -21561,11 +21561,11 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v2.0.0-rc.6";
+var CARGOWALL_VERSION = "v2.0.0-rc.7";
 var CARGOWALL_REPO = "code-cargo/cargowall";
 var CARGOWALL_DIGESTS = {
-  amd64: "7ccb9639e63738fd2a470e6f0ecfd28b9ec7d5e05b1ac611eb0bea81a0d019af",
-  arm64: "0309fd90f81d1a00fd140a703f1a435fba89c8f0883855241d65e8fc71f6f6f0"
+  amd64: "cc4eadb28c154bb01ac611f8b5eedf6e83feb9e3a152ba421f97e6c228b99e84",
+  arm64: "2b3dd7fdaf6df7e297c06f29c52495fdf23543c20f203bcc2d45509cc9f0c333"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -25587,6 +25587,7 @@ var import_fs6 = require("fs");
 
 // src/dns.ts
 var import_fs4 = require("fs");
+var PROXY_ADDRESS = "127.0.0.1";
 function isValidIPv4(ip) {
   const parts = ip.split(".");
   if (parts.length !== 4) return false;
@@ -25671,6 +25672,10 @@ function parseResolvConf(content) {
     }
   }
   return { nameservers, hasStubResolver };
+}
+function proxyResolvConf(original) {
+  const carried = (original ?? "").split("\n").filter((line) => /^\s*(search|domain)\s+\S/.test(line)).map((line) => line.trim());
+  return [`nameserver ${PROXY_ADDRESS}`, ...carried].join("\n") + "\n";
 }
 async function tryResolvConf(filePath, label) {
   try {
@@ -25766,6 +25771,7 @@ var READY_FILE = "/tmp/cargowall-ready";
 var PID_FILE = "/tmp/cargowall.pid";
 var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
+var RESOLV_CONF = "/etc/resolv.conf";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
 var VALID_MODES = ["enforce", "audit"];
@@ -25897,19 +25903,7 @@ async function start() {
   if (skipPolicyFetch && apiUrl && !offline) {
     info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
   }
-  try {
-    await import_fs5.promises.access("/etc/resolv.conf");
-    await exec("sudo", ["cp", "/etc/resolv.conf", RESOLV_CONF_BACKUP]);
-    info("Backed up /etc/resolv.conf");
-  } catch {
-  }
-  info("Configuring DNS to use cargowall proxy...");
-  try {
-    await exec("bash", ["-c", 'echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf > /dev/null']);
-  } catch (err) {
-    warning(`Failed to overwrite /etc/resolv.conf: ${err}`);
-    await restoreDns();
-  }
+  await repointResolvConf();
   info("Starting cargowall...");
   await clearStartupFiles();
   const env = {
@@ -26149,11 +26143,52 @@ function handlePolicyLockdown(reason) {
     `${reason} CargoWall stays alive and is locking this runner down to deny-all; egress will be blocked for the rest of the job.`
   );
 }
+async function readResolvConf() {
+  try {
+    return await import_fs5.promises.readFile(RESOLV_CONF, "utf8");
+  } catch {
+    let contents = "";
+    const code = await exec("sudo", ["cat", RESOLV_CONF], {
+      ignoreReturnCode: true,
+      silent: true,
+      listeners: { stdout: (data) => {
+        contents += data.toString();
+      } }
+    });
+    return code === 0 ? contents : null;
+  }
+}
+async function repointResolvConf() {
+  const original = await readResolvConf();
+  if (original !== null) {
+    try {
+      await exec("sudo", ["cp", RESOLV_CONF, RESOLV_CONF_BACKUP]);
+      info("Backed up /etc/resolv.conf");
+    } catch (err) {
+      warning(`Failed to back up /etc/resolv.conf: ${err}`);
+    }
+  }
+  info("Configuring DNS to use cargowall proxy...");
+  try {
+    await exec("sudo", ["tee", RESOLV_CONF], {
+      input: Buffer.from(proxyResolvConf(original)),
+      silent: true
+    });
+  } catch (err) {
+    warning(`Failed to overwrite /etc/resolv.conf: ${err}`);
+    await restoreDns();
+  }
+}
 async function restoreDns() {
   try {
     await import_fs5.promises.access(RESOLV_CONF_BACKUP);
-    await exec("sudo", ["cp", RESOLV_CONF_BACKUP, "/etc/resolv.conf"]);
   } catch {
+    return;
+  }
+  try {
+    await exec("sudo", ["cp", RESOLV_CONF_BACKUP, RESOLV_CONF]);
+  } catch (err) {
+    warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`);
   }
 }
 function resolveApiFailureMode(args) {

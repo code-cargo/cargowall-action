@@ -4,7 +4,7 @@ import * as github from '@actions/github'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
-import { detectDnsUpstream } from './dns'
+import { detectDnsUpstream, proxyResolvConf } from './dns'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -16,6 +16,7 @@ const PID_FILE = '/tmp/cargowall.pid'
 // are shared with the Go binary — keep them in sync.
 const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
+const RESOLV_CONF = '/etc/resolv.conf'
 const RESOLV_CONF_BACKUP = '/etc/resolv.conf.cargowall.bak'
 const STARTUP_TIMEOUT = 30
 
@@ -218,23 +219,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     core.info("  Policy fetch: skipped — running this step's configuration; post-step audit push still attempted (needs id-token: write)")
   }
 
-  // Backup current resolv.conf
-  try {
-    await fs.access('/etc/resolv.conf')
-    await exec.exec('sudo', ['cp', '/etc/resolv.conf', RESOLV_CONF_BACKUP])
-    core.info('Backed up /etc/resolv.conf')
-  } catch {
-    // resolv.conf doesn't exist, skip backup
-  }
-
-  // Configure DNS to use cargowall's proxy
-  core.info('Configuring DNS to use cargowall proxy...')
-  try {
-    await exec.exec('bash', ['-c', 'echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf > /dev/null'])
-  } catch (err) {
-    core.warning(`Failed to overwrite /etc/resolv.conf: ${err}`)
-    await restoreDns()
-  }
+  await repointResolvConf()
 
   // Start cargowall in the background
   core.info('Starting cargowall...')
@@ -705,12 +690,78 @@ function handlePolicyLockdown(reason: string): never {
   )
 }
 
+/**
+ * The runner's resolv.conf, or null when there is none.
+ *
+ * A read the runner user cannot do is not the same as a missing file, and
+ * conflating them would silently cost the search list. `sudo cat` tells them
+ * apart — the repoint needs root to write anyway, so borrowing it to read
+ * costs nothing.
+ */
+async function readResolvConf(): Promise<string | null> {
+  try {
+    return await fs.readFile(RESOLV_CONF, 'utf8')
+  } catch {
+    let contents = ''
+    const code = await exec.exec('sudo', ['cat', RESOLV_CONF], {
+      ignoreReturnCode: true,
+      silent: true,
+      listeners: { stdout: (data: Buffer) => { contents += data.toString() } },
+    })
+    return code === 0 ? contents : null
+  }
+}
+
+/**
+ * Point the runner's resolver at cargowall's proxy, backing up what a
+ * successful read returned so handleStartupFailure can put it back. The post
+ * step deliberately does not — see cleanup.ts.
+ */
+async function repointResolvConf(): Promise<void> {
+  const original = await readResolvConf()
+
+  if (original !== null) {
+    try {
+      await exec.exec('sudo', ['cp', RESOLV_CONF, RESOLV_CONF_BACKUP])
+      core.info('Backed up /etc/resolv.conf')
+    } catch (err) {
+      // Not fatal: the firewall still starts, but this run cannot put the
+      // resolver back the way it found it.
+      core.warning(`Failed to back up /etc/resolv.conf: ${err}`)
+    }
+  }
+
+  core.info('Configuring DNS to use cargowall proxy...')
+  try {
+    // Fed to `tee` on stdin rather than built into a shell command: the file's
+    // own contents are in that text, and nothing from it should reach a shell.
+    await exec.exec('sudo', ['tee', RESOLV_CONF], {
+      input: Buffer.from(proxyResolvConf(original)),
+      silent: true,
+    })
+  } catch (err) {
+    core.warning(`Failed to overwrite /etc/resolv.conf: ${err}`)
+    await restoreDns()
+  }
+}
+
 async function restoreDns(): Promise<void> {
   try {
+    // Existence only (F_OK, the default): the copy below runs as root, so
+    // whether THIS user can read the backup decides nothing.
     await fs.access(RESOLV_CONF_BACKUP)
-    await exec.exec('sudo', ['cp', RESOLV_CONF_BACKUP, '/etc/resolv.conf'])
   } catch {
-    // No backup to restore
+    // No backup to restore — the common case when there was no resolv.conf.
+    return
+  }
+
+  try {
+    await exec.exec('sudo', ['cp', RESOLV_CONF_BACKUP, RESOLV_CONF])
+  } catch (err) {
+    // Distinct from having no backup, and worth saying out loud: the resolver
+    // is left pointing at a proxy that is not running. Reachable rather than
+    // theoretical — sudo lockdown denies the action's own sudo.
+    core.warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`)
   }
 }
 

@@ -133,9 +133,11 @@ inputs:
       destination-identity posture (TLS SNI / HTTP Host / QUIC), which pins
       WHICH hostname a flow to a shared CDN or edge IP may reach. "off"
       (default), "observe" (parse the presented name and record what it would
-      drop, dropping nothing), "enforce" (drop flows whose name no rule allows
-      on that IP), "enforce-pinned" (also drop when the name never resolved to
-      that destination). The enforce rungs require `container-egress: enforce`.
+      drop, dropping nothing), "enforce" (drop a flow whose presented name no
+      rule allows — the name alone, so an allowed name still opens any
+      L7-scoped IP), "enforce-pinned" (also drop when that name never resolved
+      to the destination through cargowall's DNS proxy, closing that gap).
+      The enforce rungs require `container-egress: enforce`.
     required: false
 
 outputs:
