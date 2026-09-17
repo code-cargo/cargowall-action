@@ -747,10 +747,21 @@ async function repointResolvConf(): Promise<void> {
 
 async function restoreDns(): Promise<void> {
   try {
+    // Existence only (F_OK, the default): the copy below runs as root, so
+    // whether THIS user can read the backup decides nothing.
     await fs.access(RESOLV_CONF_BACKUP)
-    await exec.exec('sudo', ['cp', RESOLV_CONF_BACKUP, RESOLV_CONF])
   } catch {
-    // No backup to restore
+    // No backup to restore — the common case when there was no resolv.conf.
+    return
+  }
+
+  try {
+    await exec.exec('sudo', ['cp', RESOLV_CONF_BACKUP, RESOLV_CONF])
+  } catch (err) {
+    // Distinct from having no backup, and worth saying out loud: the resolver
+    // is left pointing at a proxy that is not running. Reachable rather than
+    // theoretical — sudo lockdown denies the action's own sudo.
+    core.warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`)
   }
 }
 

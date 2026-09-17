@@ -26182,8 +26182,13 @@ async function repointResolvConf() {
 async function restoreDns() {
   try {
     await import_fs5.promises.access(RESOLV_CONF_BACKUP);
-    await exec("sudo", ["cp", RESOLV_CONF_BACKUP, RESOLV_CONF]);
   } catch {
+    return;
+  }
+  try {
+    await exec("sudo", ["cp", RESOLV_CONF_BACKUP, RESOLV_CONF]);
+  } catch (err) {
+    warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`);
   }
 }
 function resolveApiFailureMode(args) {

@@ -484,6 +484,28 @@ describe('start() failure-sentinel handling', () => {
     await expect(start()).rejects.toThrow(/locking this runner down to deny-all/)
   })
 
+  it('warns when the DNS restore itself fails, rather than swallowing it', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({
+      [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program'),
+      '/etc/resolv.conf.cargowall.bak': 'search corp.lan\n',
+    })
+    vi.mocked(exec.exec).mockImplementation(async (cmd, args) => {
+      if (cmd === 'sudo' && args?.[0] === 'cp' && args?.[1]?.endsWith('.bak')) {
+        throw new Error('sudo: a password is required')
+      }
+      return 0
+    })
+
+    await start()
+
+    // Silence here leaves the runner resolving through a proxy that is not
+    // running, with nothing in the log to say so.
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to restore /etc/resolv.conf')
+    )
+  })
+
   it('honours fail-on-unsupported:false for a generic fatal startup error', async () => {
     withInputs({ 'fail-on-unsupported': 'false' })
     withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program') })
