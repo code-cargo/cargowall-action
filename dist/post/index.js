@@ -25230,8 +25230,8 @@ var import_fs5 = require("fs");
 // src/diag.ts
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
-async function findDiagDir() {
-  const root = await findRunnerRootFromAncestry();
+async function findDiagDir(startPid = process.pid) {
+  const root = await findRunnerRootFromAncestry(startPid);
   if (root) {
     const diag = path4.join(root, "_diag");
     try {

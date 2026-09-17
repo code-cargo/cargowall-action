@@ -232,31 +232,34 @@ describe('findDiagDir', () => {
     400: { comm: 'Runner.Worker', ppid: 1, exe },
   })
 
+  // A self-hosted root no hardcoded candidate can invent, so only the walk
+  // can produce it — and /home/runner/_diag is laid down beside it, so a
+  // findDiagDir that skips ancestry returns that instead and fails here.
   it('returns the _diag beside the runner root ancestry found', async () => {
-    chainTo('/home/runner/bin/Runner.Worker')
-    withPaths(['/home/runner/_diag'])
-    await expect(findDiagDir()).resolves.toBe('/home/runner/_diag')
+    chainTo('/opt/actions-runner/bin/Runner.Worker')
+    withPaths(['/opt/actions-runner/_diag', '/home/runner/_diag'])
+    await expect(findDiagDir(500)).resolves.toBe('/opt/actions-runner/_diag')
   })
 
   it('falls through to the versioned layout when the derived _diag does not exist', async () => {
-    chainTo('/home/runner/bin/Runner.Worker')
+    chainTo('/opt/actions-runner/bin/Runner.Worker')
     withPaths(
       ['/home/runner/actions-runner/cached/2.337.0/_diag', '/home/runner/actions-runner/cached/_diag'],
       { '/home/runner/actions-runner/cached': ['2.337.0'] },
     )
-    await expect(findDiagDir())
+    await expect(findDiagDir(500))
       .resolves.toBe('/home/runner/actions-runner/cached/2.337.0/_diag')
   })
 
   it('uses the known layouts when there is no runner ancestor', async () => {
     withProc({ 500: { comm: 'node', ppid: 1, exe: '/usr/bin/node' } })
     withPaths(['/home/runner/_diag'])
-    await expect(findDiagDir()).resolves.toBe('/home/runner/_diag')
+    await expect(findDiagDir(500)).resolves.toBe('/home/runner/_diag')
   })
 
   it('returns null when neither model finds anything', async () => {
     withProc({})
     withPaths([])
-    await expect(findDiagDir()).resolves.toBeNull()
+    await expect(findDiagDir(500)).resolves.toBeNull()
   })
 })

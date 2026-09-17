@@ -31,9 +31,12 @@ import type { StepEntry } from './summary'
  * weak acceptance test (a runner image can ship an empty cached/_diag), so
  * a derived path must not be allowed to win on existence alone over the
  * versioned path those fallbacks deliberately try first.
+ *
+ * startPid is where the walk begins; the default is this process, which is
+ * the only thing production ever wants.
  */
-export async function findDiagDir(): Promise<string | null> {
-  const root = await findRunnerRootFromAncestry()
+export async function findDiagDir(startPid: number = process.pid): Promise<string | null> {
+  const root = await findRunnerRootFromAncestry(startPid)
   if (root) {
     const diag = path.join(root, '_diag')
     try {
