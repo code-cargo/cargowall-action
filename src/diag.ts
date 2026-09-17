@@ -17,20 +17,18 @@ import type { StepEntry } from './summary'
 /**
  * Find the runner's _diag directory. Returns the path or null if not found.
  *
- * Two discovery models, tried in that order and kept apart. The primary one
- * is the process that owns this job: the action's node process descends
- * from Runner.Worker, whose /proc/<pid>/exe is <root>/bin/Runner.Worker,
- * and _diag is a sibling of bin. That is layout-agnostic — hosted runners
- * live under /home/runner/actions-runner/cached/<version>, ARC images
- * install the runner at /home/runner itself, a self-hosted install can be
- * anywhere — where the fixed candidate list is not (ARC runs used to fall
- * through it and post `--steps []`, leaving every ordinal unnamed).
+ * _diag is a sibling of bin under the runner's install root, so the process
+ * that owns this job names it: the action's node descends from
+ * Runner.Worker, whose /proc/<pid>/exe is <root>/bin/Runner.Worker. That
+ * holds wherever the runner is installed — hosted
+ * /home/runner/actions-runner/cached/<version>, ARC /home/runner, a
+ * self-hosted root anywhere — which the fixed candidate list does not (ARC
+ * runs fell through it and posted `--steps []`, every ordinal unnamed).
  *
- * The known layouts run only when ancestry cannot produce an accessible
- * _diag, never merged into one candidate list: an existing directory is a
- * weak acceptance test (a runner image can ship an empty cached/_diag), so
- * a derived path must not be allowed to win on existence alone over the
- * versioned path those fallbacks deliberately try first.
+ * The known layouts are the fallback for when /proc cannot name a root at
+ * all: a container job, whose worker runs on the host. They stay a separate
+ * search rather than candidates appended to this one so the derived path
+ * and the guesses cannot be reordered into each other by accident.
  *
  * startPid is where the walk begins; the default is this process, which is
  * the only thing production ever wants.
@@ -91,9 +89,12 @@ async function findDiagDirFromKnownLayouts(): Promise<string | null> {
  *
  * The match is the exe path, not the process name — the install root is
  * what /proc/<pid>/exe carries, while comm is a truncated 16-byte label
- * that cannot produce one. So an unreadable exe (EACCES under Yama, a
- * deleted binary) means "not this pid" and the walk continues: a Worker
- * whose exe is hidden still leaves the Listener above it to match.
+ * that cannot produce one. Reading it needs PTRACE_MODE_READ_FSCREDS,
+ * which the runner chain satisfies (worker, shell and node are all the
+ * same uid; Yama's ptrace_scope only gates PTRACE_MODE_ATTACH), but an
+ * ancestor under another uid — pid 1, a supervisor — denies it, and a pid
+ * can exit mid-walk. So an unreadable exe means "not this pid" and the
+ * walk continues rather than abandoning a root still above it.
  */
 export async function findRunnerRootFromAncestry(startPid: number = process.pid): Promise<string | null> {
   let pid = startPid

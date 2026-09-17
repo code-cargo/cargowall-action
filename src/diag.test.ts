@@ -186,8 +186,8 @@ describe('findRunnerRootFromAncestry', () => {
   })
 
   it('keeps walking past a worker whose exe is unreadable and matches the listener', async () => {
-    // Yama or a hardened /proc hides the worker's exe link. Giving up there
-    // would lose a root the listener above it still carries.
+    // The worker's exe link is unreadable — it exited mid-walk, or is not
+    // dumpable. Giving up there loses a root the listener still carries.
     withProc({
       500: { comm: 'node', ppid: 400, exe: '/usr/bin/node' },
       400: { comm: 'Runner.Worker', ppid: 300 },
