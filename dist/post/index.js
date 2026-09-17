@@ -25231,12 +25231,15 @@ var import_fs5 = require("fs");
 var import_fs4 = require("fs");
 var path4 = __toESM(require("path"));
 async function findDiagDir() {
-  const versionedCandidates = await findVersionedDiagDirs();
-  const candidates = [
-    ...versionedCandidates,
+  const candidates = [];
+  const root = await findRunnerRootFromAncestry();
+  if (root) candidates.push(path4.join(root, "_diag"));
+  candidates.push(
+    ...await findVersionedDiagDirs(),
     "/home/runner/actions-runner/cached/_diag",
-    "/home/runner/actions-runner/_diag"
-  ];
+    "/home/runner/actions-runner/_diag",
+    "/home/runner/_diag"
+  );
   for (const candidate of candidates) {
     try {
       await import_fs4.promises.access(candidate);
@@ -25257,6 +25260,41 @@ async function findDiagDir() {
   } catch {
   }
   return null;
+}
+var RUNNER_COMMS = /* @__PURE__ */ new Set(["Runner.Worker", "Runner.Listener"]);
+async function findRunnerRootFromAncestry(startPid = process.pid) {
+  let pid = startPid;
+  for (let hop = 0; hop < 64 && pid > 1; hop++) {
+    let comm;
+    let stat2;
+    try {
+      comm = (await import_fs4.promises.readFile(`/proc/${pid}/comm`, "utf8")).trim();
+      stat2 = await import_fs4.promises.readFile(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      return null;
+    }
+    if (RUNNER_COMMS.has(comm)) {
+      try {
+        return runnerRootFromExe(await import_fs4.promises.readlink(`/proc/${pid}/exe`));
+      } catch {
+        return null;
+      }
+    }
+    const ppid = parsePpid(stat2);
+    if (ppid === null) return null;
+    pid = ppid;
+  }
+  return null;
+}
+function runnerRootFromExe(exe) {
+  return path4.dirname(path4.dirname(exe));
+}
+function parsePpid(stat2) {
+  const end = stat2.lastIndexOf(")");
+  if (end < 0) return null;
+  const fields = stat2.slice(end + 1).trim().split(/\s+/);
+  const ppid = Number(fields[1]);
+  return Number.isInteger(ppid) ? ppid : null;
 }
 async function findVersionedDiagDirs() {
   const results = [];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseWorkerSteps } from './diag'
+import { findRunnerRootFromAncestry, parsePpid, parseWorkerSteps, runnerRootFromExe } from './diag'
 
 const LOG = `[2026-08-06 18:23:40Z INFO HostContext] Well known directory 'Root': '/home/runner/actions-runner'
 [2026-08-06 18:23:45Z INFO StepsRunner] Processing step: DisplayName='Run actions/checkout@v6'
@@ -52,5 +52,37 @@ describe('parseWorkerSteps', () => {
   it('ignores unrelated lines and empty content', () => {
     expect(parseWorkerSteps('')).toEqual([])
     expect(parseWorkerSteps('[2026-08-06 18:23:40Z INFO Worker] Job completed\n')).toEqual([])
+  })
+})
+
+describe('parsePpid', () => {
+  it('reads the field after the parenthesised comm', () => {
+    expect(parsePpid('1234 (node) S 1200 1234 1234 0 -1 4194560 100')).toBe(1200)
+  })
+
+  it('survives spaces and parentheses inside comm', () => {
+    expect(parsePpid('77 (Runner.Worker (x) y) S 42 77 77 0 -1')).toBe(42)
+  })
+
+  it('returns null for malformed input', () => {
+    expect(parsePpid('garbage')).toBeNull()
+    expect(parsePpid('1 (x) S')).toBeNull()
+  })
+})
+
+describe('runnerRootFromExe', () => {
+  it('maps the hosted-runner layout to the versioned root', () => {
+    expect(runnerRootFromExe('/home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker'))
+      .toBe('/home/runner/actions-runner/cached/2.337.0')
+  })
+
+  it('maps the ARC image layout to /home/runner', () => {
+    expect(runnerRootFromExe('/home/runner/bin/Runner.Worker')).toBe('/home/runner')
+  })
+})
+
+describe('findRunnerRootFromAncestry', () => {
+  it('returns null without a runner ancestor instead of throwing', async () => {
+    await expect(findRunnerRootFromAncestry(1)).resolves.toBeNull()
   })
 })

@@ -16,16 +16,29 @@ import type { StepEntry } from './summary'
 
 /**
  * Find the runner's _diag directory. Returns the path or null if not found.
+ *
+ * The runner root is taken from the process that owns this job first: the
+ * action's node process descends from Runner.Worker, whose /proc/<pid>/exe
+ * resolves to <root>/bin/Runner.Worker, and _diag is a sibling of bin. That
+ * is layout-agnostic — hosted runners live under
+ * /home/runner/actions-runner/cached/<version>, ARC images install the
+ * runner at /home/runner itself, a self-hosted install can be anywhere —
+ * where the fixed candidate list is not (ARC runs used to fall through it
+ * and post `--steps []`, leaving every ordinal unnamed).
  */
 export async function findDiagDir(): Promise<string | null> {
-  // Check known paths first. The versioned path (e.g. cached/2.333.1/_diag)
-  // takes priority — some runner images have a cached/_diag without logs.
-  const versionedCandidates = await findVersionedDiagDirs()
-  const candidates = [
-    ...versionedCandidates,
+  const candidates: string[] = []
+  const root = await findRunnerRootFromAncestry()
+  if (root) candidates.push(path.join(root, '_diag'))
+
+  // Known layouts. The versioned path (e.g. cached/2.333.1/_diag) takes
+  // priority — some runner images have a cached/_diag without logs.
+  candidates.push(
+    ...(await findVersionedDiagDirs()),
     '/home/runner/actions-runner/cached/_diag',
     '/home/runner/actions-runner/_diag',
-  ]
+    '/home/runner/_diag',
+  )
 
   for (const candidate of candidates) {
     try {
@@ -47,6 +60,57 @@ export async function findDiagDir(): Promise<string | null> {
   } catch { /* continue */ }
 
   return null
+}
+
+const RUNNER_COMMS = new Set(['Runner.Worker', 'Runner.Listener'])
+
+/**
+ * Walk the parent chain from startPid looking for the runner process and
+ * return its install root, or null when /proc is unavailable (non-Linux),
+ * the chain ends without one (a container job, where the worker lives on
+ * the host), or the exe link cannot be read.
+ */
+export async function findRunnerRootFromAncestry(startPid: number = process.pid): Promise<string | null> {
+  let pid = startPid
+  for (let hop = 0; hop < 64 && pid > 1; hop++) {
+    let comm: string
+    let stat: string
+    try {
+      comm = (await fs.readFile(`/proc/${pid}/comm`, 'utf8')).trim()
+      stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8')
+    } catch {
+      return null
+    }
+    if (RUNNER_COMMS.has(comm)) {
+      try {
+        return runnerRootFromExe(await fs.readlink(`/proc/${pid}/exe`))
+      } catch {
+        return null
+      }
+    }
+    const ppid = parsePpid(stat)
+    if (ppid === null) return null
+    pid = ppid
+  }
+  return null
+}
+
+/** `<root>/bin/Runner.Worker` → `<root>`. */
+export function runnerRootFromExe(exe: string): string {
+  return path.dirname(path.dirname(exe))
+}
+
+/**
+ * Parent pid from /proc/<pid>/stat. The comm field is parenthesised and may
+ * itself contain spaces or parentheses, so parse from the last ')': state
+ * is the field after it, ppid the one after that.
+ */
+export function parsePpid(stat: string): number | null {
+  const end = stat.lastIndexOf(')')
+  if (end < 0) return null
+  const fields = stat.slice(end + 1).trim().split(/\s+/)
+  const ppid = Number(fields[1])
+  return Number.isInteger(ppid) ? ppid : null
 }
 
 /**
