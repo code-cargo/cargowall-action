@@ -1,0 +1,95 @@
+name: Assert an L7 verdict
+description: >-
+  Dial an ALLOWED destination IP while presenting some other hostname, then
+  assert the verdict cargowall recorded for it. `curl --resolve` is what makes
+  the probe meaningful: it dials the address with no DNS lookup at all, so the
+  L4 verdict allows the flow and only the presented name is left to judge.
+inputs:
+  resolve-host:
+    description: Hostname whose resolved IP the probe dials (must be allowed by policy)
+    required: true
+  sni-host:
+    description: Hostname the probe presents as SNI
+    required: true
+  expect:
+    description: Audit event the verdict must land as — "blocked" (a real drop) or "would-block" (reported, passed)
+    required: true
+  reason:
+    description: Optional l7_reason the record must carry (e.g. name_not_at_ip)
+    required: false
+    default: ''
+  audit-log:
+    description: Path to cargowall's audit log
+    required: false
+    default: /tmp/cargowall-audit.json
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RESOLVE_HOST: ${{ inputs.resolve-host }}
+        SNI_HOST: ${{ inputs.sni-host }}
+        EXPECT: ${{ inputs.expect }}
+        REASON: ${{ inputs.reason }}
+        AUDIT_LOG: ${{ inputs.audit-log }}
+      run: |
+        set -uo pipefail
+        case "$EXPECT" in
+          blocked)     EVENT=l7_blocked ;;
+          would-block) EVENT=l7_would_block ;;
+          *) echo "ERROR: expect must be 'blocked' or 'would-block', got '$EXPECT'"; exit 1 ;;
+        esac
+
+        IP=$(getent ahostsv4 "$RESOLVE_HOST" | awk '{print $1; exit}')
+        if [ -z "$IP" ]; then
+          echo "ERROR: could not resolve $RESOLVE_HOST — the L4 allow this probe assumes is missing"
+          exit 1
+        fi
+        echo "$RESOLVE_HOST resolved to $IP; presenting $SNI_HOST"
+
+        # The HTTP result is never the assertion: the cert will not cover the
+        # name presented, and an edge may reject an unknown SNI outright.
+        rc=0
+        curl -skv --connect-timeout 5 --max-time 20 -o /dev/null \
+          --resolve "$SNI_HOST:443:$IP" "https://$SNI_HOST/" 2>/tmp/l7-probe.log || rc=$?
+
+        # The TCP connect is: a drop at L7 lands on the ClientHello, so a probe
+        # that never connected was blocked at L4 and proves nothing about L7.
+        if ! grep -q 'Connected to' /tmp/l7-probe.log; then
+          echo "ERROR: never reached $IP — this is an L4 block, not an L7 verdict"
+          cat /tmp/l7-probe.log
+          exit 1
+        fi
+        if [ "$EVENT" = l7_blocked ] && [ "$rc" -eq 0 ]; then
+          echo "ERROR: $SNI_HOST at $IP should have been dropped"
+          exit 1
+        fi
+
+        # The verdict is computed in userspace after the kernel punts the
+        # sample, so the record lands shortly after curl returns.
+        match() {
+          rows=$(grep "\"event_type\":\"$EVENT\"" "$AUDIT_LOG" 2>/dev/null \
+                 | grep "\"l7_name\":\"$SNI_HOST\"") || return 1
+          [ -n "$rows" ] || return 1
+          [ -z "$REASON" ] && return 0
+          printf '%s\n' "$rows" | grep -q "\"l7_reason\":\"$REASON\""
+        }
+        for _ in $(seq 1 15); do
+          match && break
+          sleep 1
+        done
+        if ! match; then
+          echo "ERROR: no $EVENT record naming $SNI_HOST${REASON:+ with reason $REASON}"
+          grep -o '"event_type":"[^"]*"' "$AUDIT_LOG" | sort | uniq -c
+          grep -o '"l7_reason":"[^"]*"' "$AUDIT_LOG" | sort | uniq -c
+          exit 1
+        fi
+
+        # A would-block is telemetry on a flow that was PASSED. If the same
+        # name also appears as a real drop, the posture is not what it claims.
+        if [ "$EVENT" = l7_would_block ] \
+           && grep '"event_type":"l7_blocked"' "$AUDIT_LOG" | grep -q "\"l7_name\":\"$SNI_HOST\""; then
+          echo "ERROR: $SNI_HOST was reported as a would-block AND dropped"
+          exit 1
+        fi
+        echo "$EVENT recorded for $SNI_HOST${REASON:+ (reason $REASON)}"

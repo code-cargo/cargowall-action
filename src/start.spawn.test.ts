@@ -27,7 +27,10 @@ vi.mock('@actions/core', () => ({
 }))
 vi.mock('@actions/exec', () => ({ exec: vi.fn(async () => 0) }))
 vi.mock('@actions/github', () => ({ context: { job: 'build' } }))
-vi.mock('./dns', () => ({
+// Only the detection is stubbed: proxyResolvConf stays real so these tests
+// assert the document that actually lands in /etc/resolv.conf.
+vi.mock('./dns', async importOriginal => ({
+  ...(await importOriginal<typeof import('./dns')>()),
   detectDnsUpstream: vi.fn(async () => ({ primary: '10.0.0.1:53' })),
 }))
 vi.mock('child_process', () => ({
@@ -48,6 +51,7 @@ vi.mock('fs', () => ({
 }))
 
 import * as core from '@actions/core'
+import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
 import { start } from './start'
@@ -284,6 +288,85 @@ describe('start() argument construction', () => {
     it('omits --audit-mode by default, since the default is enforce', async () => {
       withInputs({})
       expect(await cargowallArgs()).not.toContain('--audit-mode')
+    })
+  })
+
+  describe('resolv.conf repoint (#84)', () => {
+    /** The document handed to `sudo tee /etc/resolv.conf` on stdin. */
+    function writtenResolvConf(): string {
+      const call = vi.mocked(exec.exec).mock.calls.find(
+        c => c[0] === 'sudo' && (c[1] as string[])?.[0] === 'tee'
+      )
+      if (!call) throw new Error('resolv.conf was never rewritten')
+      return (call[2]?.input as Buffer).toString()
+    }
+
+    it('carries the search list over, so cargowall can strip host suffixes', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'nameserver 1.1.1.1\nsearch corp.lan\n' })
+
+      await start()
+
+      // The daemon reads this file when it starts — after this write — so
+      // what lands here is the whole of what it can strip.
+      expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\nsearch corp.lan\n')
+    })
+
+    it('reads the original file, not the root-owned backup', async () => {
+      withInputs({})
+      withFiles({
+        [READY_FILE]: '',
+        '/etc/resolv.conf': 'search live.lan\n',
+        '/etc/resolv.conf.cargowall.bak': 'search stale.lan\n',
+      })
+
+      await start()
+
+      expect(writtenResolvConf()).toContain('live.lan')
+    })
+
+    it('writes only the proxy when there is no resolv.conf at all', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '' })
+      // Both reads fail: no file for the unprivileged read, and `sudo cat`
+      // exits non-zero rather than handing back contents.
+      vi.mocked(exec.exec).mockImplementation(async (cmd, args) =>
+        cmd === 'sudo' && args?.[0] === 'cat' ? 1 : 0
+      )
+
+      await start()
+
+      expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\n')
+    })
+
+    it('reads through sudo when the file exists but the runner user cannot', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '' })
+      // Treating an unreadable file as an absent one would silently cost the
+      // search list — the failure this path exists to avoid.
+      vi.mocked(exec.exec).mockImplementation(async (cmd, args, opts) => {
+        if (cmd === 'sudo' && args?.[0] === 'cat') {
+          opts?.listeners?.stdout?.(Buffer.from('search root-only.lan\n'))
+        }
+        return 0
+      })
+
+      await start()
+
+      expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\nsearch root-only.lan\n')
+    })
+
+    it('never puts the file contents through a shell', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'search $(id).lan\n' })
+
+      await start()
+
+      // resolv.conf is DHCP-written, so its text must reach tee as stdin and
+      // never as part of a command line.
+      expect(writtenResolvConf()).toContain('$(id).lan')
+      const shelled = vi.mocked(exec.exec).mock.calls.filter(c => c[0] === 'bash')
+      expect(shelled.every(c => !String((c[1] as string[])?.[1]).includes('resolv.conf'))).toBe(true)
     })
   })
 

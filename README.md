@@ -133,6 +133,10 @@ With this configuration:
 
 Each suffix must have at least two labels (`.compute.internal` is valid, `.internal` is not) and cannot be a public suffix (`.com`, `.co.uk`, `.github.io`, … are rejected).
 
+**The runner's own `resolv.conf` search list is honoured too — for stripping only.** On a host with `search corp.lan`, a stub resolver asks for `myservice.corp.lan` before `myservice`, so that expanded form is judged as `myservice` and a rule for `myservice` covers it. Unlike the suffixes above it grants no resolution bypass — `resolv.conf` is written by DHCP, not by you — so a name under it still needs a matching rule. Public suffixes on the list are ignored, the list is read once when the firewall starts, and it only ever *adds* a form to match: a host suffix never displaces the one your rules already match through a configured or Kubernetes suffix.
+
+This matters most for clients using c-ares (Node's `dns.resolve*`, grpcio, some curl builds), which end their search on the first refused multi-label attempt: without the stripping, an allowed single-label name was unresolvable on any runner with a search list, and every lookup logged a blocked query for a name nobody asked about.
+
 ### With Docker Support
 
 CargoWall automatically configures Docker to use its DNS proxy, so hostname filtering works inside containers:
@@ -258,8 +262,8 @@ It rides cargowall's root-cgroup egress hook, so the two knobs move together:
 |------------------|-------------------------------------------------------------------------------------------------|
 | `off`            | *(default)* No name is parsed                                                                    |
 | `observe`        | Parses the presented name and records what it **would** drop, dropping nothing                   |
-| `enforce`        | Drops a flow whose presented name no rule allows on that IP                                      |
-| `enforce-pinned` | Also drops when the name never resolved to *that* destination through cargowall's own DNS proxy   |
+| `enforce`        | Drops a flow whose presented name no rule allows — the name alone, so an allowed name still opens any L7-scoped IP |
+| `enforce-pinned` | Also drops when the name never resolved to *that* destination through cargowall's own DNS proxy, closing that gap |
 
 Roll out observe-first — the `l7_would_block` records in the audit log are how
 you find out what enforcement would cost before it costs it:

@@ -8,6 +8,9 @@ export interface DnsUpstreamResult {
   source: string
 }
 
+/** Where cargowall's DNS proxy listens; the only nameserver the runner keeps. */
+const PROXY_ADDRESS = '127.0.0.1'
+
 function isValidIPv4(ip: string): boolean {
   const parts = ip.split('.')
   if (parts.length !== 4) return false
@@ -126,6 +129,21 @@ function parseResolvConf(content: string): ResolvConfResult {
   }
 
   return { nameservers, hasStubResolver }
+}
+
+/**
+ * The resolv.conf that points the runner at cargowall's DNS proxy.
+ *
+ * `search`/`domain` are carried over because cargowall reads that list when
+ * its DNS server starts and strips those suffixes before rule matching (#84).
+ * `options` is not, because it does not.
+ */
+export function proxyResolvConf(original: string | null): string {
+  const carried = (original ?? '')
+    .split('\n')
+    .filter(line => /^\s*(search|domain)\s+\S/.test(line))
+    .map(line => line.trim())
+  return [`nameserver ${PROXY_ADDRESS}`, ...carried].join('\n') + '\n'
 }
 
 async function tryResolvConf(filePath: string, label: string): Promise<DnsUpstreamResult | null> {

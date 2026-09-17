@@ -1,0 +1,200 @@
+name: Test L7 Destination Identity (v2 preview)
+
+# The v2-preview postures (`container-egress` / `tls-sni`) live in their own
+# workflow: they are experimental, they share one probe shape — dial an allowed
+# IP while presenting some other name, then assert the recorded verdict — and
+# keeping them out of test.yml leaves the core suite readable. The probe itself
+# is ./.github/actions/assert-l7-verdict.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-tls-sni-observe:
+    name: L7 SNI observe-mode measurement
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with L7 in observe mode
+        id: cargowall
+        uses: ./
+        with:
+          # Fully offline, not skip-policy-fetch: a fetched policy would
+          # replace the narrow allow-list these assertions depend on.
+          offline: 'true'
+          tls-sni: observe
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: Test allowed connection (github.com)
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
+
+      # observe-first rollout: this record is how an operator sizes the blast
+      # radius before turning drops on, so it must exist and must not be a drop.
+      - name: A foreign SNI is measured, not enforced
+        uses: ./.github/actions/assert-l7-verdict
+        with:
+          resolve-host: github.com
+          sni-host: tls-sni-probe.example.com
+          expect: would-block
+
+      - name: Assert nothing was dropped
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          # Broader than the probe's own check, which only rejects a dual
+          # record for the name it presented: observe mode must not drop
+          # anything, including the allowed github.com flow above. This cannot
+          # live in the composite — the enforce job expects a would-block after
+          # an earlier real drop, and a run-wide check there would false-fail it.
+          if grep -q '"event_type":"l7_blocked"' /tmp/cargowall-audit.json; then
+            echo "ERROR: observe mode must not drop anything"
+            grep '"event_type":"l7_blocked"' /tmp/cargowall-audit.json
+            exit 1
+          fi
+          echo "No L7 drops recorded"
+
+  test-tls-sni-enforce:
+    name: L7 SNI enforcement drops a foreign name
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with L7 enforcement
+        id: cargowall
+        uses: ./
+        with:
+          # Fully offline: the drop IS the assertion, and the CodeCargo check
+          # fails any reported job with denied hosts.
+          offline: 'true'
+          container-egress: enforce
+          tls-sni: enforce
+          allowed-hosts: |
+            github.com
+            api.github.com
+            registry.npmjs.org
+
+      - name: Test allowed connection still works (github.com)
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
+
+      - name: A name no rule allows is dropped
+        uses: ./.github/actions/assert-l7-verdict
+        with:
+          resolve-host: github.com
+          sni-host: tls-sni-probe.example.com
+          expect: blocked
+          reason: name_mismatch
+
+      # The other half of the enforce-pinned differential (see the job below).
+      # Name matching alone asks only "is this name allowed SOMEWHERE", which
+      # makes an allowed name a passphrase for every L7-scoped IP. This rung
+      # passes such a flow and measures it; enforce-pinned drops it.
+      - name: An ALLOWED name at an IP it never resolved to is measured, not dropped
+        uses: ./.github/actions/assert-l7-verdict
+        with:
+          resolve-host: registry.npmjs.org
+          sni-host: github.com
+          expect: would-block
+          reason: name_not_at_ip
+
+      - run: test '${{ steps.cargowall.outputs.supported }}' = 'true'
+
+  test-tls-sni-enforce-pinned:
+    name: L7 per-IP binding drops an allowed name at a foreign IP
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall with the per-IP binding enforced
+        id: cargowall
+        uses: ./
+        with:
+          offline: 'true'
+          container-egress: enforce
+          tls-sni: enforce-pinned
+          allowed-hosts: |
+            github.com
+            api.github.com
+            registry.npmjs.org
+
+      - name: Test the normal path still works (registry.npmjs.org)
+        # Also seeds the binding: this forward resolution through cargowall's
+        # proxy is what scopes the IP the probe below dials.
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://registry.npmjs.org
+
+      # name_not_at_ip, not name_mismatch: github.com IS allowed by policy, so
+      # only the per-IP binding can deny it. The reason is what proves this rung
+      # — and not some other denial — did the work.
+      - name: An ALLOWED name at an IP it never resolved to is dropped
+        uses: ./.github/actions/assert-l7-verdict
+        with:
+          resolve-host: registry.npmjs.org
+          sni-host: github.com
+          expect: blocked
+          reason: name_not_at_ip
+
+      - run: test '${{ steps.cargowall.outputs.supported }}' = 'true'
+
+  test-tls-sni-audit-mode-wins:
+    name: audit mode defers L7 drops
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall in audit mode with both enforce rungs on
+        id: cargowall
+        uses: ./
+        with:
+          offline: 'true'
+          mode: audit
+          container-egress: enforce
+          tls-sni: enforce
+          allowed-hosts: |
+            github.com
+            api.github.com
+
+      - name: An unallowed host is reachable, proving the audit posture
+        # Independent evidence that the run really is log-only: without it, an
+        # absent l7_blocked below could just mean L7 never engaged at all.
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://example.com
+
+      # audit mode is the run's single source of "log, never block", and an
+      # enforce rung defers to it (bpf/sni.h l7_pass).
+      - name: The L7 denial is reported but deferred
+        uses: ./.github/actions/assert-l7-verdict
+        with:
+          resolve-host: github.com
+          sni-host: tls-sni-probe.example.com
+          expect: would-block
+
+      - name: Assert nothing was dropped at any rung
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          # Broader than the probe's own check: audit mode must not produce a
+          # single real drop anywhere in the run, for any name.
+          if grep -q '"event_type":"l7_blocked"' /tmp/cargowall-audit.json; then
+            echo "ERROR: audit mode must not drop anything, at any rung"
+            grep '"event_type":"l7_blocked"' /tmp/cargowall-audit.json
+            exit 1
+          fi
+          echo "No L7 drops recorded"
