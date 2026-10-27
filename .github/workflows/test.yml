@@ -471,7 +471,7 @@ jobs:
 
       - name: Assert the search list survived and cargowall read it
         run: |
-          grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf
+          grep -qxF 'nameserver 127.0.0.1' /etc/resolv.conf
           if ! grep -qE '^[[:space:]]*search[[:space:]]+cargowall\.test\.lan[[:space:]]*$' /etc/resolv.conf; then
             echo "ERROR: the search list was not carried across the DNS repoint"
             cat /etc/resolv.conf
@@ -638,7 +638,7 @@ jobs:
             exit 1
           fi
           echo "resolv.conf after:"; cat /etc/resolv.conf
-          if grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf; then
+          if grep -qxF 'nameserver 127.0.0.1' /etc/resolv.conf; then
             echo "ERROR: /etc/resolv.conf still points at cargowall's proxy (DNS not restored)"
             exit 1
           fi
@@ -814,7 +814,7 @@ jobs:
           # deny-all, and DNS stays pointed at cargowall's proxy — the action
           # must not have restored resolv.conf out from under it.
           sudo kill -0 "$(cat /tmp/cargowall.pid)"
-          grep -qF 'nameserver 127.0.0.1' /etc/resolv.conf
+          grep -qxF 'nameserver 127.0.0.1' /etc/resolv.conf
 
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)
