@@ -386,10 +386,16 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
  * listed names, and both still strip dangerous ones such as LD_PRELOAD.
  */
 export function sudoPreserveEnvArgs(env: NodeJS.ProcessEnv): string[] {
+  // Only identifier-shaped names: a comma in a name would split the list.
   const names = Object.keys(env).filter(
     name => env[name] !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
   )
-  return names.length > 0 ? [`--preserve-env=${names.join(',')}`] : []
+  if (names.length === 0) {
+    // No list means sudo starts cargowall with a clean environment, which is
+    // the silent loss this flag exists to prevent: refuse instead.
+    throw new Error('No environment variables to carry into cargowall')
+  }
+  return [`--preserve-env=${names.join(',')}`]
 }
 
 type Liveness = 'alive' | 'dead' | 'unknown'

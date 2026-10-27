@@ -26001,7 +26001,10 @@ function sudoPreserveEnvArgs(env) {
   const names = Object.keys(env).filter(
     (name) => env[name] !== void 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
   );
-  return names.length > 0 ? [`--preserve-env=${names.join(",")}`] : [];
+  if (names.length === 0) {
+    throw new Error("No environment variables to carry into cargowall");
+  }
+  return [`--preserve-env=${names.join(",")}`];
 }
 async function processLiveness(pid) {
   if (await sudoKillZero(pid)) return "alive";
