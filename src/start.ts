@@ -289,7 +289,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // runner would trigger a push for a job where cargowall never started.
   // Absence of this state tells the post step cargowall was never spawned.
   core.saveState('cargowall-spawned-at', String(spawnedAtMs))
-  const child = spawn('sudo', ['-E', 'cargowall', ...args], {
+  const child = spawn('sudo', [...sudoPreserveEnvArgs(env), 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
     env,
@@ -409,6 +409,27 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   return { supported: true, pid: reportedPid }
+}
+
+/**
+ * The `sudo` arguments that carry `env` into cargowall. This used to be `-E`,
+ * but sudo-rs (Ubuntu's default sudo from 26.04) ignores `-E` and starts
+ * cargowall with a clean environment, silently dropping the allowed hosts,
+ * CIDRs, search domains and service-host lists passed this way. Naming each
+ * variable works under both: classic sudo (1.8.21+) and sudo-rs keep the
+ * listed names, and both still strip dangerous ones such as LD_PRELOAD.
+ */
+export function sudoPreserveEnvArgs(env: NodeJS.ProcessEnv): string[] {
+  // Only identifier-shaped names: a comma in a name would split the list.
+  const names = Object.keys(env).filter(
+    name => env[name] !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+  )
+  if (names.length === 0) {
+    // No list means sudo starts cargowall with a clean environment, which is
+    // the silent loss this flag exists to prevent: refuse instead.
+    throw new Error('No environment variables to carry into cargowall')
+  }
+  return [`--preserve-env=${names.join(',')}`]
 }
 
 type Liveness = 'alive' | 'dead' | 'unknown'

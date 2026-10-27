@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fs } from 'fs'
+import { BlockList, isIPv4, isIPv6 } from 'net'
 
 export interface DnsUpstreamResult {
   primary: string
@@ -42,9 +43,24 @@ function isValidIPv6(ip: string): boolean {
   return true
 }
 
+/**
+ * Any loopback resolver: all of 127.0.0.0/8, ::1, and IPv4-mapped loopback.
+ * None of them can be cargowall's upstream. Whatever listens there (the
+ * systemd-resolved stub, or a caching forwarder such as the 127.0.0.100 some
+ * runners list first) forwards from a socket cargowall's DNS redirect sends
+ * straight back into the proxy, and the query loops.
+ */
+const loopback = new BlockList()
+loopback.addSubnet('127.0.0.0', 8, 'ipv4')
+loopback.addAddress('::1', 'ipv6')
+
 function isLoopback(ip: string): boolean {
-  const normalized = ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip
-  return normalized === '127.0.0.1' || normalized === '127.0.0.53' || normalized === '::1'
+  const addr = ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip
+  // The family must be passed: without it BlockList misses ::1 and the
+  // IPv4-mapped spellings.
+  if (isIPv4(addr)) return loopback.check(addr, 'ipv4')
+  if (isIPv6(addr)) return loopback.check(addr, 'ipv6')
+  return false
 }
 
 function ensurePort(address: string): string {
@@ -104,7 +120,7 @@ interface ResolvConfResult {
   hasStubResolver: boolean
 }
 
-function parseResolvConf(content: string): ResolvConfResult {
+export function parseResolvConf(content: string): ResolvConfResult {
   const nameservers: string[] = []
   let hasStubResolver = false
 

@@ -25261,6 +25261,12 @@ function getOctokit(token, options, ...additionalPlugins) {
   return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 
+// src/dns.ts
+var import_net = require("net");
+var loopback = new import_net.BlockList();
+loopback.addSubnet("127.0.0.0", 8, "ipv4");
+loopback.addAddress("::1", "ipv6");
+
 // src/diag.ts
 var import_fs5 = require("fs");
 var path5 = __toESM(require("path"));
