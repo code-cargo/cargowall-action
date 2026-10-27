@@ -126,8 +126,14 @@ function withInputs(inputs: Record<string, string>): void {
   vi.mocked(core.getInput).mockImplementation((name: string) => inputs[name] ?? '')
 }
 
-/** The argv handed to the cargowall binary (spawn is `sudo -E cargowall …`). */
+/** The argv handed to the cargowall binary (spawn is `sudo --preserve-env=… cargowall …`). */
 async function cargowallArgs(): Promise<string[]> {
+  const argv = await sudoArgs()
+  return argv.slice(argv.indexOf('cargowall') + 1)
+}
+
+/** The whole argv handed to sudo. */
+async function sudoArgs(): Promise<string[]> {
   await start()
   const call = vi.mocked(spawn).mock.calls.at(-1)
   if (!call) throw new Error('cargowall was never spawned')
@@ -151,6 +157,27 @@ describe('start() argument construction', () => {
     withFiles({ [READY_FILE]: '' })
   })
 
+  describe('environment hand-off through sudo', () => {
+    it('names every variable it passes, since sudo-rs ignores -E', async () => {
+      withInputs({})
+      vi.mocked(core.getMultilineInput).mockImplementation((name: string) =>
+        name === 'allowed-hosts' ? ['docker.io', '**.githubusercontent.com'] : HOST_LIST_DEFAULTS[name] ?? []
+      )
+
+      const argv = await sudoArgs()
+      const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as NodeJS.ProcessEnv
+
+      // Under sudo-rs a bare -E starts cargowall with a clean environment and
+      // the allow-list never arrives; the variables must be named instead.
+      expect(argv).not.toContain('-E')
+      expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('docker.io,**.githubusercontent.com')
+      const preserved = flag(argv.slice(0, argv.indexOf('cargowall')), '--preserve-env')?.split(',')
+      for (const name of ['CARGOWALL_ALLOWED_HOSTS', 'CARGOWALL_DEFAULT_ACTION', 'CARGOWALL_GITHUB_SERVICE_HOSTS', 'CARGOWALL_AZURE_INFRA_HOSTS']) {
+        expect(preserved, name).toContain(name)
+      }
+      expect(new Set(preserved)).toEqual(new Set(Object.keys(env).filter(k => env[k] !== undefined)))
+    })
+  })
   describe('audit log collection (#71)', () => {
     it('passes --audit-log even when audit-summary is false', async () => {
       withInputs({ 'audit-summary': 'false' })

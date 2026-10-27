@@ -25567,8 +25567,10 @@ function isValidIPv6(ip) {
   return true;
 }
 function isLoopback(ip) {
-  const normalized = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
-  return normalized === "127.0.0.1" || normalized === "127.0.0.53" || normalized === "::1";
+  const normalized = (ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip).toLowerCase();
+  const v4 = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
+  if (isValidIPv4(v4)) return v4.split(".")[0] === "127";
+  return normalized === "::1" || normalized === "0:0:0:0:0:0:0:1";
 }
 function ensurePort(address) {
   if (/\]:\d+$/.test(address)) return address;
@@ -26013,7 +26015,7 @@ async function start() {
   const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
-  const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
+  const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env
@@ -26089,6 +26091,12 @@ async function start() {
     endGroup();
   }
   return { supported: true, pid: reportedPid };
+}
+function sudoPreserveEnvArgs(env) {
+  const names = Object.keys(env).filter(
+    (name) => env[name] !== void 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+  );
+  return names.length > 0 ? [`--preserve-env=${names.join(",")}`] : [];
 }
 async function processLiveness(pid) {
   if (await sudoKillZero(pid)) return "alive";
