@@ -25920,7 +25920,7 @@ async function start() {
   const logFd = (0, import_fs6.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
-  const child2 = (0, import_child_process.spawn)("sudo", ["-E", "cargowall", ...args], {
+  const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env
@@ -25996,6 +25996,12 @@ async function start() {
     endGroup();
   }
   return { supported: true, pid: reportedPid };
+}
+function sudoPreserveEnvArgs(env) {
+  const names = Object.keys(env).filter(
+    (name) => env[name] !== void 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+  );
+  return names.length > 0 ? [`--preserve-env=${names.join(",")}`] : [];
 }
 async function processLiveness(pid) {
   if (await sudoKillZero(pid)) return "alive";
