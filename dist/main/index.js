@@ -25540,6 +25540,7 @@ var path6 = __toESM(require("path"));
 
 // src/dns.ts
 var import_fs4 = require("fs");
+var import_net = require("net");
 function isValidIPv4(ip) {
   const parts = ip.split(".");
   if (parts.length !== 4) return false;
@@ -25566,11 +25567,14 @@ function isValidIPv6(ip) {
   }
   return true;
 }
+var loopback = new import_net.BlockList();
+loopback.addSubnet("127.0.0.0", 8, "ipv4");
+loopback.addAddress("::1", "ipv6");
 function isLoopback(ip) {
-  const normalized = (ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip).toLowerCase();
-  const v4 = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
-  if (isValidIPv4(v4)) return v4.split(".")[0] === "127";
-  return normalized === "::1" || normalized === "0:0:0:0:0:0:0:1";
+  const addr = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
+  if ((0, import_net.isIPv4)(addr)) return loopback.check(addr, "ipv4");
+  if ((0, import_net.isIPv6)(addr)) return loopback.check(addr, "ipv6");
+  return false;
 }
 function ensurePort(address) {
   if (/\]:\d+$/.test(address)) return address;
@@ -26096,7 +26100,10 @@ function sudoPreserveEnvArgs(env) {
   const names = Object.keys(env).filter(
     (name) => env[name] !== void 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
   );
-  return names.length > 0 ? [`--preserve-env=${names.join(",")}`] : [];
+  if (names.length === 0) {
+    throw new Error("No environment variables to carry into cargowall");
+  }
+  return [`--preserve-env=${names.join(",")}`];
 }
 async function processLiveness(pid) {
   if (await sudoKillZero(pid)) return "alive";

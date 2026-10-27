@@ -10,7 +10,11 @@ describe('parseResolvConf', () => {
   })
 
   it('treats all of 127.0.0.0/8, ::1 and IPv4-mapped loopback as loopback', () => {
-    for (const ns of ['127.0.0.1', '127.0.0.53', '127.0.0.100', '127.255.255.254', '::1', '::ffff:127.0.0.1']) {
+    for (const ns of [
+      '127.0.0.1', '127.0.0.53', '127.0.0.100', '127.255.255.254',
+      '::1', '0::1', '0:0:0:0:0:0:0:1',
+      '::ffff:127.0.0.1', '::ffff:7f00:1', '0:0:0:0:0:ffff:7f00:1'
+    ]) {
       expect(parseResolvConf(`nameserver ${ns}\n`), ns).toEqual({ nameservers: [], hasStubResolver: true })
     }
   })

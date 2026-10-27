@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fs } from 'fs'
+import { BlockList, isIPv4, isIPv6 } from 'net'
 
 export interface DnsUpstreamResult {
   primary: string
@@ -49,11 +50,17 @@ function isValidIPv6(ip: string): boolean {
  * runners list first) forwards from a socket cargowall's DNS redirect sends
  * straight back into the proxy, and the query loops.
  */
+const loopback = new BlockList()
+loopback.addSubnet('127.0.0.0', 8, 'ipv4')
+loopback.addAddress('::1', 'ipv6')
+
 function isLoopback(ip: string): boolean {
-  const normalized = (ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip).toLowerCase()
-  const v4 = normalized.startsWith('::ffff:') ? normalized.slice('::ffff:'.length) : normalized
-  if (isValidIPv4(v4)) return v4.split('.')[0] === '127'
-  return normalized === '::1' || normalized === '0:0:0:0:0:0:0:1'
+  const addr = ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip
+  // The family must be passed: without it BlockList misses ::1 and the
+  // IPv4-mapped spellings.
+  if (isIPv4(addr)) return loopback.check(addr, 'ipv4')
+  if (isIPv6(addr)) return loopback.check(addr, 'ipv6')
+  return false
 }
 
 function ensurePort(address: string): string {
