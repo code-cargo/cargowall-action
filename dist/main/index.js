@@ -25615,8 +25615,10 @@ function isValidIPv6(ip) {
   return true;
 }
 function isLoopback(ip) {
-  const normalized = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
-  return normalized === "127.0.0.1" || normalized === "127.0.0.53" || normalized === "::1";
+  const normalized = (ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip).toLowerCase();
+  const v4 = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
+  if (isValidIPv4(v4)) return v4.split(".")[0] === "127";
+  return normalized === "::1" || normalized === "0:0:0:0:0:0:0:1";
 }
 function ensurePort(address) {
   if (/\]:\d+$/.test(address)) return address;

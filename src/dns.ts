@@ -45,9 +45,19 @@ function isValidIPv6(ip: string): boolean {
   return true
 }
 
+/**
+ * Any loopback resolver: all of 127.0.0.0/8, ::1, and IPv4-mapped loopback.
+ * None of them can be cargowall's upstream. Whatever listens there (the
+ * systemd-resolved stub, or a caching forwarder such as the 127.0.0.100 some
+ * runners list first) forwards from a socket cargowall's DNS redirect sends
+ * straight back into the proxy, and the query loops; cargowall refuses such an
+ * upstream at startup.
+ */
 function isLoopback(ip: string): boolean {
-  const normalized = ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip
-  return normalized === '127.0.0.1' || normalized === '127.0.0.53' || normalized === '::1'
+  const normalized = (ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip).toLowerCase()
+  const v4 = normalized.startsWith('::ffff:') ? normalized.slice('::ffff:'.length) : normalized
+  if (isValidIPv4(v4)) return v4.split('.')[0] === '127'
+  return normalized === '::1' || normalized === '0:0:0:0:0:0:0:1'
 }
 
 function ensurePort(address: string): string {
@@ -107,7 +117,7 @@ interface ResolvConfResult {
   hasStubResolver: boolean
 }
 
-function parseResolvConf(content: string): ResolvConfResult {
+export function parseResolvConf(content: string): ResolvConfResult {
   const nameservers: string[] = []
   let hasStubResolver = false
 
