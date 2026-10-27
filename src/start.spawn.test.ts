@@ -54,7 +54,7 @@ import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
-import { start } from './start'
+import { start, sudoPreserveEnvArgs } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
 const FAILURE_FILE = '/tmp/cargowall-failed'
@@ -124,8 +124,14 @@ function withInputs(inputs: Record<string, string>): void {
   vi.mocked(core.getInput).mockImplementation((name: string) => inputs[name] ?? '')
 }
 
-/** The argv handed to the cargowall binary (spawn is `sudo -E cargowall …`). */
+/** The argv handed to the cargowall binary (spawn is `sudo --preserve-env=… cargowall …`). */
 async function cargowallArgs(): Promise<string[]> {
+  const argv = await sudoArgs()
+  return argv.slice(argv.indexOf('cargowall') + 1)
+}
+
+/** The whole argv handed to sudo, and the env the spawn was given. */
+async function sudoArgs(): Promise<string[]> {
   await start()
   const call = vi.mocked(spawn).mock.calls.at(-1)
   if (!call) throw new Error('cargowall was never spawned')
@@ -137,6 +143,18 @@ function flag(args: string[], name: string): string | undefined {
   return args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1)
 }
 
+describe('sudoPreserveEnvArgs', () => {
+  it('names each set variable, and leaves out a name a comma would split', () => {
+    expect(
+      sudoPreserveEnvArgs({ PATH: '/usr/bin', CARGOWALL_ALLOWED_HOSTS: 'a', 'NOT,A,NAME': 'x', UNSET: undefined })
+    ).toEqual(['--preserve-env=PATH,CARGOWALL_ALLOWED_HOSTS'])
+  })
+
+  it('refuses to return no list, which would start cargowall with a clean environment', () => {
+    expect(() => sudoPreserveEnvArgs({ 'A,B': 'x' })).toThrow()
+  })
+})
+
 describe('start() argument construction', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -147,6 +165,24 @@ describe('start() argument construction', () => {
     vi.mocked(core.getInput).mockReturnValue('')
     // Ready sentinel already present, so the wait loop exits on iteration 0.
     withFiles({ [READY_FILE]: '' })
+  })
+
+  describe('environment hand-off through sudo', () => {
+    it('carries the spawn env by name, since sudo-rs ignores -E', async () => {
+      withInputs({})
+      vi.mocked(core.getMultilineInput).mockImplementation((name: string) =>
+        name === 'allowed-hosts' ? ['docker.io', '**.githubusercontent.com'] : HOST_LIST_DEFAULTS[name] ?? []
+      )
+
+      const argv = await sudoArgs()
+      const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as NodeJS.ProcessEnv
+
+      // Under sudo-rs a bare -E starts cargowall with a clean environment and
+      // the allow-list never arrives; the helper's list is the whole policy.
+      expect(argv).not.toContain('-E')
+      expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('docker.io,**.githubusercontent.com')
+      expect(argv.slice(0, argv.indexOf('cargowall'))).toEqual(sudoPreserveEnvArgs(env))
+    })
   })
 
   describe('audit log collection (#71)', () => {
