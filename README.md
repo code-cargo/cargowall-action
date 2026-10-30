@@ -303,9 +303,20 @@ Worth knowing before you enable it:
   verdict lands rather than leaking its first flight.
 - **`container-egress` has no `off`.** The action's `--github-action` preset
   raises `off` to `observe`, so the hook cannot be disabled from here.
-- **Degradation reopens the gap.** If the cgroup hook cannot attach, the run
-  falls back to the TC hook's L4-only verdict and the shared-edge hole reopens
-  for that run.
+- **An enforce rung that can't be applied stops CargoWall.** `container-egress:
+  enforce` and the `tls-sni` enforce rungs fail closed: if the cgroup hook
+  can't attach, or can't be limited to this job's traffic, CargoWall does not
+  start, even under `mode: audit`. With `fail-on-unsupported: false` (the
+  default) the step then goes green and **the job runs with no firewall at
+  all**. Set `fail-on-unsupported: true` to fail the job instead. An `observe`
+  rung that can't attach only warns: the run keeps the TC hook's L4-only
+  verdict, and the shared-edge hole stays open for that run.
+- **ARC with `containerMode: dind` needs `shareProcessNamespace: true`** on the
+  runner pod for `container-egress: enforce`. dind makes its containers' cgroups
+  outside the pod's cgroup, and CargoWall can judge them only when dind's
+  processes share its pid namespace. Stock ARC templates don't set it. Without
+  it, CargoWall refuses enforce ("the docker daemon's pid is outside our pid
+  namespace") and does not start.
 
 ## Inputs
 
