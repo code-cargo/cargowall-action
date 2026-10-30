@@ -25221,6 +25221,12 @@ var GitHub = Octokit.plugin(restEndpointMethods, paginateRest).defaults(defaults
 // node_modules/@actions/github/lib/github.js
 var context2 = new Context();
 
+// src/dns.ts
+var import_net = require("net");
+var loopback = new import_net.BlockList();
+loopback.addSubnet("127.0.0.0", 8, "ipv4");
+loopback.addAddress("::1", "ipv6");
+
 // src/start.ts
 var STALE_SLACK_MS = 2e3;
 

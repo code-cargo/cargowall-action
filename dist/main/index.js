@@ -25587,6 +25587,7 @@ var import_fs6 = require("fs");
 
 // src/dns.ts
 var import_fs4 = require("fs");
+var import_net = require("net");
 var PROXY_ADDRESS = "127.0.0.1";
 function isValidIPv4(ip) {
   const parts = ip.split(".");
@@ -25614,9 +25615,14 @@ function isValidIPv6(ip) {
   }
   return true;
 }
+var loopback = new import_net.BlockList();
+loopback.addSubnet("127.0.0.0", 8, "ipv4");
+loopback.addAddress("::1", "ipv6");
 function isLoopback(ip) {
-  const normalized = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
-  return normalized === "127.0.0.1" || normalized === "127.0.0.53" || normalized === "::1";
+  const addr = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
+  if ((0, import_net.isIPv4)(addr)) return loopback.check(addr, "ipv4");
+  if ((0, import_net.isIPv6)(addr)) return loopback.check(addr, "ipv6");
+  return false;
 }
 function ensurePort(address) {
   if (/\]:\d+$/.test(address)) return address;
