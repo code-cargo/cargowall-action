@@ -18,6 +18,21 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate workflow inputs
+        run: |
+          # Validate tag input: must be a valid semver tag (v#.#.# format) or similar
+          if ! [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?(\+[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid tag format. Expected semver format like v1.0.0"
+            exit 1
+          fi
+          
+          # Validate ref input: must be safe for git operations
+          # Allowed: commit SHAs (40 hex chars), branch names (alphanumeric, -, _), tags
+          if [ -n "${{ inputs.ref }}" ] && ! [[ "${{ inputs.ref }}" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "::error::Invalid ref format. Use a commit SHA, branch name, or tag"
+            exit 1
+          fi
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.ref || 'main' }}
