@@ -59,6 +59,16 @@ import { start, sudoPreserveEnvArgs } from './start'
 const READY_FILE = '/tmp/cargowall-ready'
 const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
+const POSTURES_FILE = '/tmp/cargowall-postures'
+
+/** The postures record cargowall publishes when a refused layer stops it. */
+const REFUSED_EGRESS = JSON.stringify([{
+  posture: 'container-egress', requested: 'enforce', applied: 'off',
+  reason: "the docker daemon's pid is outside our pid namespace", fatal: true,
+}])
+const REFUSED_REASON =
+  "cargowall startup failed: --container-egress=enforce requested but could not be applied: " +
+  "the docker daemon's pid is outside our pid namespace"
 
 /**
  * Model the state files cargowall writes. Absent paths make fs.access reject
@@ -608,6 +618,56 @@ describe('start() failure-sentinel handling', () => {
     expect(result.supported).toBe(true)
     expect(core.error).not.toHaveBeenCalled()
   }, 10000)
+
+  // A layer the job asked to enforce that the runner cannot apply stops
+  // cargowall. fail-on-unsupported: false is for a runner that cannot run
+  // cargowall at all; carrying on here would run the job with no firewall in
+  // place of the weaker one the binary refused to give it.
+  it('fails the step on a refused posture, even with fail-on-unsupported false', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({
+      [FAILURE_FILE]: sentinel(REFUSED_REASON),
+      [POSTURES_FILE]: REFUSED_EGRESS,
+      '/etc/resolv.conf.cargowall.bak': 'search corp.lan\n',
+    })
+
+    await expect(start()).rejects.toThrow(
+      /refused to start: .*container-egress=enforce requested but could not be applied.*no firewall/
+    )
+    // cargowall has exited, so DNS goes back to the runner's own resolver.
+    expect(exec.exec).toHaveBeenCalledWith('sudo', ['cp', '/etc/resolv.conf.cargowall.bak', '/etc/resolv.conf'])
+    expect(core.setOutput).not.toHaveBeenCalledWith('supported', 'false')
+  })
+
+  it('ignores a refused posture left by a previous run', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles(
+      {
+        [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program'),
+        [POSTURES_FILE]: REFUSED_EGRESS,
+      },
+      { [POSTURES_FILE]: 1 },
+    )
+
+    const result = await start()
+
+    expect(result).toEqual({ supported: false, pid: null })
+  })
+
+  it('keeps honouring fail-on-unsupported when no posture was refused', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({
+      [FAILURE_FILE]: sentinel('cargowall startup failed: failed to attach TC program'),
+      // A layer lost at observe is recorded, not fatal.
+      [POSTURES_FILE]: JSON.stringify([
+        { posture: 'container-egress', requested: 'observe', applied: 'off', reason: 'x' },
+      ]),
+    })
+
+    const result = await start()
+
+    expect(result).toEqual({ supported: false, pid: null })
+  })
 
   it('treats a sentinel written moments before the spawn anchor as fresh (slack)', async () => {
     withInputs({ 'fail-on-unsupported': 'true' })

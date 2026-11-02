@@ -4,6 +4,7 @@ import {
   resolveApiFailureMode,
   resolveEgressPostures,
   isLockdownRecord,
+  isRefusedPostureRecord,
   downgradeMessage,
   sentinelReason,
 } from './start'
@@ -137,6 +138,33 @@ describe('isLockdownRecord', () => {
 
   it('treats a record with no type as not lockdown', () => {
     expect(isLockdownRecord(JSON.stringify({ detail: 'something happened' }))).toBe(false)
+  })
+})
+
+/**
+ * A refused posture fails the step whatever fail-on-unsupported says, so only
+ * a line cargowall marked fatal counts: anything else, unreadable included,
+ * keeps the warn-and-continue the input asks for.
+ */
+describe('isRefusedPostureRecord', () => {
+  const line = (extra: object) =>
+    ({ posture: 'tls-sni', requested: 'enforce', applied: 'off', reason: 'r', ...extra })
+
+  it('recognises a line marked fatal', () => {
+    expect(isRefusedPostureRecord(JSON.stringify([line({ fatal: true })]))).toBe(true)
+  })
+
+  it('does not count a loss that did not stop cargowall', () => {
+    expect(isRefusedPostureRecord(JSON.stringify([line({})]))).toBe(false)
+    expect(isRefusedPostureRecord(JSON.stringify([line({ fatal: false })]))).toBe(false)
+    expect(isRefusedPostureRecord(JSON.stringify([line({ fatal: 'true' })]))).toBe(false)
+  })
+
+  it('treats an absent, unparseable or misshapen record as not refused', () => {
+    expect(isRefusedPostureRecord(null)).toBe(false)
+    expect(isRefusedPostureRecord('[{"fatal": ')).toBe(false)
+    expect(isRefusedPostureRecord(JSON.stringify({ fatal: true }))).toBe(false)
+    expect(isRefusedPostureRecord(JSON.stringify([null, 3, 'x']))).toBe(false)
   })
 })
 

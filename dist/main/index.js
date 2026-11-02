@@ -25777,6 +25777,7 @@ var READY_FILE = "/tmp/cargowall-ready";
 var PID_FILE = "/tmp/cargowall.pid";
 var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
+var POSTURES_FILE = "/tmp/cargowall-postures";
 var RESOLV_CONF = "/etc/resolv.conf";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
@@ -25956,10 +25957,11 @@ async function start() {
         return handlePolicyLockdown(failureReason);
       }
       error(`CargoWall reported a startup failure: ${failureReason}`);
+      const refused = isRefusedPostureRecord(await readFreshStateFile(POSTURES_FILE, spawnedAtMs));
       return handleStartupFailure(
         `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
-        `CargoWall failed to start: ${failureReason}`,
-        failOnUnsupported
+        refused ? `CargoWall refused to start: ${failureReason}. This runner cannot give the job the enforcement it asked for, and carrying on would run it with no firewall at all, so the step fails even with fail-on-unsupported: false.` : `CargoWall failed to start: ${failureReason}`,
+        failOnUnsupported || refused
       );
     }
     cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
@@ -26037,7 +26039,7 @@ async function readPidFile(spawnedAtMs) {
   }
 }
 async function clearStartupFiles() {
-  const rc = await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
+  const rc = await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE, POSTURES_FILE], {
     ignoreReturnCode: true,
     silent: true
   });
@@ -26096,19 +26098,31 @@ async function readStateFile(filePath) {
   }
 }
 async function readDowngradeFile(spawnedAtMs) {
+  return readFreshStateFile(DOWNGRADE_FILE, spawnedAtMs);
+}
+async function readFreshStateFile(filePath, spawnedAtMs) {
   try {
-    if ((await import_fs5.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs5.promises.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
     return null;
   }
-  return readStateFile(DOWNGRADE_FILE);
+  return readStateFile(filePath);
 }
 function isLockdownRecord(raw) {
   if (raw === null) return false;
   try {
     return JSON.parse(raw).type === "CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN";
+  } catch {
+    return false;
+  }
+}
+function isRefusedPostureRecord(raw) {
+  if (raw === null) return false;
+  try {
+    const lines = JSON.parse(raw);
+    return Array.isArray(lines) && lines.some((l) => l?.fatal === true);
   } catch {
     return false;
   }
