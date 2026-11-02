@@ -25780,6 +25780,7 @@ var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var RESOLV_CONF = "/etc/resolv.conf";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
+var EXIT_REFUSED = 3;
 var VALID_MODES = ["enforce", "audit"];
 var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
 var TLS_SNI_VALUES = ["off", "observe", "enforce", "enforce-pinned"];
@@ -25931,6 +25932,10 @@ async function start() {
     stdio: ["ignore", logFd, logFd],
     env
   });
+  let exitCode = null;
+  child2.on("exit", (code) => {
+    exitCode = code;
+  });
   child2.unref();
   (0, import_fs6.closeSync)(logFd);
   const spawnedPid = child2.pid;
@@ -25939,6 +25944,31 @@ async function start() {
   }
   info(`CargoWall launcher started (PID: ${spawnedPid})`);
   info("Waiting for cargowall to initialize...");
+  const failFromSentinel = async (failure) => {
+    const failureReason = failure.reason;
+    await showLastLog();
+    if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
+      return handlePolicyLockdown(failureReason);
+    }
+    error(`CargoWall reported a startup failure: ${failureReason}`);
+    const refused = failure.refused !== null || exitCode === EXIT_REFUSED;
+    return handleStartupFailure(
+      `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
+      refused ? refusedMessage(failureReason) : `CargoWall failed to start: ${failureReason}`,
+      failOnUnsupported || refused
+    );
+  };
+  const failRefusedByExit = async () => {
+    error(`CargoWall exited with status ${EXIT_REFUSED}: it refused a posture`);
+    await showLastLog();
+    return handleStartupFailure(
+      "",
+      refusedMessage(
+        `a layer this run enforces could not be applied, and cargowall exited with status ${EXIT_REFUSED} without writing its failure sentinel (see the cargowall log above)`
+      ),
+      true
+    );
+  };
   let cargowallPid = null;
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
@@ -25951,21 +25981,20 @@ async function start() {
     }
     const failure = await readFailureFile(spawnedAtMs);
     if (failure !== null) {
-      const failureReason = failure.reason;
-      await showLastLog();
-      if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
-        return handlePolicyLockdown(failureReason);
-      }
-      error(`CargoWall reported a startup failure: ${failureReason}`);
-      const refused = failure.refused !== null;
-      return handleStartupFailure(
-        `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
-        refused ? `CargoWall refused to start: ${failureReason}. This runner cannot give the job the enforcement it asked for, and carrying on would run it with no firewall at all, so the step fails even with fail-on-unsupported: false.` : `CargoWall failed to start: ${failureReason}`,
-        failOnUnsupported || refused
-      );
+      return failFromSentinel(failure);
+    }
+    if (exitCode === EXIT_REFUSED) {
+      return failRefusedByExit();
     }
     cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
     if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
+      const late = await readFailureFile(spawnedAtMs);
+      if (late !== null) {
+        return failFromSentinel(late);
+      }
+      if (exitCode === EXIT_REFUSED) {
+        return failRefusedByExit();
+      }
       error("CargoWall process exited unexpectedly");
       await showLastLog();
       return handleStartupFailure(
@@ -25977,6 +26006,9 @@ async function start() {
     await sleep2(1e3);
   }
   if (!ready) {
+    if (exitCode === EXIT_REFUSED) {
+      return failRefusedByExit();
+    }
     error("Timeout waiting for cargowall to be ready");
     await showLastLog();
     await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid]);
@@ -26065,6 +26097,9 @@ function sentinelRefusal(raw) {
   if (lines.length < 3 || !lines[0].trim().startsWith("pid=")) return null;
   const m = /^refused=([a-z][a-z-]{0,63})$/.exec(lines[1]);
   return m ? m[1] : null;
+}
+function refusedMessage(reason) {
+  return `CargoWall refused to start: ${reason}. This runner cannot give the job the enforcement it asked for, and carrying on would run it with no firewall at all, so the step fails even with fail-on-unsupported: false.`;
 }
 async function readFailureFile(spawnedAtMs) {
   try {

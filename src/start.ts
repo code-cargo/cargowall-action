@@ -19,6 +19,9 @@ const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 const RESOLV_CONF = '/etc/resolv.conf'
 const RESOLV_CONF_BACKUP = '/etc/resolv.conf.cargowall.bak'
 const STARTUP_TIMEOUT = 30
+// `cargowall start`'s exit status for a refused posture (cmd/postures.go
+// exitRefused) — keep in sync. See sentinelRefusal.
+const EXIT_REFUSED = 3
 
 const VALID_MODES = ['enforce', 'audit'] as const
 
@@ -260,6 +263,14 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     stdio: ['ignore', logFd, logFd],
     env,
   })
+  // cargowall's exit status, which sudo passes through. EXIT_REFUSED is the
+  // one refusal channel that needs no state file, for a sentinel that could
+  // not be written. Nothing else is read from it: a launcher killed by a
+  // signal reports no status, and liveness stays on the real PID (below).
+  let exitCode: number | null = null
+  child.on('exit', code => {
+    exitCode = code
+  })
   child.unref()
   closeSync(logFd)
 
@@ -283,6 +294,41 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // for the sentinel/timeout rather than risk a false crash verdict.
   core.info('Waiting for cargowall to initialize...')
 
+  // A failure sentinel decides the step. Policy lockdown and any other fatal
+  // startup error share it (see isPolicyLockdown), and a refused posture is
+  // marked in it or by the exit status (see sentinelRefusal).
+  const failFromSentinel = async (failure: StartupFailure) => {
+    const failureReason = failure.reason
+    await showLastLog()
+    if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
+      return handlePolicyLockdown(failureReason)
+    }
+    // A fatal startup error: cargowall has exited. Same contract as the
+    // "exited unexpectedly" branch below — honour fail-on-unsupported —
+    // but with the binary's own reason instead of a guess.
+    core.error(`CargoWall reported a startup failure: ${failureReason}`)
+    const refused = failure.refused !== null || exitCode === EXIT_REFUSED
+    return handleStartupFailure(
+      `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
+      refused ? refusedMessage(failureReason) : `CargoWall failed to start: ${failureReason}`,
+      failOnUnsupported || refused,
+    )
+  }
+  // A refusal the exit status alone reports: cargowall could not write its
+  // sentinel.
+  const failRefusedByExit = async () => {
+    core.error(`CargoWall exited with status ${EXIT_REFUSED}: it refused a posture`)
+    await showLastLog()
+    return handleStartupFailure(
+      '',
+      refusedMessage(
+        `a layer this run enforces could not be applied, and cargowall exited with status ${EXIT_REFUSED} ` +
+          'without writing its failure sentinel (see the cargowall log above)'
+      ),
+      true,
+    )
+  }
+
   let cargowallPid: number | null = null
   let ready = false
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
@@ -298,34 +344,27 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       // Not ready yet
     }
 
-    // cargowall reported a startup failure. Two very different situations
-    // share this sentinel — see isPolicyLockdown.
+    // cargowall reported a startup failure.
     const failure = await readFailureFile(spawnedAtMs)
     if (failure !== null) {
-      const failureReason = failure.reason
-      await showLastLog()
-      if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
-        return handlePolicyLockdown(failureReason)
-      }
-      // A fatal startup error: cargowall has exited. Same contract as the
-      // "exited unexpectedly" branch below — honour fail-on-unsupported —
-      // but with the binary's own reason instead of a guess. A refused
-      // posture is the exception: see sentinelRefusal.
-      core.error(`CargoWall reported a startup failure: ${failureReason}`)
-      const refused = failure.refused !== null
-      return handleStartupFailure(
-        `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
-        refused
-          ? `CargoWall refused to start: ${failureReason}. This runner cannot give the job the ` +
-            'enforcement it asked for, and carrying on would run it with no firewall at all, ' +
-            'so the step fails even with fail-on-unsupported: false.'
-          : `CargoWall failed to start: ${failureReason}`,
-        failOnUnsupported || refused,
-      )
+      return failFromSentinel(failure)
+    }
+    if (exitCode === EXIT_REFUSED) {
+      return failRefusedByExit()
     }
 
     cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
     if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
+      // cargowall writes its sentinel, removes its pidfile and exits within
+      // milliseconds, so the sentinel can land between the read above and
+      // this check: look again before calling the death unexplained.
+      const late = await readFailureFile(spawnedAtMs)
+      if (late !== null) {
+        return failFromSentinel(late)
+      }
+      if (exitCode === EXIT_REFUSED) {
+        return failRefusedByExit()
+      }
       core.error('CargoWall process exited unexpectedly')
       await showLastLog()
       return handleStartupFailure(
@@ -339,6 +378,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   if (!ready) {
+    if (exitCode === EXIT_REFUSED) {
+      return failRefusedByExit()
+    }
     core.error('Timeout waiting for cargowall to be ready')
     await showLastLog()
     await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid])
@@ -513,13 +555,23 @@ export function sentinelReason(raw: string): string {
  * cannot run cargowall at all; this one can, just not with the enforcement
  * asked for, and carrying on would run the job with no firewall in place of a
  * weaker one. The line rides the sentinel this wait loop reads anyway, so no
- * second file can lose it.
+ * second file can lose it, and cargowall also exits with EXIT_REFUSED, for a
+ * sentinel it could not write.
  */
 export function sentinelRefusal(raw: string): string | null {
   const lines = raw.split('\n')
   if (lines.length < 3 || !lines[0].trim().startsWith('pid=')) return null
   const m = /^refused=([a-z][a-z-]{0,63})$/.exec(lines[1])
   return m ? m[1] : null
+}
+
+/** The step's error for a refused posture: see sentinelRefusal. */
+function refusedMessage(reason: string): string {
+  return (
+    `CargoWall refused to start: ${reason}. This runner cannot give the job the enforcement ` +
+    'it asked for, and carrying on would run it with no firewall at all, so the step fails ' +
+    'even with fail-on-unsupported: false.'
+  )
 }
 
 /** What a failure sentinel says. */

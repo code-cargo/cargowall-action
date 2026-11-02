@@ -303,14 +303,15 @@ Worth knowing before you enable it:
   verdict lands rather than leaking its first flight.
 - **`container-egress` has no `off`.** The action's `--github-action` preset
   raises `off` to `observe`, so the hook cannot be disabled from here.
-- **An enforce rung that can't be applied fails the step.** `container-egress:
-  enforce` and the `tls-sni` enforce rungs fail closed: if the cgroup hook
-  can't attach, or can't be limited to this job's traffic, CargoWall does not
-  start, even under `mode: audit`, and the step fails whatever
+- **An enforce rung that can't be applied fails the step.** Under an
+  enforcing policy, `container-egress: enforce` and the `tls-sni` enforce rungs
+  fail closed: if the cgroup hook can't attach, or can't be limited to this
+  job's traffic, CargoWall does not start, and the step fails whatever
   `fail-on-unsupported` says, since carrying on would run the job with no
-  firewall at all. An `observe` rung that can't attach only warns: the run
-  keeps the TC hook's L4-only verdict, and the shared-edge hole stays open for
-  that run.
+  firewall at all. Under `mode: audit` the hook drops nothing even at
+  `enforce`, so losing it only warns, as an `observe` rung does: the run keeps
+  the TC hook's L4-only verdict, and the shared-edge hole stays open for that
+  run.
 - **ARC with `containerMode: dind` needs `shareProcessNamespace: true`** on the
   runner pod for `container-egress: enforce`. dind makes its containers' cgroups
   outside the pod's cgroup, and CargoWall can judge them only when dind's
@@ -521,10 +522,11 @@ enforcement this runner can't give. It fails whatever `fail-on-unsupported`
 says: carrying on would run the job with no firewall at all. The reason names
 the layer:
 
-- **`--container-egress=enforce`, or a `--tls-sni` enforce rung:** the cgroup
-  hook couldn't attach, or couldn't be limited to this job's traffic. On ARC
-  with `containerMode: dind`, set `shareProcessNamespace: true` on the runner
-  pod. Otherwise lower the input to `observe`.
+- **`--container-egress=enforce`, or a `--tls-sni` enforce rung, when the
+  policy enforces:** the cgroup hook couldn't attach, or couldn't be limited
+  to this job's traffic. On ARC with `containerMode: dind`, set
+  `shareProcessNamespace: true` on the runner pod. Otherwise lower the input
+  to `observe`.
 - **`--dns-redirect=true`, when the policy enforces:** the kernel couldn't take
   the DNS redirect, an nftables table, usually because nf_tables or its NAT
   support is missing. Without the redirect, DNS from any resolver not pointed

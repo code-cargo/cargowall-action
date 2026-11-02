@@ -34,7 +34,7 @@ vi.mock('./dns', async importOriginal => ({
   detectDnsUpstream: vi.fn(async () => ({ primary: '10.0.0.1:53' })),
 }))
 vi.mock('child_process', () => ({
-  spawn: vi.fn(() => ({ pid: 4242, unref: vi.fn() })),
+  spawn: vi.fn(() => ({ pid: 4242, unref: vi.fn(), on: vi.fn() })),
 }))
 vi.mock('fs', () => ({
   openSync: vi.fn(() => 3),
@@ -59,6 +59,25 @@ import { start, sudoPreserveEnvArgs } from './start'
 const READY_FILE = '/tmp/cargowall-ready'
 const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
+const PID_FILE = '/tmp/cargowall.pid'
+
+/** The launcher exits with code as soon as start() listens for it. */
+function launcherExitsWith(code: number): void {
+  vi.mocked(spawn).mockImplementationOnce((() => ({
+    pid: 4242,
+    unref: vi.fn(),
+    on: vi.fn((event: string, cb: (code: number) => void) => {
+      if (event === 'exit') cb(code)
+    }),
+  })) as unknown as typeof spawn)
+}
+
+/** cargowall's real pid, 4243, is gone; pid 1 answers, so sudo works. */
+function cargowallDied(): void {
+  vi.mocked(exec.exec).mockImplementation(async (cmd, args) =>
+    cmd === 'sudo' && args?.[1] === 'kill' && args?.[3] === '4243' ? 1 : 0
+  )
+}
 
 /**
  * Model the state files cargowall writes. Absent paths make fs.access reject
@@ -628,6 +647,58 @@ describe('start() failure-sentinel handling', () => {
     // cargowall has exited, so DNS goes back to the runner's own resolver.
     expect(exec.exec).toHaveBeenCalledWith('sudo', ['cp', '/etc/resolv.conf.cargowall.bak', '/etc/resolv.conf'])
     expect(core.setOutput).not.toHaveBeenCalledWith('supported', 'false')
+  })
+
+  // The exit status is the refusal channel that needs no state file: a
+  // sentinel cargowall could not write (a full /tmp, a directory planted at
+  // its path) must not let the job run unfiltered.
+  it('fails the step on exit status 3 when no sentinel could be written', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({})
+    launcherExitsWith(3)
+
+    await expect(start()).rejects.toThrow(/refused to start: .*exited with status 3.*no firewall/)
+  })
+
+  it('takes exit status 3 as the refusal when the sentinel lacks the line', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: --tls-sni=enforce requested but could not be applied: x') })
+    launcherExitsWith(3)
+
+    await expect(start()).rejects.toThrow(/refused to start: cargowall startup failed: --tls-sni=enforce/)
+  })
+
+  it('keeps honouring fail-on-unsupported for any other exit', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({ [PID_FILE]: '4243\n' })
+    launcherExitsWith(1)
+    cargowallDied()
+
+    const result = await start()
+
+    expect(result).toEqual({ supported: false, pid: null })
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
+  })
+
+  // cargowall writes its sentinel, removes its pidfile and exits within
+  // milliseconds: a refusal landing between the loop's sentinel read and its
+  // liveness check must still be read, not taken for an unexplained death.
+  it('reads a sentinel that lands just before the death is seen', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({
+      [FAILURE_FILE]: 'pid=4243\nrefused=dns-redirect\ncargowall startup failed: --dns-redirect=true requested but could not be applied: x\n',
+      [PID_FILE]: '4243\n',
+    })
+    const statImpl = vi.mocked(fsp.stat).getMockImplementation()!
+    let failureStats = 0
+    vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
+      if (String(p) === FAILURE_FILE && failureStats++ === 0) throw new Error('not yet')
+      return statImpl(p as never)
+    })
+    cargowallDied()
+
+    await expect(start()).rejects.toThrow(/refused to start: cargowall startup failed: --dns-redirect=true/)
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
   })
 
   it('treats a sentinel written moments before the spawn anchor as fresh (slack)', async () => {
