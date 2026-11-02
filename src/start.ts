@@ -12,13 +12,10 @@ const READY_FILE = '/tmp/cargowall-ready'
 const PID_FILE = '/tmp/cargowall.pid'
 // FAILURE_FILE is written by cargowall on any fatal startup error, including
 // the policy lockdown from --api-failure-mode=fail. DOWNGRADE_FILE is its
-// structured record of a posture change, and tells those two apart.
-// POSTURES_FILE is its record of requested-vs-applied layers; on a fatal
-// startup it holds the one layer that stopped it, marked fatal. All three
-// paths are shared with the Go binary — keep them in sync.
+// structured record of a posture change, and tells those two apart. Both paths
+// are shared with the Go binary — keep them in sync.
 const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
-const POSTURES_FILE = '/tmp/cargowall-postures'
 const RESOLV_CONF = '/etc/resolv.conf'
 const RESOLV_CONF_BACKUP = '/etc/resolv.conf.cargowall.bak'
 const STARTUP_TIMEOUT = 30
@@ -303,8 +300,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
     // cargowall reported a startup failure. Two very different situations
     // share this sentinel — see isPolicyLockdown.
-    const failureReason = await readFailureFile(spawnedAtMs)
-    if (failureReason !== null) {
+    const failure = await readFailureFile(spawnedAtMs)
+    if (failure !== null) {
+      const failureReason = failure.reason
       await showLastLog()
       if (await isPolicyLockdown(failureReason, spawnedAtMs)) {
         return handlePolicyLockdown(failureReason)
@@ -312,9 +310,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       // A fatal startup error: cargowall has exited. Same contract as the
       // "exited unexpectedly" branch below — honour fail-on-unsupported —
       // but with the binary's own reason instead of a guess. A refused
-      // posture is the exception: see isRefusedPostureRecord.
+      // posture is the exception: see sentinelRefusal.
       core.error(`CargoWall reported a startup failure: ${failureReason}`)
-      const refused = isRefusedPostureRecord(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
+      const refused = failure.refused !== null
       return handleStartupFailure(
         `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
         refused
@@ -469,7 +467,7 @@ async function readPidFile(spawnedAtMs: number): Promise<number | null> {
  * this cargowall writes. The files may be root-owned, so remove via sudo.
  */
 async function clearStartupFiles(): Promise<void> {
-  const rc = await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE, POSTURES_FILE], {
+  const rc = await exec.exec('sudo', ['rm', '-f', READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
     ignoreReturnCode: true,
     silent: true,
   })
@@ -498,9 +496,36 @@ export function sentinelReason(raw: string): string {
   const nl = raw.indexOf('\n')
   if (nl !== -1 && raw.slice(0, nl).trim().startsWith('pid=')) {
     body = raw.slice(nl + 1)
+    const next = body.indexOf('\n')
+    if (next !== -1 && body.startsWith('refused=')) body = body.slice(next + 1)
   }
   const reason = body.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 4096)
   return reason || 'cargowall reported a startup failure with no reason recorded'
+}
+
+/**
+ * The posture a failure sentinel's `refused=<posture>` line names, or null.
+ * cargowall writes that line, between the pid stamp and the reason (cmd/
+ * wait_ready.go writeFailureSentinel), when a layer the job asked to enforce
+ * could not be applied, so it would not start: container-egress or a tls-sni
+ * enforce rung, or the DNS redirect under an enforcing policy. That fails the
+ * step even with `fail-on-unsupported: false`. The input is for a runner that
+ * cannot run cargowall at all; this one can, just not with the enforcement
+ * asked for, and carrying on would run the job with no firewall in place of a
+ * weaker one. The line rides the sentinel this wait loop reads anyway, so no
+ * second file can lose it.
+ */
+export function sentinelRefusal(raw: string): string | null {
+  const lines = raw.split('\n')
+  if (lines.length < 3 || !lines[0].trim().startsWith('pid=')) return null
+  const m = /^refused=([a-z][a-z-]{0,63})$/.exec(lines[1])
+  return m ? m[1] : null
+}
+
+/** What a failure sentinel says. */
+interface StartupFailure {
+  reason: string
+  refused: string | null // see sentinelRefusal
 }
 
 /**
@@ -513,9 +538,9 @@ export function sentinelReason(raw: string): string {
  * A sentinel whose mtime predates this run's spawn is a stale leftover from a
  * reused runner (clearStartupFiles' rm is best-effort) and must not fail this
  * run — ignore it. cargowall clears it at process entry, so a genuine verdict
- * always carries a fresh mtime. Returns the reason, or null if absent/stale.
+ * always carries a fresh mtime. Returns what it says, or null if absent/stale.
  */
-async function readFailureFile(spawnedAtMs: number): Promise<string | null> {
+async function readFailureFile(spawnedAtMs: number): Promise<StartupFailure | null> {
   try {
     if ((await fs.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null
@@ -524,7 +549,7 @@ async function readFailureFile(spawnedAtMs: number): Promise<string | null> {
     return null // Absent — the overwhelmingly common case.
   }
   const raw = await readStateFile(FAILURE_FILE)
-  return raw === null ? null : sentinelReason(raw)
+  return raw === null ? null : { reason: sentinelReason(raw), refused: sentinelRefusal(raw) }
 }
 
 /**
@@ -582,22 +607,14 @@ export async function readStateFile(filePath: string): Promise<string | null> {
  * thrown lockdown, or a healthy run into a false posture warning.
  */
 async function readDowngradeFile(spawnedAtMs: number): Promise<string | null> {
-  return readFreshStateFile(DOWNGRADE_FILE, spawnedAtMs)
-}
-
-/**
- * Read a state file this run's cargowall wrote, or null when it is absent or
- * a leftover whose mtime predates the spawn.
- */
-async function readFreshStateFile(filePath: string, spawnedAtMs: number): Promise<string | null> {
   try {
-    if ((await fs.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await fs.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null
     }
   } catch {
     return null // Absent — the common case.
   }
-  return readStateFile(filePath)
+  return readStateFile(DOWNGRADE_FILE)
 }
 
 /**
@@ -615,29 +632,6 @@ export function isLockdownRecord(raw: string | null): boolean {
   if (raw === null) return false
   try {
     return (JSON.parse(raw) as { type?: string }).type === 'CARGO_WALL_DOWNGRADE_TYPE_LOCKDOWN'
-  } catch {
-    return false
-  }
-}
-
-/**
- * Whether the postures record names a refused layer: one the job asked to
- * enforce (container-egress or tls-sni at an enforce rung, or the DNS
- * redirect under an enforcing policy) that cargowall could not apply, and so
- * would not start without. That fails the step even with
- * `fail-on-unsupported: false`. The input is for a runner that cannot run
- * cargowall at all; this one can, just not with the guarantee asked for, and
- * carrying on would run the job with no firewall in place of a weaker one.
- *
- * cargowall publishes the record before the failure sentinel, so no wait is
- * needed. Anything unreadable reads as "not refused", which keeps the
- * pre-existing startup-failure handling.
- */
-export function isRefusedPostureRecord(raw: string | null): boolean {
-  if (raw === null) return false
-  try {
-    const lines: unknown = JSON.parse(raw)
-    return Array.isArray(lines) && lines.some(l => (l as { fatal?: unknown } | null)?.fatal === true)
   } catch {
     return false
   }

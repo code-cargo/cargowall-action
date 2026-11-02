@@ -4,9 +4,9 @@ import {
   resolveApiFailureMode,
   resolveEgressPostures,
   isLockdownRecord,
-  isRefusedPostureRecord,
   downgradeMessage,
   sentinelReason,
+  sentinelRefusal,
 } from './start'
 
 // Mock @actions/core — requireNonEmptyHostList calls core.getMultilineInput
@@ -142,33 +142,6 @@ describe('isLockdownRecord', () => {
 })
 
 /**
- * A refused posture fails the step whatever fail-on-unsupported says, so only
- * a line cargowall marked fatal counts: anything else, unreadable included,
- * keeps the warn-and-continue the input asks for.
- */
-describe('isRefusedPostureRecord', () => {
-  const line = (extra: object) =>
-    ({ posture: 'tls-sni', requested: 'enforce', applied: 'off', reason: 'r', ...extra })
-
-  it('recognises a line marked fatal', () => {
-    expect(isRefusedPostureRecord(JSON.stringify([line({ fatal: true })]))).toBe(true)
-  })
-
-  it('does not count a loss that did not stop cargowall', () => {
-    expect(isRefusedPostureRecord(JSON.stringify([line({})]))).toBe(false)
-    expect(isRefusedPostureRecord(JSON.stringify([line({ fatal: false })]))).toBe(false)
-    expect(isRefusedPostureRecord(JSON.stringify([line({ fatal: 'true' })]))).toBe(false)
-  })
-
-  it('treats an absent, unparseable or misshapen record as not refused', () => {
-    expect(isRefusedPostureRecord(null)).toBe(false)
-    expect(isRefusedPostureRecord('[{"fatal": ')).toBe(false)
-    expect(isRefusedPostureRecord(JSON.stringify({ fatal: true }))).toBe(false)
-    expect(isRefusedPostureRecord(JSON.stringify([null, 3, 'x']))).toBe(false)
-  })
-})
-
-/**
  * The failure sentinel is `pid=<n>\n<reason>\n` (cmd/start.go
  * writeFailureSentinel). The pid stamp is for freshness checks, not display —
  * cargowall's own consumer drops it (cmd/wait_ready.go sentinelReason), and so
@@ -286,5 +259,36 @@ describe('resolveEgressPostures', () => {
     expect(() => resolveEgressPostures({ containerEgress: '', tlsSni: 'pinned' })).toThrow(
       /Invalid "tls-sni" value "pinned"/
     )
+  })
+})
+
+/**
+ * A refused posture fails the step whatever fail-on-unsupported says, so only
+ * the exact line cargowall writes counts: `refused=<posture>` right after the
+ * pid stamp, followed by the reason. Anything else keeps the warn-and-continue
+ * the input asks for.
+ */
+describe('sentinelRefusal', () => {
+  const reason = 'cargowall startup failed: --container-egress=enforce requested but could not be applied: x'
+
+  it('names the refused posture', () => {
+    expect(sentinelRefusal(`pid=42\nrefused=container-egress\n${reason}\n`)).toBe('container-egress')
+    expect(sentinelRefusal(`pid=42\nrefused=dns-redirect\n${reason}\n`)).toBe('dns-redirect')
+  })
+
+  it('is null for any other startup failure', () => {
+    expect(sentinelRefusal(`pid=42\ncargowall startup failed: failed to attach TC program\n`)).toBeNull()
+  })
+
+  it('is null for a line out of place, a malformed name, or no pid stamp', () => {
+    expect(sentinelRefusal(`pid=42\n${reason}\nrefused=container-egress\n`)).toBeNull()
+    expect(sentinelRefusal(`pid=42\nrefused=::error::x\n${reason}\n`)).toBeNull()
+    expect(sentinelRefusal(`pid=42\nrefused=\n${reason}\n`)).toBeNull()
+    expect(sentinelRefusal(`refused=container-egress\n${reason}\n`)).toBeNull()
+    expect(sentinelRefusal('pid=42\nrefused=container-egress')).toBeNull()
+  })
+
+  it('is left out of the reason', () => {
+    expect(sentinelReason(`pid=42\nrefused=container-egress\n${reason}\n`)).toBe(reason)
   })
 })
