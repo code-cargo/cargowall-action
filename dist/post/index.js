@@ -21472,8 +21472,15 @@ function getInput(name, options) {
   }
   return val.trim();
 }
+function setFailed(message) {
+  process.exitCode = ExitCode.Failure;
+  error(message);
+}
 function debug(message) {
   issueCommand("debug", {}, message);
+}
+function error(message, properties = {}) {
+  issueCommand("error", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 function warning(message, properties = {}) {
   issueCommand("warning", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
@@ -21497,7 +21504,7 @@ function getIDToken(aud) {
 }
 
 // src/post.ts
-var import_fs6 = require("fs");
+var import_fs8 = require("fs");
 
 // src/cleanup.ts
 var import_fs2 = require("fs");
@@ -25221,6 +25228,10 @@ var GitHub = Octokit.plugin(restEndpointMethods, paginateRest).defaults(defaults
 // node_modules/@actions/github/lib/github.js
 var context2 = new Context();
 
+// src/start.ts
+var import_fs4 = require("fs");
+var import_fs5 = require("fs");
+
 // src/dns.ts
 var import_net = require("net");
 var loopback = new import_net.BlockList();
@@ -25229,19 +25240,64 @@ loopback.addAddress("::1", "ipv6");
 
 // src/start.ts
 var STALE_SLACK_MS = 2e3;
+function sentinelReason(raw) {
+  let body = raw;
+  const nl = raw.indexOf("\n");
+  if (nl !== -1 && raw.slice(0, nl).trim().startsWith("pid=")) {
+    body = raw.slice(nl + 1);
+    const next = body.indexOf("\n");
+    if (next !== -1 && body.startsWith("refused=")) body = body.slice(next + 1);
+  }
+  const reason = body.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 4096);
+  return reason || "cargowall reported a startup failure with no reason recorded";
+}
+function sentinelRefusal(raw) {
+  const lines = raw.split("\n");
+  if (lines.length < 3 || !lines[0].trim().startsWith("pid=")) return null;
+  const m = /^refused=([a-z][a-z-]{0,63})$/.exec(lines[1]);
+  return m ? m[1] : null;
+}
+var MAX_STATE_FILE_BYTES = 8192;
+async function readStateFile(filePath) {
+  try {
+    if (!(await import_fs4.promises.lstat(filePath)).isFile()) return null;
+  } catch {
+    return null;
+  }
+  let handle;
+  try {
+    handle = await import_fs4.promises.open(
+      filePath,
+      import_fs5.constants.O_RDONLY | import_fs5.constants.O_NOFOLLOW | import_fs5.constants.O_NONBLOCK
+    );
+  } catch {
+    return null;
+  }
+  try {
+    if (!(await handle.stat()).isFile()) return null;
+    const buf = Buffer.alloc(MAX_STATE_FILE_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0);
+    return buf.toString("utf8", 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => {
+    });
+  }
+}
 
 // src/summary.ts
-var import_fs5 = require("fs");
+var import_fs7 = require("fs");
 
 // src/diag.ts
-var import_fs4 = require("fs");
+var import_fs6 = require("fs");
 var path4 = __toESM(require("path"));
 async function findDiagDir(startPid = process.pid) {
   const root = await findRunnerRootFromAncestry(startPid);
   if (root) {
     const diag = path4.join(root, "_diag");
     try {
-      await import_fs4.promises.access(diag);
+      await import_fs6.promises.access(diag);
       return diag;
     } catch {
     }
@@ -25257,17 +25313,17 @@ async function findDiagDirFromKnownLayouts() {
   ];
   for (const candidate of candidates) {
     try {
-      await import_fs4.promises.access(candidate);
+      await import_fs6.promises.access(candidate);
       return candidate;
     } catch {
     }
   }
   try {
-    const entries = await import_fs4.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
+    const entries = await import_fs6.promises.readdir("/home/runner/actions-runner", { withFileTypes: true });
     for (const e of entries.filter((e2) => e2.isDirectory())) {
       const candidate = path4.join("/home/runner/actions-runner", e.name, "_diag");
       try {
-        await import_fs4.promises.access(candidate);
+        await import_fs6.promises.access(candidate);
         return candidate;
       } catch {
       }
@@ -25280,13 +25336,13 @@ async function findRunnerRootFromAncestry(startPid = process.pid) {
   let pid = startPid;
   for (let hop = 0; hop < 64 && pid > 1; hop++) {
     try {
-      const root = runnerRootFromExe(await import_fs4.promises.readlink(`/proc/${pid}/exe`));
+      const root = runnerRootFromExe(await import_fs6.promises.readlink(`/proc/${pid}/exe`));
       if (root) return root;
     } catch {
     }
     let stat2;
     try {
-      stat2 = await import_fs4.promises.readFile(`/proc/${pid}/stat`, "utf8");
+      stat2 = await import_fs6.promises.readFile(`/proc/${pid}/stat`, "utf8");
     } catch {
       return null;
     }
@@ -25314,7 +25370,7 @@ function parsePpid(stat2) {
 async function findVersionedDiagDirs() {
   const results = [];
   try {
-    const entries = await import_fs4.promises.readdir("/home/runner/actions-runner/cached", { withFileTypes: true });
+    const entries = await import_fs6.promises.readdir("/home/runner/actions-runner/cached", { withFileTypes: true });
     for (const e of entries.filter((e2) => e2.isDirectory() && /^\d/.test(e2.name))) {
       results.push(path4.join("/home/runner/actions-runner/cached", e.name, "_diag"));
     }
@@ -25342,10 +25398,10 @@ function parseWorkerSteps(content) {
   return steps;
 }
 async function readWorkerSteps(diagDir) {
-  const files = await import_fs4.promises.readdir(diagDir);
+  const files = await import_fs6.promises.readdir(diagDir);
   const workerLogs = files.filter((f) => f.startsWith("Worker_")).sort();
   if (workerLogs.length === 0) return [];
-  const content = await import_fs4.promises.readFile(
+  const content = await import_fs6.promises.readFile(
     path4.join(diagDir, workerLogs[workerLogs.length - 1]),
     "utf8"
   );
@@ -25365,7 +25421,7 @@ async function generateSummary(opts = { render: true }) {
   const canPush = !!apiUrl && !offline;
   let haveEvents = false;
   try {
-    haveEvents = (await import_fs5.promises.stat(AUDIT_LOG)).size > 0;
+    haveEvents = (await import_fs7.promises.stat(AUDIT_LOG)).size > 0;
   } catch {
   }
   if (!shouldRunSummary({ haveEvents, canPush })) {
@@ -25398,7 +25454,7 @@ async function generateSummary(opts = { render: true }) {
       }
       let effectiveMode = getInput("mode") || "enforce";
       try {
-        const modeFromFile = (await import_fs5.promises.readFile("/tmp/cargowall-mode", "utf8")).trim();
+        const modeFromFile = (await import_fs7.promises.readFile("/tmp/cargowall-mode", "utf8")).trim();
         if (modeFromFile) effectiveMode = modeFromFile;
       } catch {
       }
@@ -25454,7 +25510,7 @@ async function generateSummary(opts = { render: true }) {
   }
   if (render) {
     try {
-      const log = await import_fs5.promises.readFile(CARGOWALL_LOG2, "utf8");
+      const log = await import_fs7.promises.readFile(CARGOWALL_LOG2, "utf8");
       if (log) {
         await summary.addRaw("\n---\n\n### CargoWall Process Log\n\n").addRaw("Raw daemon log, unbucketed \u2014 not part of the attribution tables above.\n\n").addRaw("<details><summary>Expand full log</summary>\n\n```\n").addRaw(log).addRaw("\n```\n</details>\n").write();
       }
@@ -25466,7 +25522,12 @@ async function generateSummary(opts = { render: true }) {
 
 // src/post.ts
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
+var FAILURE_FILE = "/tmp/cargowall-failed";
 async function run() {
+  await report();
+  await failOnLateRefusal();
+}
+async function report() {
   try {
     const skipped = getState("cargowall-skipped");
     const pid = getState("cargowall-pid");
@@ -25478,7 +25539,7 @@ async function run() {
     let downgraded = false;
     if (spawnedAtMs > 0) {
       try {
-        downgraded = (await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS;
+        downgraded = (await import_fs8.promises.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS;
       } catch {
       }
     }
@@ -25503,6 +25564,21 @@ async function run() {
       warning(`CargoWall cleanup error: ${error2}`);
     }
   }
+}
+async function failOnLateRefusal() {
+  const spawnedAtMs = Number(getState("cargowall-spawned-at"));
+  if (!getState("cargowall-pid") || !(spawnedAtMs > 0)) return;
+  try {
+    if ((await import_fs8.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) return;
+  } catch {
+    return;
+  }
+  const raw = await readStateFile(FAILURE_FILE);
+  const posture = raw === null ? null : sentinelRefusal(raw);
+  if (raw === null || posture === null) return;
+  setFailed(
+    `CargoWall refused --${posture} after the start step had passed: ${sentinelReason(raw)}. The job ran without all of the enforcement it asked for from then on, so this step fails it, as a refused startup would have.`
+  );
 }
 run();
 /*! Bundled license information:
