@@ -55,10 +55,13 @@ runs:
 
         # The TCP connect is: a drop at L7 lands on the ClientHello, so a probe
         # that never connected was blocked at L4 and proves nothing about L7.
-        # curl's time_connect is 0 until the connect completes, and is written
-        # out even when the transfer then fails. Its verbose log isn't a
-        # contract: curl 8.18 no longer prints "Connected to".
-        if ! awk -v t="${connect:-0}" 'BEGIN { exit !(t + 0 > 0) }'; then
+        # curl 8.18 no longer logs "Connected to", and counts the TLS handshake
+        # as part of its connect, so time_connect stays 0 when the ClientHello
+        # is dropped. Either sign of a connect will do: time_connect for a flow
+        # that got through, and the ClientHello curl writes only once the TCP
+        # connect is up, for one dropped at L7.
+        if ! awk -v t="${connect:-0}" 'BEGIN { exit !(t + 0 > 0) }' \
+           && ! grep -q '(OUT), TLS handshake, Client hello' /tmp/l7-probe.log; then
           echo "ERROR: never reached $IP — this is an L4 block, not an L7 verdict"
           cat /tmp/l7-probe.log
           exit 1
