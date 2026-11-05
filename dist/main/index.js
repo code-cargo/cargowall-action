@@ -25582,8 +25582,8 @@ var context2 = new Context();
 
 // src/start.ts
 var import_child_process = require("child_process");
-var import_fs5 = require("fs");
 var import_fs6 = require("fs");
+var import_fs7 = require("fs");
 
 // src/dns.ts
 var import_fs4 = require("fs");
@@ -25770,6 +25770,63 @@ async function detectDnsUpstream(userInput) {
   return { primary: fallback, all: [fallback], source: "fallback" };
 }
 
+// src/resolvconf.ts
+var import_fs5 = require("fs");
+var RESOLV_CONF = "/etc/resolv.conf";
+var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
+var RESOLV_CONF_NEW = "/etc/resolv.conf.cargowall.new";
+async function readResolvConf() {
+  try {
+    return await import_fs5.promises.readFile(RESOLV_CONF, "utf8");
+  } catch {
+    let contents = "";
+    const code = await exec("sudo", ["cat", RESOLV_CONF], {
+      ignoreReturnCode: true,
+      silent: true,
+      listeners: { stdout: (data) => {
+        contents += data.toString();
+      } }
+    });
+    return code === 0 ? contents : null;
+  }
+}
+async function repointResolvConf() {
+  const original = await readResolvConf();
+  if (original !== null) {
+    try {
+      await exec("sudo", ["cp", "-P", "--remove-destination", RESOLV_CONF, RESOLV_CONF_BACKUP]);
+      info("Backed up /etc/resolv.conf");
+    } catch (err) {
+      warning(`Failed to back up /etc/resolv.conf: ${err}`);
+    }
+  }
+  info("Configuring DNS to use cargowall proxy...");
+  try {
+    await exec("sudo", ["tee", RESOLV_CONF_NEW], {
+      input: Buffer.from(proxyResolvConf(original)),
+      silent: true
+    });
+    await exec("sudo", ["chmod", "0644", RESOLV_CONF_NEW]);
+    await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_NEW, RESOLV_CONF]);
+  } catch (err) {
+    warning(`Failed to overwrite /etc/resolv.conf: ${err}`);
+    await exec("sudo", ["rm", "-f", RESOLV_CONF_NEW], { ignoreReturnCode: true, silent: true });
+    await restoreDns();
+  }
+}
+async function restoreDns() {
+  try {
+    await import_fs5.promises.lstat(RESOLV_CONF_BACKUP);
+  } catch {
+    return;
+  }
+  try {
+    await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_BACKUP, RESOLV_CONF]);
+  } catch (err) {
+    warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`);
+  }
+}
+
 // src/start.ts
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
@@ -25777,8 +25834,6 @@ var READY_FILE = "/tmp/cargowall-ready";
 var PID_FILE = "/tmp/cargowall.pid";
 var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
-var RESOLV_CONF = "/etc/resolv.conf";
-var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var STARTUP_TIMEOUT = 30;
 var EXIT_REFUSED = 3;
 var VALID_MODES = ["enforce", "audit"];
@@ -25924,7 +25979,7 @@ async function start() {
     CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
     CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
   };
-  const logFd = (0, import_fs6.openSync)(CARGOWALL_LOG, "w");
+  const logFd = (0, import_fs7.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
   const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
@@ -25937,7 +25992,7 @@ async function start() {
     exitCode = code;
   });
   child2.unref();
-  (0, import_fs6.closeSync)(logFd);
+  (0, import_fs7.closeSync)(logFd);
   const spawnedPid = child2.pid;
   if (!spawnedPid) {
     throw new Error("Failed to start cargowall process");
@@ -25973,7 +26028,7 @@ async function start() {
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
     try {
-      if ((await import_fs5.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
+      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
         ready = true;
         break;
       }
@@ -26060,10 +26115,10 @@ async function sudoKillZero(pid) {
 }
 async function readPidFile(spawnedAtMs) {
   try {
-    if ((await import_fs5.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
-    const out = await import_fs5.promises.readFile(PID_FILE, "utf8");
+    const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
     const pid = parseInt(out.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -26103,7 +26158,7 @@ function refusedMessage(reason) {
 }
 async function readFailureFile(spawnedAtMs) {
   try {
-    if ((await import_fs5.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs6.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
@@ -26115,15 +26170,15 @@ async function readFailureFile(spawnedAtMs) {
 var MAX_STATE_FILE_BYTES = 8192;
 async function readStateFile(filePath) {
   try {
-    if (!(await import_fs5.promises.lstat(filePath)).isFile()) return null;
+    if (!(await import_fs6.promises.lstat(filePath)).isFile()) return null;
   } catch {
     return null;
   }
   let handle;
   try {
-    handle = await import_fs5.promises.open(
+    handle = await import_fs6.promises.open(
       filePath,
-      import_fs6.constants.O_RDONLY | import_fs6.constants.O_NOFOLLOW | import_fs6.constants.O_NONBLOCK
+      import_fs7.constants.O_RDONLY | import_fs7.constants.O_NOFOLLOW | import_fs7.constants.O_NONBLOCK
     );
   } catch {
     return null;
@@ -26142,7 +26197,7 @@ async function readStateFile(filePath) {
 }
 async function readDowngradeFile(spawnedAtMs) {
   try {
-    if ((await import_fs5.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
@@ -26202,54 +26257,6 @@ function handlePolicyLockdown(reason) {
   throw new Error(
     `${reason} CargoWall stays alive and is locking this runner down to deny-all; egress will be blocked for the rest of the job.`
   );
-}
-async function readResolvConf() {
-  try {
-    return await import_fs5.promises.readFile(RESOLV_CONF, "utf8");
-  } catch {
-    let contents = "";
-    const code = await exec("sudo", ["cat", RESOLV_CONF], {
-      ignoreReturnCode: true,
-      silent: true,
-      listeners: { stdout: (data) => {
-        contents += data.toString();
-      } }
-    });
-    return code === 0 ? contents : null;
-  }
-}
-async function repointResolvConf() {
-  const original = await readResolvConf();
-  if (original !== null) {
-    try {
-      await exec("sudo", ["cp", RESOLV_CONF, RESOLV_CONF_BACKUP]);
-      info("Backed up /etc/resolv.conf");
-    } catch (err) {
-      warning(`Failed to back up /etc/resolv.conf: ${err}`);
-    }
-  }
-  info("Configuring DNS to use cargowall proxy...");
-  try {
-    await exec("sudo", ["tee", RESOLV_CONF], {
-      input: Buffer.from(proxyResolvConf(original)),
-      silent: true
-    });
-  } catch (err) {
-    warning(`Failed to overwrite /etc/resolv.conf: ${err}`);
-    await restoreDns();
-  }
-}
-async function restoreDns() {
-  try {
-    await import_fs5.promises.access(RESOLV_CONF_BACKUP);
-  } catch {
-    return;
-  }
-  try {
-    await exec("sudo", ["cp", RESOLV_CONF_BACKUP, RESOLV_CONF]);
-  } catch (err) {
-    warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`);
-  }
 }
 function resolveApiFailureMode(args) {
   const input = args.input.trim().toLowerCase();

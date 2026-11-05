@@ -182,6 +182,9 @@ describe('start() argument construction', () => {
     )
     vi.mocked(core.getIDToken).mockResolvedValue('oidc-token')
     vi.mocked(core.getInput).mockReturnValue('')
+    // clearAllMocks keeps implementations: a test that makes one command fail
+    // must not leave it failing for the next.
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
     // Ready sentinel already present, so the wait loop exits on iteration 0.
     withFiles({ [READY_FILE]: '' })
   })
@@ -347,7 +350,7 @@ describe('start() argument construction', () => {
   })
 
   describe('resolv.conf repoint (#84)', () => {
-    /** The document handed to `sudo tee /etc/resolv.conf` on stdin. */
+    /** The document handed to `sudo tee` on stdin, to be renamed over /etc/resolv.conf. */
     function writtenResolvConf(): string {
       const call = vi.mocked(exec.exec).mock.calls.find(
         c => c[0] === 'sudo' && (c[1] as string[])?.[0] === 'tee'
@@ -409,6 +412,52 @@ describe('start() argument construction', () => {
       await start()
 
       expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\nsearch root-only.lan\n')
+    })
+
+    // On a runner with systemd-resolved, /etc/resolv.conf is a symlink to
+    // resolved's stub file, which resolved rewrites whenever an address or
+    // link changes, as cargowall's IPv6 address on lo does. A repoint written
+    // through the link lasts only until then.
+    it('replaces /etc/resolv.conf with a file of its own instead of writing through it', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'nameserver 127.0.0.53\nsearch corp.lan\n' })
+
+      await start()
+
+      const sudo = vi.mocked(exec.exec).mock.calls
+        .filter(c => c[0] === 'sudo')
+        .map(c => (c[1] as string[]).join(' '))
+      const backup = sudo.indexOf('cp -P --remove-destination /etc/resolv.conf /etc/resolv.conf.cargowall.bak')
+      const write = sudo.indexOf('tee /etc/resolv.conf.cargowall.new')
+      const chmod = sudo.indexOf('chmod 0644 /etc/resolv.conf.cargowall.new')
+      const rename = sudo.indexOf('mv -f -T /etc/resolv.conf.cargowall.new /etc/resolv.conf')
+      expect([backup, write, chmod, rename].every(i => i >= 0)).toBe(true)
+      expect(backup).toBeLessThan(write)
+      expect(write).toBeLessThan(chmod)
+      expect(chmod).toBeLessThan(rename)
+      expect(sudo).not.toContain('tee /etc/resolv.conf')
+    })
+
+    it('puts the original back when the new file cannot be written', async () => {
+      withInputs({ 'fail-on-unsupported': 'false' })
+      withFiles({
+        [READY_FILE]: '',
+        '/etc/resolv.conf': 'search corp.lan\n',
+        '/etc/resolv.conf.cargowall.bak': 'search corp.lan\n',
+      })
+      vi.mocked(exec.exec).mockImplementation(async (cmd, args) => {
+        if (cmd === 'sudo' && args?.[0] === 'mv' && args?.[3] === '/etc/resolv.conf.cargowall.new') {
+          throw new Error('mv: cannot move')
+        }
+        return 0
+      })
+
+      await start()
+
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Failed to overwrite /etc/resolv.conf'))
+      expect(exec.exec).toHaveBeenCalledWith('sudo', ['rm', '-f', '/etc/resolv.conf.cargowall.new'],
+        expect.anything())
+      expect(exec.exec).toHaveBeenCalledWith('sudo', ['mv', '-f', '-T', '/etc/resolv.conf.cargowall.bak', '/etc/resolv.conf'])
     })
 
     it('never puts the file contents through a shell', async () => {
@@ -546,7 +595,7 @@ describe('start() failure-sentinel handling', () => {
       '/etc/resolv.conf.cargowall.bak': 'search corp.lan\n',
     })
     vi.mocked(exec.exec).mockImplementation(async (cmd, args) => {
-      if (cmd === 'sudo' && args?.[0] === 'cp' && args?.[1]?.endsWith('.bak')) {
+      if (cmd === 'sudo' && args?.[0] === 'mv' && args?.[3]?.endsWith('.bak')) {
         throw new Error('sudo: a password is required')
       }
       return 0
@@ -645,7 +694,7 @@ describe('start() failure-sentinel handling', () => {
       /refused to start: cargowall startup failed: --container-egress=enforce requested but could not be applied.*no firewall/
     )
     // cargowall has exited, so DNS goes back to the runner's own resolver.
-    expect(exec.exec).toHaveBeenCalledWith('sudo', ['cp', '/etc/resolv.conf.cargowall.bak', '/etc/resolv.conf'])
+    expect(exec.exec).toHaveBeenCalledWith('sudo', ['mv', '-f', '-T', '/etc/resolv.conf.cargowall.bak', '/etc/resolv.conf'])
     expect(core.setOutput).not.toHaveBeenCalledWith('supported', 'false')
   })
 
