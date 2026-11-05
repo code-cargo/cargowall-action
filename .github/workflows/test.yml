@@ -612,9 +612,16 @@ jobs:
           # dead PID -> 'dead' liveness -> startup failure. With
           # fail-on-unsupported the action must throw AND restore resolv.conf
           # (which start() repointed at 127.0.0.1 before launching).
+          #
+          # It also asks resolved one question while the action's file is in
+          # place. resolved reads a resolv.conf that isn't its link only when
+          # a query reaches it, so without one it never imports the action's
+          # server and search list, and a restore that left them imported
+          # would pass.
           printf '%s\n' \
             '#!/usr/bin/env bash' \
             'for a in "$@"; do case "$a" in --pidfile=*) echo "$$" > "${a#--pidfile=}";; esac; done' \
+            'timeout 5 resolvectl query github.com >/dev/null 2>&1 || true' \
             'exit 0' > /tmp/fake-cargowall
           chmod +x /tmp/fake-cargowall
 
