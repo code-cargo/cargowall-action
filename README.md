@@ -527,10 +527,24 @@ the layer:
   to this job's traffic. On ARC with `containerMode: dind`, set
   `shareProcessNamespace: true` on the runner pod. Otherwise lower the input
   to `observe`.
-- **`--dns-redirect=true`, when the policy enforces:** the kernel couldn't take
-  the DNS redirect, an nftables table, usually because nf_tables or its NAT
-  support is missing. Without the redirect, DNS from any resolver not pointed
-  at CargoWall goes around it, and allowed hostnames are blocked on bare IPs.
+- **`--dns-redirect=true`, when the policy enforces:** the DNS redirect
+  doesn't cover all the DNS it should. Without it, DNS from any resolver not
+  pointed at CargoWall goes around it, and allowed hostnames are blocked on
+  bare IPs. The reason says which part is missing:
+  - The kernel couldn't take the redirect, an nftables table, usually because
+    nf_tables or its NAT support is missing.
+  - The proxy couldn't listen on `[::1]:53`, so IPv6 DNS would go around it.
+    That counts wherever another process holds the port, such as a local
+    resolver bound to `[::]:53`. Free the port or move that resolver. Any
+    other failure there counts only on a runner with an IPv6 address on any
+    interface besides loopback, link-local ones included. One such failure is
+    loopback having no IPv6 address.
+  - The proxy couldn't hold one of the addresses it listens on for container
+    DNS, `169.254.0.53` or `fd97:d1fb:f215::53`. Either another process holds
+    port 53 there, or CargoWall refused the address: it is already an
+    interface's address, a route more specific than the generic one sends it
+    out a link, or it is the DNS upstream. This counts only where Docker could
+    be present: a Docker socket or a bridge.
 
 The same refusal can come after the step has passed. When the Docker daemon is
 still starting as CargoWall starts, `container-egress: enforce` is decided once

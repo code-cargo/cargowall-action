@@ -612,14 +612,31 @@ jobs:
           # dead PID -> 'dead' liveness -> startup failure. With
           # fail-on-unsupported the action must throw AND restore resolv.conf
           # (which start() repointed at 127.0.0.1 before launching).
+          #
+          # It also asks resolved one question while the action's file is in
+          # place. resolved reads a resolv.conf that isn't its link only when
+          # a query reaches it, so without one it never imports the action's
+          # server and search list, and a restore that left them imported
+          # would pass.
           printf '%s\n' \
             '#!/usr/bin/env bash' \
             'for a in "$@"; do case "$a" in --pidfile=*) echo "$$" > "${a#--pidfile=}";; esac; done' \
+            'timeout 5 resolvectl query github.com >/dev/null 2>&1 || true' \
             'exit 0' > /tmp/fake-cargowall
           chmod +x /tmp/fake-cargowall
 
       - name: Capture DNS before
-        run: cat /etc/resolv.conf
+        run: |
+          cat /etc/resolv.conf
+          # On a resolved runner the file is a link. The action replaces the
+          # link for the job, so a restore that copied the contents back
+          # instead of the link would pass a contents check.
+          readlink /etc/resolv.conf > /tmp/resolv-link-before || true
+          echo "link: $(cat /tmp/resolv-link-before)"
+          # resolved's own global search domains, which a restore that only
+          # reloaded resolved would leave holding the action's carried list.
+          { resolvectl domain 2>/dev/null || true; } | grep '^Global' > /tmp/resolved-domain-before || true
+          echo "resolved: $(cat /tmp/resolved-domain-before)"
 
       - name: Setup CargoWall (expected to fail)
         id: cw
@@ -641,6 +658,30 @@ jobs:
           if grep -qxF 'nameserver 127.0.0.1' /etc/resolv.conf; then
             echo "ERROR: /etc/resolv.conf still points at cargowall's proxy (DNS not restored)"
             exit 1
+          fi
+          if [ "$(readlink /etc/resolv.conf || true)" != "$(cat /tmp/resolv-link-before)" ]; then
+            echo "ERROR: /etc/resolv.conf is not the link it was: '$(readlink /etc/resolv.conf || true)'"
+            ls -l /etc/resolv.conf
+            exit 1
+          fi
+          # While the file was the action's rather than its link, resolved
+          # may have taken the proxy as a global DNS server. The restore
+          # restarts it; give the restart a moment.
+          if command -v resolvectl >/dev/null; then
+            for _ in 1 2 3 4 5; do
+              resolvectl dns | grep -q '127\.0\.0\.1' || break
+              sleep 1
+            done
+            if resolvectl dns | grep -q '127\.0\.0\.1'; then
+              echo "ERROR: systemd-resolved still holds the proxy as a DNS server"
+              resolvectl dns
+              exit 1
+            fi
+            after=$({ resolvectl domain 2>/dev/null || true; } | grep '^Global' || true)
+            if [ "$after" != "$(cat /tmp/resolved-domain-before)" ]; then
+              echo "ERROR: systemd-resolved's global search domains changed: '$after'"
+              exit 1
+            fi
           fi
           # DNS must actually resolve again.
           getent hosts github.com

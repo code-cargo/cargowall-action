@@ -88,7 +88,11 @@ function cargowallDied(): void {
  * anchor); pass `mtimes` to model a leftover from a previous run (an old
  * epoch) or a write landing just inside the staleness slack.
  */
-function withFiles(files: Record<string, string>, mtimes: Record<string, number> = {}): void {
+function withFiles(
+  files: Record<string, string>,
+  mtimes: Record<string, number> = {},
+  links: string[] = [],
+): void {
   vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
     if (String(p) in files || !String(p).startsWith('/tmp/cargowall')) return undefined
     throw new Error(`ENOENT: ${String(p)}`)
@@ -99,8 +103,9 @@ function withFiles(files: Record<string, string>, mtimes: Record<string, number>
     return { mtimeMs, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
   })
   vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
-    if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
-    return { isFile: () => true } as Awaited<ReturnType<typeof fsp.lstat>>
+    const link = links.includes(String(p))
+    if (!(String(p) in files) && !link) throw new Error(`ENOENT: ${String(p)}`)
+    return { isFile: () => !link, isSymbolicLink: () => link } as Awaited<ReturnType<typeof fsp.lstat>>
   })
   vi.mocked(fsp.readFile).mockImplementation(async (p: unknown) => {
     const content = files[String(p)]
@@ -182,6 +187,9 @@ describe('start() argument construction', () => {
     )
     vi.mocked(core.getIDToken).mockResolvedValue('oidc-token')
     vi.mocked(core.getInput).mockReturnValue('')
+    // clearAllMocks keeps implementations: a test that makes one command fail
+    // must not leave it failing for the next.
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
     // Ready sentinel already present, so the wait loop exits on iteration 0.
     withFiles({ [READY_FILE]: '' })
   })
@@ -347,7 +355,7 @@ describe('start() argument construction', () => {
   })
 
   describe('resolv.conf repoint (#84)', () => {
-    /** The document handed to `sudo tee /etc/resolv.conf` on stdin. */
+    /** The document handed to `sudo tee` on stdin, to be renamed over /etc/resolv.conf. */
     function writtenResolvConf(): string {
       const call = vi.mocked(exec.exec).mock.calls.find(
         c => c[0] === 'sudo' && (c[1] as string[])?.[0] === 'tee'
@@ -409,6 +417,86 @@ describe('start() argument construction', () => {
       await start()
 
       expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\nsearch root-only.lan\n')
+    })
+
+    /** Every sudo command start() ran, as one string each, in order. */
+    function sudoCommands(): string[] {
+      return vi.mocked(exec.exec).mock.calls
+        .filter(c => c[0] === 'sudo')
+        .map(c => (c[1] as string[]).join(' '))
+    }
+
+    // On a runner with systemd-resolved, /etc/resolv.conf is a symlink to
+    // resolved's stub file, which resolved rewrites whenever an address or
+    // link changes, as cargowall's IPv6 address on lo does. A repoint written
+    // through the link lasts only until then.
+    it('replaces a symlinked /etc/resolv.conf with a file of its own', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'nameserver 127.0.0.53\nsearch corp.lan\n' }, {},
+        ['/etc/resolv.conf'])
+
+      await start()
+
+      const sudo = sudoCommands()
+      const steps = [
+        'cp -P --remove-destination /etc/resolv.conf /etc/resolv.conf.cargowall.bak',
+        'rm -f /etc/resolv.conf.cargowall.new',
+        'tee /etc/resolv.conf.cargowall.new',
+        'chmod 0644 /etc/resolv.conf.cargowall.new',
+        'mv -f -T /etc/resolv.conf.cargowall.new /etc/resolv.conf',
+      ].map(step => sudo.indexOf(step))
+      expect(steps.every(i => i >= 0)).toBe(true)
+      expect(steps).toEqual([...steps].sort((a, b) => a - b))
+      expect(sudo).not.toContain('tee /etc/resolv.conf')
+      expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\nsearch corp.lan\n')
+    })
+
+    // In a container or a Kubernetes pod, an ARC runner's included,
+    // /etc/resolv.conf is a bind mount: a rename over it fails with EBUSY.
+    it('writes a regular /etc/resolv.conf in place, since it may be a bind mount', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'nameserver 10.96.0.10\nsearch svc.cluster.local\n' })
+
+      await start()
+
+      const sudo = sudoCommands()
+      expect(sudo).toContain('tee /etc/resolv.conf')
+      expect(sudo.some(c => c.startsWith('mv '))).toBe(false)
+      expect(core.warning).not.toHaveBeenCalled()
+    })
+
+    it('backs up a symlink whose target is missing, so it comes back as it was', async () => {
+      withInputs({})
+      withFiles({ [READY_FILE]: '' }, {}, ['/etc/resolv.conf'])
+      // Nothing to read through the link, as the runner user or as root.
+      vi.mocked(exec.exec).mockImplementation(async (cmd, args) =>
+        cmd === 'sudo' && args?.[0] === 'cat' ? 1 : 0
+      )
+
+      await start()
+
+      expect(sudoCommands()).toContain('cp -P --remove-destination /etc/resolv.conf /etc/resolv.conf.cargowall.bak')
+      expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\n')
+    })
+
+    it('puts the link back, and restarts resolved, when the new file cannot be renamed in', async () => {
+      withInputs({ 'fail-on-unsupported': 'false' })
+      withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'search corp.lan\n' }, {},
+        ['/etc/resolv.conf', '/etc/resolv.conf.cargowall.bak'])
+      vi.mocked(exec.exec).mockImplementation(async (cmd, args) => {
+        if (cmd === 'sudo' && args?.[0] === 'mv' && args?.[3] === '/etc/resolv.conf.cargowall.new') {
+          throw new Error('mv: cannot move')
+        }
+        return 0
+      })
+
+      await start()
+
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Failed to overwrite /etc/resolv.conf'))
+      const sudo = sudoCommands()
+      const restored = sudo.lastIndexOf('mv -f -T /etc/resolv.conf.cargowall.bak /etc/resolv.conf')
+      expect(restored).toBeGreaterThan(sudo.lastIndexOf('rm -f /etc/resolv.conf.cargowall.new'))
+      expect(sudo.indexOf('systemctl try-restart systemd-resolved')).toBeGreaterThan(restored)
     })
 
     it('never puts the file contents through a shell', async () => {
