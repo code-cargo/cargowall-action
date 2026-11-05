@@ -236,6 +236,71 @@ jobs:
             echo 'Correctly blocked example.com inside container'
           " || echo "Container test completed"
 
+  test-container-dns-redirect:
+    name: Container DNS Redirect
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Offline, so this job enforces its own allowed-hosts rather than the
+      # repository's CodeCargo policy, which is audit and would block nothing.
+      - name: Setup CargoWall
+        uses: ./
+        with:
+          offline: 'true'
+          allowed-hosts: |
+            github.com
+            docker.io
+            docker.com
+
+      - name: Pull the test image
+        run: docker pull alpine:latest
+
+      - name: Test a container on Docker's resolver is filtered
+        run: |
+          if docker run --rm alpine:latest wget -q --spider --timeout=10 https://example.com; then
+            echo "::error::container reached example.com, which the policy denies"
+            exit 1
+          fi
+          echo "✅ container blocked from example.com"
+
+      - name: Test containers that pick their own resolver still go through the proxy
+        run: |
+          # DNS from a container that names its own resolver is forwarded, not
+          # sent by the host, so only cargowall's container redirect brings it
+          # to the proxy. A dind daemon cargowall can't configure (ARC) takes
+          # this path: its containers fall back to 8.8.8.8.
+          status=0
+
+          # 8.8.8.8 isn't allowed on 53, so github.com resolves only if the
+          # query reaches the proxy.
+          if docker run --rm --dns 8.8.8.8 alpine:latest wget -q --spider --timeout=15 https://github.com; then
+            echo "✅ container using --dns 8.8.8.8 reached github.com through the proxy"
+          else
+            echo "::error::container using --dns 8.8.8.8 could not reach github.com"
+            status=1
+          fi
+
+          # The Azure wireserver is allowed on 53 for cargowall's own upstream
+          # queries. A container asking it directly must still be filtered, or
+          # it has an unlogged DNS channel out.
+          OUT=$(docker run --rm --dns 168.63.129.16 alpine:latest nslookup -type=a example.com 2>&1 || true)
+          echo "$OUT"
+          if echo "$OUT" | grep -E '^Address:' | grep -vqE ':53$'; then
+            echo "::error::container resolved denied example.com via 168.63.129.16, around the proxy"
+            status=1
+          elif ! echo "$OUT" | grep -qi refused; then
+            echo "::error::expected the proxy to refuse example.com"
+            status=1
+          else
+            echo "✅ denied example.com refused via --dns 168.63.129.16"
+          fi
+
+          exit $status
+
   test-single-label-wildcard:
     name: Single-Label Wildcard (*)
     runs-on: ubuntu-latest
