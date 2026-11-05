@@ -542,8 +542,9 @@ fixes are the same as above.
 
 The post step can only fail on what CargoWall has decided by the time it runs.
 A daemon still undecided then passes the job with `container-egress` shown as
-applied. That's one that came up in the job's last seconds, or one that
-answers CargoWall's event stream but never its API.
+applied. That's one that came up in the job's last seconds, or one that sends
+CargoWall its events but never answers CargoWall's queries about the daemon
+itself.
 
 ### DNS resolution fails
 
