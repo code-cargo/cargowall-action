@@ -25775,6 +25775,13 @@ var import_fs5 = require("fs");
 var RESOLV_CONF = "/etc/resolv.conf";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var RESOLV_CONF_NEW = "/etc/resolv.conf.cargowall.new";
+async function lstatOrNull(path5) {
+  try {
+    return await import_fs5.promises.lstat(path5);
+  } catch {
+    return null;
+  }
+}
 async function readResolvConf() {
   try {
     return await import_fs5.promises.readFile(RESOLV_CONF, "utf8");
@@ -25792,7 +25799,8 @@ async function readResolvConf() {
 }
 async function repointResolvConf() {
   const original = await readResolvConf();
-  if (original !== null) {
+  const existing = await lstatOrNull(RESOLV_CONF);
+  if (existing !== null) {
     try {
       await exec("sudo", ["cp", "-P", "--remove-destination", RESOLV_CONF, RESOLV_CONF_BACKUP]);
       info("Backed up /etc/resolv.conf");
@@ -25801,13 +25809,16 @@ async function repointResolvConf() {
     }
   }
   info("Configuring DNS to use cargowall proxy...");
+  const input = Buffer.from(proxyResolvConf(original));
   try {
-    await exec("sudo", ["tee", RESOLV_CONF_NEW], {
-      input: Buffer.from(proxyResolvConf(original)),
-      silent: true
-    });
-    await exec("sudo", ["chmod", "0644", RESOLV_CONF_NEW]);
-    await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_NEW, RESOLV_CONF]);
+    if (existing?.isSymbolicLink()) {
+      await exec("sudo", ["rm", "-f", RESOLV_CONF_NEW]);
+      await exec("sudo", ["tee", RESOLV_CONF_NEW], { input, silent: true });
+      await exec("sudo", ["chmod", "0644", RESOLV_CONF_NEW]);
+      await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_NEW, RESOLV_CONF]);
+    } else {
+      await exec("sudo", ["tee", RESOLV_CONF], { input, silent: true });
+    }
   } catch (err) {
     warning(`Failed to overwrite /etc/resolv.conf: ${err}`);
     await exec("sudo", ["rm", "-f", RESOLV_CONF_NEW], { ignoreReturnCode: true, silent: true });
@@ -25815,15 +25826,28 @@ async function repointResolvConf() {
   }
 }
 async function restoreDns() {
-  try {
-    await import_fs5.promises.lstat(RESOLV_CONF_BACKUP);
-  } catch {
+  const backup = await lstatOrNull(RESOLV_CONF_BACKUP);
+  if (backup === null) {
     return;
   }
   try {
-    await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_BACKUP, RESOLV_CONF]);
+    if (backup.isSymbolicLink()) {
+      await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_BACKUP, RESOLV_CONF]);
+      await reloadResolved();
+    } else {
+      await exec("sudo", ["cp", RESOLV_CONF_BACKUP, RESOLV_CONF]);
+    }
   } catch (err) {
     warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`);
+  }
+}
+async function reloadResolved() {
+  try {
+    await exec("sudo", ["systemctl", "kill", "--signal=HUP", "systemd-resolved"], {
+      ignoreReturnCode: true,
+      silent: true
+    });
+  } catch {
   }
 }
 
