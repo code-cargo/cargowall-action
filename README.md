@@ -303,14 +303,15 @@ Worth knowing before you enable it:
   verdict lands rather than leaking its first flight.
 - **`container-egress` has no `off`.** The action's `--github-action` preset
   raises `off` to `observe`, so the hook cannot be disabled from here.
-- **An enforce rung that can't be applied stops CargoWall.** `container-egress:
-  enforce` and the `tls-sni` enforce rungs fail closed: if the cgroup hook
-  can't attach, or can't be limited to this job's traffic, CargoWall does not
-  start, even under `mode: audit`. With `fail-on-unsupported: false` (the
-  default) the step then goes green and **the job runs with no firewall at
-  all**. Set `fail-on-unsupported: true` to fail the job instead. An `observe`
-  rung that can't attach only warns: the run keeps the TC hook's L4-only
-  verdict, and the shared-edge hole stays open for that run.
+- **An enforce rung that can't be applied fails the step.** Under an
+  enforcing policy, `container-egress: enforce` and the `tls-sni` enforce rungs
+  fail closed: if the cgroup hook can't attach, or can't be limited to this
+  job's traffic, CargoWall does not start, and the step fails whatever
+  `fail-on-unsupported` says, since carrying on would run the job with no
+  firewall at all. Under `mode: audit` the hook drops nothing even at
+  `enforce`, so losing it only warns, as an `observe` rung does: the run keeps
+  the TC hook's L4-only verdict, and the shared-edge hole stays open for that
+  run.
 - **ARC with `containerMode: dind` needs `shareProcessNamespace: true`** on the
   runner pod for `container-egress: enforce`. dind makes its containers' cgroups
   outside the pod's cgroup, and CargoWall can judge them only when dind's
@@ -329,7 +330,7 @@ Worth knowing before you enable it:
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line). Replaces the default list rather than adding to it; an empty value is an error                                                                                                                                      | See [defaults](#automatically-allowed-traffic) |
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line), applied only on Azure. Replaces the default list rather than adding to it; an empty value is an error                                                                                                         | See [defaults](#automatically-allowed-traffic) |
 | `config-file`                | Path to YAML/JSON config file for advanced rules                                                                                                                                                                                                                                       |                                                |
-| `fail-on-unsupported`        | Fail if eBPF not supported                                                                                                                                                                                                                                                             | `false`                                        |
+| `fail-on-unsupported`        | Fail if CargoWall can't run here (eBPF unsupported, or startup failed) rather than warn and continue. Enforcement the runner can't apply [always fails the step](#cargowall-refused-to-start)                                                                                          | `false`                                        |
 | `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                                                                                                                                                                                                                        | `false`                                        |
 | `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                                                                                                                                                                                                              |                                                |
 | `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                                                                                                                                                                                                                         | auto-detect                                    |
@@ -363,7 +364,7 @@ Worth knowing before you enable it:
   run: echo "::warning::CargoWall is not active — egress is unfiltered"
 ```
 
-When the step itself fails — `fail-on-unsupported: true`, or an invalid input — the action fails without setting outputs, so neither output is readable.
+When the step itself fails — `fail-on-unsupported: true`, an invalid input, or a layer the job asked to enforce that the runner can't apply (see [CargoWall refused to start](#cargowall-refused-to-start)) — the action fails without setting outputs, so neither output is readable.
 
 ## How It Works
 
@@ -513,6 +514,23 @@ If you see warnings about eBPF not being supported:
 1. Ensure you're using a Linux runner (`ubuntu-latest`)
 2. The action runs with `sudo` which is required for eBPF
 3. Check kernel version with `uname -r` (need 5.x+)
+
+### CargoWall refused to start
+
+The step fails with "CargoWall refused to start" when the job asked for
+enforcement this runner can't give. It fails whatever `fail-on-unsupported`
+says: carrying on would run the job with no firewall at all. The reason names
+the layer:
+
+- **`--container-egress=enforce`, or a `--tls-sni` enforce rung, when the
+  policy enforces:** the cgroup hook couldn't attach, or couldn't be limited
+  to this job's traffic. On ARC with `containerMode: dind`, set
+  `shareProcessNamespace: true` on the runner pod. Otherwise lower the input
+  to `observe`.
+- **`--dns-redirect=true`, when the policy enforces:** the kernel couldn't take
+  the DNS redirect, an nftables table, usually because nf_tables or its NAT
+  support is missing. Without the redirect, DNS from any resolver not pointed
+  at CargoWall goes around it, and allowed hostnames are blocked on bare IPs.
 
 ### DNS resolution fails
 

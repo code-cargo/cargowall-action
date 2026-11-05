@@ -6,6 +6,7 @@ import {
   isLockdownRecord,
   downgradeMessage,
   sentinelReason,
+  sentinelRefusal,
 } from './start'
 
 // Mock @actions/core — requireNonEmptyHostList calls core.getMultilineInput
@@ -258,5 +259,36 @@ describe('resolveEgressPostures', () => {
     expect(() => resolveEgressPostures({ containerEgress: '', tlsSni: 'pinned' })).toThrow(
       /Invalid "tls-sni" value "pinned"/
     )
+  })
+})
+
+/**
+ * A refused posture fails the step whatever fail-on-unsupported says, so only
+ * the exact line cargowall writes counts: `refused=<posture>` right after the
+ * pid stamp, followed by the reason. Anything else keeps the warn-and-continue
+ * the input asks for.
+ */
+describe('sentinelRefusal', () => {
+  const reason = 'cargowall startup failed: --container-egress=enforce requested but could not be applied: x'
+
+  it('names the refused posture', () => {
+    expect(sentinelRefusal(`pid=42\nrefused=container-egress\n${reason}\n`)).toBe('container-egress')
+    expect(sentinelRefusal(`pid=42\nrefused=dns-redirect\n${reason}\n`)).toBe('dns-redirect')
+  })
+
+  it('is null for any other startup failure', () => {
+    expect(sentinelRefusal(`pid=42\ncargowall startup failed: failed to attach TC program\n`)).toBeNull()
+  })
+
+  it('is null for a line out of place, a malformed name, or no pid stamp', () => {
+    expect(sentinelRefusal(`pid=42\n${reason}\nrefused=container-egress\n`)).toBeNull()
+    expect(sentinelRefusal(`pid=42\nrefused=::error::x\n${reason}\n`)).toBeNull()
+    expect(sentinelRefusal(`pid=42\nrefused=\n${reason}\n`)).toBeNull()
+    expect(sentinelRefusal(`refused=container-egress\n${reason}\n`)).toBeNull()
+    expect(sentinelRefusal('pid=42\nrefused=container-egress')).toBeNull()
+  })
+
+  it('is left out of the reason', () => {
+    expect(sentinelReason(`pid=42\nrefused=container-egress\n${reason}\n`)).toBe(reason)
   })
 })
