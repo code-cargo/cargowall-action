@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
-const CARGOWALL_VERSION = 'v1.3.7-rc.1'
+const CARGOWALL_VERSION = 'v1.3.7'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
 // checksums.txt: a digest served by the same CDN as the binary was never a
@@ -26,8 +26,8 @@ const CARGOWALL_VERSION = 'v1.3.7-rc.1'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: '0ba5b97bc422c7607c68bba6f5b40e09688e99698efa6c3093b9134a91e6cf7e',
-  arm64: '0fdbf93f2d973e764ab0443a548d7603ede03868aa039bb8f5cce0431741ea94'
+  amd64: '31c92933e21b4d329cb795c26e82a7d2d2f347a9e039b3016c186b2872dd42fe',
+  arm64: 'f7ef2573298bcfc2b50a6c96f59c18ca01b006f84ba867fdc26a5cb85fb8575b'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS
