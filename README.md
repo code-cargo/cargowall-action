@@ -537,8 +537,13 @@ still starting as CargoWall starts, `container-egress: enforce` is decided once
 the daemon answers. If its containers turn out to be beyond the hook's reach,
 CargoWall carries on: the cgroup hook still judges the job's own traffic, and
 the TC hook judges the containers' traffic by the run-wide policy. The job's
-post step then fails with "CargoWall refused --container-egress after the start
-step had passed". The fixes are the same as above.
+post step then fails with "CargoWall refused --container-egress mid-job". The
+fixes are the same as above.
+
+The post step can only fail on what CargoWall has decided by the time it runs.
+A daemon still undecided then passes the job with `container-egress` shown as
+applied. That's one that came up in the job's last seconds, or one that
+answers CargoWall's event stream but never its API.
 
 ### DNS resolution fails
 

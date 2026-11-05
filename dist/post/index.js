@@ -25576,8 +25576,9 @@ async function failOnLateRefusal() {
   const raw = await readStateFile(FAILURE_FILE);
   const posture = raw === null ? null : sentinelRefusal(raw);
   if (raw === null || posture === null) return;
+  const reason = sentinelReason(raw).replace(/^cargowall: /, "");
   setFailed(
-    `CargoWall refused --${posture} after the start step had passed: ${sentinelReason(raw)}. The job ran without all of the enforcement it asked for from then on, so this step fails it, as a refused startup would have.`
+    `CargoWall refused --${posture} mid-job: ${reason}. The start step had passed, so the job ran without all of the enforcement it asked for from then on; this step fails it, as a refused startup would have.`
   );
 }
 run();

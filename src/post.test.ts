@@ -217,8 +217,9 @@ describe('post: a refusal decided after startup', () => {
     await runPost()
     await vi.waitFor(() => expect(core.setFailed).toHaveBeenCalledTimes(1))
     const msg = vi.mocked(core.setFailed).mock.calls[0][0] as string
-    expect(msg).toContain('CargoWall refused --container-egress after the start step had passed')
+    expect(msg).toContain('CargoWall refused --container-egress mid-job: --container-egress=enforce requested')
     expect(msg).toContain('once Docker answered')
+    expect(msg).not.toContain('cargowall: ')
     expect(vi.mocked(generateSummary).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(core.setFailed).mock.invocationCallOrder[0])
   })
@@ -230,6 +231,23 @@ describe('post: a refusal decided after startup', () => {
     await import('./post')
     await vi.waitFor(() => expect(core.setFailed).toHaveBeenCalledTimes(1))
     expect(core.warning).toHaveBeenCalledWith('CargoWall cleanup error: push failed')
+  })
+
+  it('counts a sentinel stamped just before the spawn anchor, within the clock slack', async () => {
+    const spawnedAt = Date.now()
+    withState({ 'cargowall-pid': '4242', 'cargowall-spawned-at': String(spawnedAt) })
+    withSentinel(lateSentinel, spawnedAt - 1000)
+    await runPost()
+    await vi.waitFor(() => expect(core.setFailed).toHaveBeenCalledTimes(1))
+  })
+
+  it('ignores a sentinel with no spawn anchor to judge its age by', async () => {
+    withState({ 'cargowall-pid': '4242' })
+    withSentinel(lateSentinel, Date.now())
+    await runPost()
+    await settle()
+    expect(readStateFile).not.toHaveBeenCalled()
+    expect(core.setFailed).not.toHaveBeenCalled()
   })
 
   it('ignores a sentinel from a previous job on a reused runner', async () => {
