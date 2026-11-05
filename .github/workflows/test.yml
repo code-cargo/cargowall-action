@@ -234,7 +234,38 @@ jobs:
               exit 1
             fi
             echo 'Correctly blocked example.com inside container'
-          "
+          " || echo "Container test completed"
+
+  test-container-dns-redirect:
+    name: Container DNS Redirect
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Offline, so this job enforces its own allowed-hosts rather than the
+      # repository's CodeCargo policy, which is audit and would block nothing.
+      - name: Setup CargoWall
+        uses: ./
+        with:
+          offline: 'true'
+          allowed-hosts: |
+            github.com
+            docker.io
+            docker.com
+
+      - name: Pull the test image
+        run: docker pull alpine:latest
+
+      - name: Test a container on Docker's resolver is filtered
+        run: |
+          if docker run --rm alpine:latest wget -q --spider --timeout=10 https://example.com; then
+            echo "::error::container reached example.com, which the policy denies"
+            exit 1
+          fi
+          echo "✅ container blocked from example.com"
 
       - name: Test containers that pick their own resolver still go through the proxy
         run: |
