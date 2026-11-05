@@ -532,6 +532,20 @@ the layer:
   support is missing. Without the redirect, DNS from any resolver not pointed
   at CargoWall goes around it, and allowed hostnames are blocked on bare IPs.
 
+The same refusal can come after the step has passed. When the Docker daemon is
+still starting as CargoWall starts, `container-egress: enforce` is decided once
+the daemon answers. If its containers turn out to be beyond the hook's reach,
+CargoWall carries on: the cgroup hook still judges the job's own traffic, and
+the TC hook judges the containers' traffic by the run-wide policy. The job's
+post step then fails with "CargoWall refused --container-egress mid-job". The
+fixes are the same as above.
+
+The post step can only fail on what CargoWall has decided by the time it runs.
+A daemon still undecided then passes the job with `container-egress` shown as
+applied. That's one that came up in the job's last seconds, or one that sends
+CargoWall its events but never answers CargoWall's queries about the daemon
+itself.
+
 ### DNS resolution fails
 
 If DNS queries are timing out:

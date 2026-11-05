@@ -1,13 +1,19 @@
 import * as core from '@actions/core'
 import { promises as fs } from 'fs'
 import { cleanup } from './cleanup'
-import { STALE_SLACK_MS } from './start'
+import { readStateFile, sentinelReason, sentinelRefusal, STALE_SLACK_MS } from './start'
 import { generateSummary } from './summary'
 
 // Shared with start.ts and the Go binary — see start.ts for the contract.
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
+const FAILURE_FILE = '/tmp/cargowall-failed'
 
 async function run(): Promise<void> {
+  await report()
+  await failOnLateRefusal()
+}
+
+async function report(): Promise<void> {
   try {
     // Skip if cargowall was never started
     const skipped = core.getState('cargowall-skipped')
@@ -67,13 +73,47 @@ async function run(): Promise<void> {
 
     core.info('CargoWall cleanup complete')
   } catch (error) {
-    // Post step should not fail the workflow
+    // Post step should not fail the workflow over its own errors; only a
+    // refusal does (failOnLateRefusal).
     if (error instanceof Error) {
       core.warning(`CargoWall cleanup error: ${error.message}`)
     } else {
       core.warning(`CargoWall cleanup error: ${error}`)
     }
   }
+}
+
+/**
+ * Fails the job for a posture cargowall refused after the start step had
+ * passed. Once ready, cargowall can still find that a layer the job asked to
+ * enforce doesn't reach what it promised: container-egress, when a Docker
+ * daemon still starting at startup answers with its containers outside the
+ * hook's scope. It names the posture in the failure sentinel, as a refused
+ * startup does (see sentinelRefusal), but the start step that reads it has
+ * long returned, so this step fails the job in its place. Only this run's
+ * sentinel counts: the start step saved a pid, which it does only once
+ * cargowall is ready (a refused startup failed that step already), and the
+ * sentinel is no older than the spawn. It runs after the summary, which shows
+ * the refused posture, and whether or not that succeeded.
+ */
+async function failOnLateRefusal(): Promise<void> {
+  const spawnedAtMs = Number(core.getState('cargowall-spawned-at'))
+  if (!core.getState('cargowall-pid') || !(spawnedAtMs > 0)) return
+  try {
+    if ((await fs.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) return
+  } catch {
+    return // No failure sentinel: the common case.
+  }
+  const raw = await readStateFile(FAILURE_FILE)
+  const posture = raw === null ? null : sentinelRefusal(raw)
+  if (raw === null || posture === null) return
+  // cargowall leads the reason with its own name, which the prefix here says.
+  const reason = sentinelReason(raw).replace(/^cargowall: /, '')
+  core.setFailed(
+    `CargoWall refused --${posture} mid-job: ${reason}. The start step had passed, so the job ran ` +
+      'without all of the enforcement it asked for from then on; this step fails it, as a refused ' +
+      'startup would have.'
+  )
 }
 
 run()
