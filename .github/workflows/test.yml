@@ -626,6 +626,10 @@ jobs:
           # instead of the link would pass a contents check.
           readlink /etc/resolv.conf > /tmp/resolv-link-before || true
           echo "link: $(cat /tmp/resolv-link-before)"
+          # resolved's own global search domains, which a restore that only
+          # reloaded resolved would leave holding the action's carried list.
+          { resolvectl domain 2>/dev/null || true; } | grep '^Global' > /tmp/resolved-domain-before || true
+          echo "resolved: $(cat /tmp/resolved-domain-before)"
 
       - name: Setup CargoWall (expected to fail)
         id: cw
@@ -664,6 +668,11 @@ jobs:
             if resolvectl dns | grep -q '127\.0\.0\.1'; then
               echo "ERROR: systemd-resolved still holds the proxy as a DNS server"
               resolvectl dns
+              exit 1
+            fi
+            after=$({ resolvectl domain 2>/dev/null || true; } | grep '^Global' || true)
+            if [ "$after" != "$(cat /tmp/resolved-domain-before)" ]; then
+              echo "ERROR: systemd-resolved's global search domains changed: '$after'"
               exit 1
             fi
           fi
