@@ -25833,7 +25833,7 @@ async function restoreDns() {
   try {
     if (backup.isSymbolicLink()) {
       await exec("sudo", ["mv", "-f", "-T", RESOLV_CONF_BACKUP, RESOLV_CONF]);
-      await reloadResolved();
+      await restartResolved();
     } else {
       await exec("sudo", ["cp", RESOLV_CONF_BACKUP, RESOLV_CONF]);
     }
@@ -25841,9 +25841,9 @@ async function restoreDns() {
     warning(`Failed to restore /etc/resolv.conf from ${RESOLV_CONF_BACKUP}: ${err}`);
   }
 }
-async function reloadResolved() {
+async function restartResolved() {
   try {
-    await exec("sudo", ["systemctl", "kill", "--signal=HUP", "systemd-resolved"], {
+    await exec("sudo", ["systemctl", "try-reload-or-restart", "systemd-resolved"], {
       ignoreReturnCode: true,
       silent: true
     });

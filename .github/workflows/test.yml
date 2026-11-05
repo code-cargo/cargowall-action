@@ -655,7 +655,7 @@ jobs:
           fi
           # While the file was the action's rather than its link, resolved
           # may have taken the proxy as a global DNS server. The restore
-          # reloads it; give the reload a moment.
+          # restarts it; give the restart a moment.
           if command -v resolvectl >/dev/null; then
             for _ in 1 2 3 4 5; do
               resolvectl dns | grep -q '127\.0\.0\.1' || break

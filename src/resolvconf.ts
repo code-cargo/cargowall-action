@@ -118,7 +118,7 @@ export async function restoreDns(): Promise<void> {
   try {
     if (backup.isSymbolicLink()) {
       await exec.exec('sudo', ['mv', '-f', '-T', RESOLV_CONF_BACKUP, RESOLV_CONF])
-      await reloadResolved()
+      await restartResolved()
     } else {
       await exec.exec('sudo', ['cp', RESOLV_CONF_BACKUP, RESOLV_CONF])
     }
@@ -133,12 +133,15 @@ export async function restoreDns(): Promise<void> {
 /**
  * While /etc/resolv.conf was a file of ours rather than its link, resolved
  * read it as a foreign one and took its nameserver, the proxy, and its
- * search list as global settings. It keeps them until it reloads. Best
- * effort: a runner without systemd-resolved has nothing to reload.
+ * search list as global settings. It keeps them until it starts over.
+ * Neither a SIGHUP nor a reload does that: resolved's unit has no reload, and
+ * a SIGHUP makes it exit, leaving it to the unit's Restart= to bring it back.
+ * try-reload-or-restart restarts it, and only if it is running. Best effort:
+ * a runner without systemd-resolved has nothing to restart.
  */
-async function reloadResolved(): Promise<void> {
+async function restartResolved(): Promise<void> {
   try {
-    await exec.exec('sudo', ['systemctl', 'kill', '--signal=HUP', 'systemd-resolved'], {
+    await exec.exec('sudo', ['systemctl', 'try-reload-or-restart', 'systemd-resolved'], {
       ignoreReturnCode: true,
       silent: true,
     })

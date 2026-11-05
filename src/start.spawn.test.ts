@@ -479,7 +479,7 @@ describe('start() argument construction', () => {
       expect(writtenResolvConf()).toBe('nameserver 127.0.0.1\n')
     })
 
-    it('puts the link back, and reloads resolved, when the new file cannot be renamed in', async () => {
+    it('puts the link back, and restarts resolved, when the new file cannot be renamed in', async () => {
       withInputs({ 'fail-on-unsupported': 'false' })
       withFiles({ [READY_FILE]: '', '/etc/resolv.conf': 'search corp.lan\n' }, {},
         ['/etc/resolv.conf', '/etc/resolv.conf.cargowall.bak'])
@@ -496,7 +496,7 @@ describe('start() argument construction', () => {
       const sudo = sudoCommands()
       const restored = sudo.lastIndexOf('mv -f -T /etc/resolv.conf.cargowall.bak /etc/resolv.conf')
       expect(restored).toBeGreaterThan(sudo.lastIndexOf('rm -f /etc/resolv.conf.cargowall.new'))
-      expect(sudo.indexOf('systemctl kill --signal=HUP systemd-resolved')).toBeGreaterThan(restored)
+      expect(sudo.indexOf('systemctl try-reload-or-restart systemd-resolved')).toBeGreaterThan(restored)
     })
 
     it('never puts the file contents through a shell', async () => {
