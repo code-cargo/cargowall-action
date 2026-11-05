@@ -25843,7 +25843,7 @@ async function restoreDns() {
 }
 async function restartResolved() {
   try {
-    await exec("sudo", ["systemctl", "try-reload-or-restart", "systemd-resolved"], {
+    await exec("sudo", ["systemctl", "try-restart", "systemd-resolved"], {
       ignoreReturnCode: true,
       silent: true
     });

@@ -496,7 +496,7 @@ describe('start() argument construction', () => {
       const sudo = sudoCommands()
       const restored = sudo.lastIndexOf('mv -f -T /etc/resolv.conf.cargowall.bak /etc/resolv.conf')
       expect(restored).toBeGreaterThan(sudo.lastIndexOf('rm -f /etc/resolv.conf.cargowall.new'))
-      expect(sudo.indexOf('systemctl try-reload-or-restart systemd-resolved')).toBeGreaterThan(restored)
+      expect(sudo.indexOf('systemctl try-restart systemd-resolved')).toBeGreaterThan(restored)
     })
 
     it('never puts the file contents through a shell', async () => {

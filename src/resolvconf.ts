@@ -133,15 +133,15 @@ export async function restoreDns(): Promise<void> {
 /**
  * While /etc/resolv.conf was a file of ours rather than its link, resolved
  * read it as a foreign one and took its nameserver, the proxy, and its
- * search list as global settings. It keeps them until it starts over.
- * Neither a SIGHUP nor a reload does that: resolved's unit has no reload, and
- * a SIGHUP makes it exit, leaving it to the unit's Restart= to bring it back.
- * try-reload-or-restart restarts it, and only if it is running. Best effort:
- * a runner without systemd-resolved has nothing to restart.
+ * search list as global settings. It keeps them until it starts over. A
+ * reload is not enough: systemd 255's unit has none, and 259's reload drops
+ * the server but keeps the imported search domain. try-restart restarts it,
+ * and only if it is running. Best effort: a runner without systemd-resolved
+ * has nothing to restart.
  */
 async function restartResolved(): Promise<void> {
   try {
-    await exec.exec('sudo', ['systemctl', 'try-reload-or-restart', 'systemd-resolved'], {
+    await exec.exec('sudo', ['systemctl', 'try-restart', 'systemd-resolved'], {
       ignoreReturnCode: true,
       silent: true,
     })
