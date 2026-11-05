@@ -50,12 +50,18 @@ runs:
         # The HTTP result is never the assertion: the cert will not cover the
         # name presented, and an edge may reject an unknown SNI outright.
         rc=0
-        curl -skv --connect-timeout 5 --max-time 20 -o /dev/null \
-          --resolve "$SNI_HOST:443:$IP" "https://$SNI_HOST/" 2>/tmp/l7-probe.log || rc=$?
+        connect=$(curl -skv --connect-timeout 5 --max-time 20 -o /dev/null -w '%{time_connect}' \
+          --resolve "$SNI_HOST:443:$IP" "https://$SNI_HOST/" 2>/tmp/l7-probe.log) || rc=$?
 
         # The TCP connect is: a drop at L7 lands on the ClientHello, so a probe
         # that never connected was blocked at L4 and proves nothing about L7.
-        if ! grep -q 'Connected to' /tmp/l7-probe.log; then
+        # curl 8.18 logs its connect line only after the TLS handshake, and
+        # leaves time_connect at 0 when that handshake times out, as it does
+        # when the ClientHello is dropped. Either sign of a connect will do:
+        # time_connect for a flow that got through, and the ClientHello curl
+        # writes only once the TCP connect is up, for one dropped at L7.
+        if ! awk -v t="${connect:-0}" 'BEGIN { exit !(t + 0 > 0) }' \
+           && ! grep -q '(OUT), TLS handshake, Client hello' /tmp/l7-probe.log; then
           echo "ERROR: never reached $IP — this is an L4 block, not an L7 verdict"
           cat /tmp/l7-probe.log
           exit 1
