@@ -25381,7 +25381,7 @@ async function findVersionedDiagDirs() {
 var STEP_LINE_REGEX = /^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z [^\]]*\].*?Processing step: DisplayName='([^']+)'/;
 var STEP_NAME_REGEX = /Processing step: DisplayName='([^']+)'/;
 var TRACE_LINE_REGEX = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?Z [^\]]*\]/;
-var SKIPPED = "Skipping step due to condition evaluation.";
+var SKIPPED = "StepsRunner] Skipping step due to condition evaluation.";
 var TELEMETRY = "Publish step telemetry for current step";
 function telemetryOf(lines) {
   const body = lines.join("\n");
@@ -25426,20 +25426,20 @@ function parseWorkerSteps(content) {
     }
   }
   endTelemetry();
-  const ran = taken.filter((s) => !s.skipped);
   const claimed = /* @__PURE__ */ new Set();
-  for (const s of ran) {
+  for (const s of taken) {
     const stage = s.telemetry?.stage;
     if (stage === "Main" && s.telemetry?.stepContextName) {
       s.context_name = s.telemetry.stepContextName;
     } else if ((stage === "Post" || !s.telemetry) && s.name.startsWith("Post ")) {
-      const main = ran.filter((m) => m.name === s.name.slice("Post ".length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m)).pop();
+      const main = taken.filter((m) => m.name === s.name.slice("Post ".length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m)).pop();
       if (main) {
         claimed.add(main);
         s.context_name = main.context_name;
       }
     }
   }
+  const ran = taken.filter((s) => !s.skipped);
   const steps = ran.map((s) => {
     const step = { name: s.name, started_at: s.started_at, completed_at: null };
     if (s.context_name) step.context_name = s.context_name;

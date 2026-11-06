@@ -238,6 +238,77 @@ describe('parseWorkerSteps context names', () => {
     ])
   })
 
+  it('keeps a composite whose inner step is skipped: only StepsRunner skips a step', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Setup tools'),
+        `${at(1)} CompositeActionHandler] Processing embedded step: DisplayName='Windows only'`,
+        `${at(1)} CompositeActionHandler] Skipping step due to condition evaluation.`,
+        telemetry(1, { stage: 'Main', stepContextName: 'setup.__run', isEmbedded: true }),
+        main(1, 'setup', { type: 'composite' }),
+        processing(2, 'Build'),
+        main(2, 'build'),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Setup tools', 'setup'],
+      ['Build', 'build'],
+    ])
+    // Without its own telemetry, as when that record doesn't parse, it
+    // stays all the same.
+    const untold = parseWorkerSteps(
+      [
+        processing(1, 'Setup tools'),
+        `${at(1)} CompositeActionHandler] Skipping step due to condition evaluation.`,
+        processing(2, 'Build'),
+      ].join('\n')
+    )
+    expect(untold.map(s => s.name)).toEqual(['Setup tools', 'Build'])
+  })
+
+  it('takes no embedded record for the step itself', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Composite'),
+        telemetry(1, { stage: 'Main', stepContextName: 'composite.__run', isEmbedded: true }),
+        telemetry(1, { stage: 'Main', stepContextName: 'composite.__run_2', isEmbedded: true }),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([['Composite', undefined]])
+  })
+
+  it('lets a post step skipped by its post-if take its own main step first', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'X'),
+        main(1, 'x1', { hasPostStep: true }),
+        processing(2, 'X'),
+        main(2, 'x2', { hasPostStep: true }),
+        // Posts run in reverse: x2's is skipped, then x1's runs.
+        processing(3, 'Post X'),
+        `${at(3)} StepsRunner] Evaluating: false`,
+        `${at(3)} StepsRunner] Skipping step due to condition evaluation.`,
+        processing(4, 'Post X'),
+        telemetry(4, { stage: 'Post' }),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['X', 'x1'],
+      ['X', 'x2'],
+      ['Post X', 'x1'],
+    ])
+  })
+
+  it('takes a main step for no step whose name only ends with it', () => {
+    const steps = parseWorkerSteps(
+      [processing(1, 'Build'), main(1, 'build', { hasPostStep: true }), processing(2, 'Lint Build')].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Build', 'build'],
+      ['Lint Build', undefined],
+    ])
+  })
+
   it('keeps a step whose telemetry does not parse, with no context name', () => {
     const steps = parseWorkerSteps(
       [

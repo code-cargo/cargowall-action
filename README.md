@@ -65,7 +65,7 @@ jobs:
 
 > **Note:** The action connects to the [CodeCargo platform](https://www.codecargo.com) by default. For full integration, your job needs these permissions: `id-token: write` (OIDC authentication) and `contents: read`. If `id-token: write` is not granted, the action will warn and continue without API integration. Set `offline: true` to skip API communication entirely.
 >
-> The action makes **no GitHub API calls** — `actions: read` is not used. Per-step attribution is causal (eBPF process/socket tagging in the cargowall binary) and step names come from the runner's local Worker log: each step that ran, with the runner's name for it, which the binary matches to the step name it reads from each step process in the kernel. Steps skipped by `if:` are left out.
+> The action makes **no GitHub API calls** — `actions: read` is not used. Per-step attribution is causal (eBPF process/socket tagging in the cargowall binary) and step names come from the runner's local Worker log: each step that ran, with the runner's id for it (the `GITHUB_ACTION` its processes carry). A cargowall binary that reads those ids names each step's processes by the id it reads from them in the kernel; an older one matches them by time. Steps skipped by `if:` are left out.
 
 ### How Hostnames Match
 

@@ -167,7 +167,9 @@ const STEP_LINE_REGEX =
 const STEP_NAME_REGEX = /Processing step: DisplayName='([^']+)'/
 const TRACE_LINE_REGEX = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?Z [^\]]*\]/
 // The trace line a step whose if: is false gets after its Processing line.
-const SKIPPED = 'Skipping step due to condition evaluation.'
+// It must be StepsRunner's: a composite's handler writes the same message,
+// under its own source, for an inner step it skips, inside a step that ran.
+const SKIPPED = 'StepsRunner] Skipping step due to condition evaluation.'
 // Each step that ran gets one of these when it finishes, its JSON indented
 // over the lines that follow, e.g. for a main step:
 //   [2026-11-06 20:20:04Z INFO ExecutionContext] Publish step telemetry for current step {
@@ -213,8 +215,14 @@ function telemetryOf(lines: string[]): Telemetry | null {
  * that name whose telemetry says it has a post step. Post steps run in the
  * reverse of their main steps' order, so of several such, each takes the
  * latest one not yet taken. The post step running now, whose telemetry
- * isn't written yet, is matched by name the same way. Pre steps get none:
- * they run before any main step, cargowall's own included.
+ * isn't written yet, is matched by name the same way, and so is a post
+ * step skipped by its post-if, so that it takes its own main step before
+ * it is left out. Pre steps get none: they run before any main step,
+ * cargowall's own included.
+ *
+ * Telemetry is the latest Processing line's, which holds while steps run
+ * one at a time. A step run in the background would finish after later
+ * steps started, and its telemetry would go to whichever step is latest.
  */
 export function parseWorkerSteps(content: string): StepEntry[] {
   const taken: Taken[] = []
@@ -249,14 +257,13 @@ export function parseWorkerSteps(content: string): StepEntry[] {
   }
   endTelemetry()
 
-  const ran = taken.filter(s => !s.skipped)
   const claimed = new Set<Taken>()
-  for (const s of ran) {
+  for (const s of taken) {
     const stage = s.telemetry?.stage
     if (stage === 'Main' && s.telemetry?.stepContextName) {
       s.context_name = s.telemetry.stepContextName
     } else if ((stage === 'Post' || !s.telemetry) && s.name.startsWith('Post ')) {
-      const main = ran
+      const main = taken
         .filter(m => m.name === s.name.slice('Post '.length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m))
         .pop()
       if (main) {
@@ -266,6 +273,7 @@ export function parseWorkerSteps(content: string): StepEntry[] {
     }
   }
 
+  const ran = taken.filter(s => !s.skipped)
   const steps: StepEntry[] = ran.map(s => {
     const step: StepEntry = { name: s.name, started_at: s.started_at, completed_at: null }
     if (s.context_name) step.context_name = s.context_name
