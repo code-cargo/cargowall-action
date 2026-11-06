@@ -25379,19 +25379,72 @@ async function findVersionedDiagDirs() {
   return results;
 }
 var STEP_LINE_REGEX = /^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z [^\]]*\].*?Processing step: DisplayName='([^']+)'/;
+var STEP_NAME_REGEX = /Processing step: DisplayName='([^']+)'/;
+var TRACE_LINE_REGEX = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?Z [^\]]*\]/;
+var SKIPPED = "StepsRunner] Skipping step due to condition evaluation.";
+var TELEMETRY = "Publish step telemetry for current step";
+function telemetryOf(lines) {
+  const body = lines.join("\n");
+  const a = body.indexOf("{");
+  const b = body.lastIndexOf("}");
+  if (a < 0 || b < a) return null;
+  try {
+    return JSON.parse(body.slice(a, b + 1));
+  } catch {
+    return null;
+  }
+}
 function parseWorkerSteps(content) {
-  const steps = [];
+  const taken = [];
+  let telemetry = null;
+  const endTelemetry = () => {
+    const t = telemetry && telemetryOf(telemetry);
+    const cur = taken[taken.length - 1];
+    if (t && cur && !t.isEmbedded) cur.telemetry = t;
+    telemetry = null;
+  };
   for (const line of content.split("\n")) {
-    const m = line.match(STEP_LINE_REGEX);
-    if (m) {
-      steps.push({ name: m[3], started_at: `${m[1]}T${m[2]}Z`, completed_at: null });
+    if (telemetry && !TRACE_LINE_REGEX.test(line) && !STEP_NAME_REGEX.test(line)) {
+      telemetry.push(line);
       continue;
     }
-    const nameOnly = line.match(/Processing step: DisplayName='([^']+)'/);
+    endTelemetry();
+    const m = line.match(STEP_LINE_REGEX);
+    if (m) {
+      taken.push({ name: m[3], started_at: `${m[1]}T${m[2]}Z`, completed_at: null });
+      continue;
+    }
+    const nameOnly = line.match(STEP_NAME_REGEX);
     if (nameOnly) {
-      steps.push({ name: nameOnly[1], started_at: null, completed_at: null });
+      taken.push({ name: nameOnly[1], started_at: null, completed_at: null });
+      continue;
+    }
+    if (line.includes(SKIPPED) && taken.length > 0) {
+      taken[taken.length - 1].skipped = true;
+    } else if (line.includes(TELEMETRY)) {
+      telemetry = [line];
     }
   }
+  endTelemetry();
+  const claimed = /* @__PURE__ */ new Set();
+  for (const s of taken) {
+    const stage = s.telemetry?.stage;
+    if (stage === "Main" && s.telemetry?.stepContextName) {
+      s.context_name = s.telemetry.stepContextName;
+    } else if ((stage === "Post" || !s.telemetry) && s.name.startsWith("Post ")) {
+      const main = taken.filter((m) => m.name === s.name.slice("Post ".length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m)).pop();
+      if (main) {
+        claimed.add(main);
+        s.context_name = main.context_name;
+      }
+    }
+  }
+  const ran = taken.filter((s) => !s.skipped);
+  const steps = ran.map((s) => {
+    const step = { name: s.name, started_at: s.started_at, completed_at: null };
+    if (s.context_name) step.context_name = s.context_name;
+    return step;
+  });
   for (let i = 0; i + 1 < steps.length; i++) {
     steps[i].completed_at = steps[i + 1].started_at;
   }

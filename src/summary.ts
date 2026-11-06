@@ -7,7 +7,18 @@ import { findDiagDir, readWorkerSteps } from './diag'
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
 
-export type StepEntry = { name: string; started_at: string | null; completed_at: string | null }
+/**
+ * One step as `cargowall summary --steps` takes it. context_name is the
+ * runner's name for the step, the GITHUB_ACTION its processes carry, which
+ * the binary reads in the kernel: with it a step is named by id, not by
+ * time. Absent where the Worker log doesn't give it (pre steps).
+ */
+export type StepEntry = {
+  name: string
+  started_at: string | null
+  completed_at: string | null
+  context_name?: string
+}
 
 /**
  * Whether `cargowall summary` is worth invoking at all.
