@@ -25426,19 +25426,23 @@ function parseWorkerSteps(content) {
     }
   }
   endTelemetry();
+  let lastMain = -1;
+  taken.forEach((s, i) => {
+    if (s.telemetry?.stage === "Main") lastMain = i;
+  });
   const claimed = /* @__PURE__ */ new Set();
-  for (const s of taken) {
+  taken.forEach((s, i) => {
     const stage = s.telemetry?.stage;
     if (stage === "Main" && s.telemetry?.stepContextName) {
       s.context_name = s.telemetry.stepContextName;
-    } else if ((stage === "Post" || !s.telemetry) && s.name.startsWith("Post ")) {
+    } else if ((stage === "Post" || !s.telemetry && i > lastMain) && s.name.startsWith("Post ")) {
       const main = taken.filter((m) => m.name === s.name.slice("Post ".length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m)).pop();
       if (main) {
         claimed.add(main);
         s.context_name = main.context_name;
       }
     }
-  }
+  });
   const ran = taken.filter((s) => !s.skipped);
   const steps = ran.map((s) => {
     const step = { name: s.name, started_at: s.started_at, completed_at: null };

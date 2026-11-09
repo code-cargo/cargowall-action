@@ -299,6 +299,36 @@ describe('parseWorkerSteps context names', () => {
     ])
   })
 
+  it('takes no main step for a main step named Post that has no telemetry', () => {
+    const job = (record: string): string =>
+      [
+        processing(1, 'Cache'),
+        main(1, 'cache', { hasPostStep: true }),
+        processing(2, 'Post Cache'),
+        record,
+        processing(3, 'Build'),
+        main(3, 'build'),
+        processing(4, 'Post Cache'),
+        telemetry(4, { stage: 'Post' }),
+      ].join('\n')
+    // Its telemetry doesn't parse: it keeps no context name, and Cache's
+    // post step still takes Cache's.
+    const untold = parseWorkerSteps(job(`${at(2)} ExecutionContext] Publish step telemetry for current step {`))
+    expect(untold.map(s => [s.name, s.context_name])).toEqual([
+      ['Cache', 'cache'],
+      ['Post Cache', undefined],
+      ['Build', 'build'],
+      ['Post Cache', 'cache'],
+    ])
+    // Skipped by its if:, it is left out without taking Cache's.
+    const skipped = parseWorkerSteps(job(skipping(2)))
+    expect(skipped.map(s => [s.name, s.context_name])).toEqual([
+      ['Cache', 'cache'],
+      ['Build', 'build'],
+      ['Post Cache', 'cache'],
+    ])
+  })
+
   it('takes a main step for no step whose name only ends with it', () => {
     const steps = parseWorkerSteps(
       [processing(1, 'Build'), main(1, 'build', { hasPostStep: true }), processing(2, 'Lint Build')].join('\n')

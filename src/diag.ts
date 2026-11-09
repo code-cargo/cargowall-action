@@ -217,8 +217,11 @@ function telemetryOf(lines: string[]): Telemetry | null {
  * latest one not yet taken. The post step running now, whose telemetry
  * isn't written yet, is matched by name the same way, and so is a post
  * step skipped by its post-if, so that it takes its own main step before
- * it is left out. Pre steps get none: they run before any main step,
- * cargowall's own included.
+ * it is left out. Every main step runs before any post step, so a step
+ * with no telemetry is taken for one only after the last step whose
+ * telemetry says Main: before that, a step named "Post ..." is a main
+ * step whose own telemetry is missing. Pre steps get none: they run
+ * before any main step, cargowall's own included.
  *
  * Telemetry is the latest Processing line's, which holds while steps run
  * one at a time. A step run in the background would finish after later
@@ -257,12 +260,16 @@ export function parseWorkerSteps(content: string): StepEntry[] {
   }
   endTelemetry()
 
+  let lastMain = -1
+  taken.forEach((s, i) => {
+    if (s.telemetry?.stage === 'Main') lastMain = i
+  })
   const claimed = new Set<Taken>()
-  for (const s of taken) {
+  taken.forEach((s, i) => {
     const stage = s.telemetry?.stage
     if (stage === 'Main' && s.telemetry?.stepContextName) {
       s.context_name = s.telemetry.stepContextName
-    } else if ((stage === 'Post' || !s.telemetry) && s.name.startsWith('Post ')) {
+    } else if ((stage === 'Post' || (!s.telemetry && i > lastMain)) && s.name.startsWith('Post ')) {
       const main = taken
         .filter(m => m.name === s.name.slice('Post '.length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m))
         .pop()
@@ -271,7 +278,7 @@ export function parseWorkerSteps(content: string): StepEntry[] {
         s.context_name = main.context_name
       }
     }
-  }
+  })
 
   const ran = taken.filter(s => !s.skipped)
   const steps: StepEntry[] = ran.map(s => {
