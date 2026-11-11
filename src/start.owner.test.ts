@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
- * The pidfile cargowall writes names the process the action signals as root,
- * for liveness (`sudo kill -0`) and to stop it (`sudo kill`). It is trusted
- * only when root-owned, like the other state files. Lives in its own file
- * because it needs start()'s whole module graph mocked, as
- * start.spawn.test.ts does, with a ready sentinel that arrives late so the
- * wait loop reads the pidfile at all.
+ * The pidfile and the ready sentinel are trusted only when root-owned, like
+ * the other state files: the pidfile names the process the action signals as
+ * root, for liveness (`sudo kill -0`) and to stop it (`sudo kill`), and the
+ * ready sentinel ends the startup wait. Lives in its own file because it
+ * needs start()'s whole module graph mocked, as start.spawn.test.ts does.
  */
 
 vi.mock('@actions/core', () => ({
@@ -54,20 +53,24 @@ const READY_FILE = '/tmp/cargowall-ready'
 const PID_FILE = '/tmp/cargowall.pid'
 const LAUNCHER_PID = 4242
 
+interface StateFile {
+  body: string
+  owner: number
+}
+
 /**
- * State files cargowall wrote, fresh, owned by `owner`. The ready sentinel
- * shows up on the wait loop's second look, so its first pass reads the
+ * State files cargowall wrote, fresh. The ready sentinel shows up on the wait
+ * loop's look `readyLook` (from 0), so by default its first pass reads the
  * pidfile and checks liveness.
  */
-function withPidfile(content: string, owner: number): void {
-  const files: Record<string, string> = { [READY_FILE]: '', [PID_FILE]: content }
+function withStateFiles(files: Record<string, StateFile>, readyLook = 1): void {
   let readyLooks = 0
   vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
     if (!String(p).startsWith('/tmp/cargowall') || String(p) in files) return undefined
     throw new Error(`ENOENT: ${String(p)}`)
   })
   vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
-    if (String(p) === READY_FILE && readyLooks++ === 0) throw new Error('not yet')
+    if (String(p) === READY_FILE && readyLooks++ < readyLook) throw new Error('not yet')
     if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
     return { mtimeMs: Date.now() + 5000, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
   })
@@ -76,12 +79,12 @@ function withPidfile(content: string, owner: number): void {
     return { isFile: () => true, isSymbolicLink: () => false } as Awaited<ReturnType<typeof fsp.lstat>>
   })
   vi.mocked(fsp.open).mockImplementation(async (p: unknown) => {
-    const body = files[String(p)]
-    if (body === undefined) throw new Error(`ENOENT: ${String(p)}`)
+    const file = files[String(p)]
+    if (file === undefined) throw new Error(`ENOENT: ${String(p)}`)
     return {
-      stat: async () => ({ isFile: () => true, uid: owner }),
+      stat: async () => ({ isFile: () => true, uid: file.owner }),
       read: async (buf: Buffer, offset: number, length: number) => {
-        const src = Buffer.from(body, 'utf8')
+        const src = Buffer.from(file.body, 'utf8')
         return { bytesRead: src.copy(buf, offset, 0, Math.min(src.length, length)), buffer: buf }
       },
       close: async () => undefined,
@@ -96,6 +99,9 @@ function signalledPids(): string[] {
     .map(([, args]) => String(args?.at(-1)))
 }
 
+/** A ready sentinel, owned by `owner`. */
+const ready = (owner: number): StateFile => ({ body: '', owner })
+
 describe('start() and the cargowall pidfile', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -107,17 +113,39 @@ describe('start() and the cargowall pidfile', () => {
   })
 
   it('uses the PID in a root-owned pidfile', async () => {
-    withPidfile('4243\n', 0)
+    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '4243\n', owner: 0 } })
 
     expect(await start()).toEqual({ supported: true, pid: 4243 })
     expect(signalledPids()).toEqual(['4243'])
   })
 
   it('ignores a pidfile another user owns, and signals nothing it names', async () => {
-    withPidfile('31337\n', 1001)
+    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '31337\n', owner: 1001 } })
 
     expect(await start()).toEqual({ supported: true, pid: LAUNCHER_PID })
     expect(signalledPids()).toEqual([])
     expect(core.saveState).toHaveBeenCalledWith('cargowall-pid', String(LAUNCHER_PID))
+  })
+})
+
+describe('start() and the ready sentinel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(core.getMultilineInput).mockImplementation((name: string) =>
+      name === 'github-service-hosts' ? ['github.com'] : name === 'azure-infra-hosts' ? ['trafficmanager.net'] : []
+    )
+    vi.mocked(core.getInput).mockReturnValue('')
+    // cargowall (4243) has exited; sudo itself works.
+    vi.mocked(exec.exec).mockImplementation(async (cmd: string, args?: string[]) =>
+      cmd === 'sudo' && args?.join(' ') === '-n kill -0 4243' ? 1 : 0
+    )
+  })
+
+  it('does not end the wait on a ready sentinel another user owns', async () => {
+    withStateFiles({ [READY_FILE]: ready(1001), [PID_FILE]: { body: '4243\n', owner: 0 } }, 0)
+
+    expect(await start()).toEqual({ supported: false, pid: null })
+    expect(core.error).toHaveBeenCalledWith('CargoWall process exited unexpectedly')
+    expect(core.info).not.toHaveBeenCalledWith('CargoWall is ready')
   })
 })

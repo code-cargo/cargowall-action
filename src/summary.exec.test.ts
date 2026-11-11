@@ -39,9 +39,12 @@ vi.mock('./diag', () => ({
   readWorkerSteps: vi.fn(async () => []),
 }))
 vi.mock('fs', () => ({
+  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x100, O_NONBLOCK: 0x800 },
   promises: {
     stat: vi.fn(async () => ({ size: 1024 })),
     readFile: vi.fn(async () => { throw new Error('ENOENT') }),
+    lstat: vi.fn(async () => { throw new Error('ENOENT') }),
+    open: vi.fn(async () => { throw new Error('ENOENT') }),
   },
 }))
 
@@ -162,5 +165,57 @@ describe('generateSummary outcome split', () => {
     await generateSummary({ render: true })
 
     expect(exec.exec).not.toHaveBeenCalled()
+  })
+})
+
+describe('generateSummary effective mode', () => {
+  const MODE_FILE = '/tmp/cargowall-mode'
+
+  /** cargowall's mode file, holding `mode` and owned by `owner`. */
+  function withModeFile(mode: string, owner: number): void {
+    vi.mocked(fsp.readFile).mockImplementation(async (p: unknown) => {
+      if (String(p) === MODE_FILE) return mode
+      throw new Error('ENOENT')
+    })
+    vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
+      if (String(p) !== MODE_FILE) throw new Error('ENOENT')
+      return { isFile: () => true } as Awaited<ReturnType<typeof fsp.lstat>>
+    })
+    vi.mocked(fsp.open).mockImplementation(async (p: unknown) => {
+      if (String(p) !== MODE_FILE) throw new Error('ENOENT')
+      return {
+        stat: async () => ({ isFile: () => true, uid: owner }),
+        read: async (buf: Buffer, offset: number, length: number) => {
+          const src = Buffer.from(mode, 'utf8')
+          return { bytesRead: src.copy(buf, offset, 0, Math.min(src.length, length)), buffer: buf }
+        },
+        close: async () => undefined,
+      } as unknown as Awaited<ReturnType<typeof fsp.open>>
+    })
+  }
+
+  /** The --mode the push carries. */
+  function pushedMode(): string | undefined {
+    const args = execArgs(0)
+    return args[args.indexOf('--mode') + 1]
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(fsp.stat).mockResolvedValue({ size: 1024 } as Awaited<ReturnType<typeof fsp.stat>>)
+    withInputs({ 'api-url': 'https://app.codecargo.com', mode: 'audit' })
+    scriptExec([{ code: 0, stdout: '' }])
+  })
+
+  it("pushes the mode cargowall recorded in its root-owned mode file", async () => {
+    withModeFile('enforce', 0)
+    await generateSummary({ render: false })
+    expect(pushedMode()).toBe('enforce')
+  })
+
+  it("ignores a mode file another user owns, and pushes this step's mode", async () => {
+    withModeFile('enforce', 1001)
+    await generateSummary({ render: false })
+    expect(pushedMode()).toBe('audit')
   })
 })

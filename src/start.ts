@@ -334,16 +334,13 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   let cargowallPid: number | null = null
   let ready = false
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
-    try {
-      // Anchored like the other state files: a stale ready file that survived
-      // a failed clearStartupFiles rm must not short-circuit the wait with a
-      // false "ready" while this run's cargowall is still coming up.
-      if ((await fs.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
-        ready = true
-        break
-      }
-    } catch {
-      // Not ready yet
+    // Read like the other state files (readFreshStateFile): a stale ready
+    // file that survived a failed clearStartupFiles rm must not short-circuit
+    // the wait with a false "ready" while this run's cargowall is still coming
+    // up, and the sentinel counts only when root-owned.
+    if ((await readFreshStateFile(READY_FILE, spawnedAtMs)) !== null) {
+      ready = true
+      break
     }
 
     // cargowall reported a startup failure.

@@ -26132,12 +26132,9 @@ async function start() {
   let cargowallPid = null;
   let ready = false;
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
-    try {
-      if ((await import_fs6.promises.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
-        ready = true;
-        break;
-      }
-    } catch {
+    if (await readFreshStateFile(READY_FILE, spawnedAtMs) !== null) {
+      ready = true;
+      break;
     }
     const failure = await readFailureFile(spawnedAtMs);
     if (failure !== null) {
