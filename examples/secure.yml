@@ -11,7 +11,10 @@ jobs:
     steps:
       # What needs root runs before the lockdown: once it is on, sudo for the
       # job's user runs only the allowlist, and an allowlisted package manager
-      # or docker would give every later step root.
+      # or docker would give every later step root. Running it first also runs
+      # it before the firewall, so its downloads aren't filtered. To filter
+      # them, start the action first and allowlist the package manager instead,
+      # accepting the root that grants.
       - name: Install system dependencies
         run: |
           sudo apt-get update
