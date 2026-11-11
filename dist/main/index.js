@@ -25770,6 +25770,83 @@ async function detectDnsUpstream(userInput) {
   return { primary: fallback, all: [fallback], source: "fallback" };
 }
 
+// src/effective.ts
+var AUDIT_NOTICE = "CargoWall running in AUDIT MODE - connections logged but NOT blocked";
+function previewNotice(mode, postureFlags) {
+  if (mode === "audit" || !postureFlags.includes("--container-egress=enforce")) return null;
+  return `CargoWall v2 preview enforcement is ON (${postureFlags.join(" ")}) - these knobs are experimental and can block traffic that an L4-only policy allowed`;
+}
+function modeNotices(mode, postureFlags) {
+  if (mode === "audit") return [AUDIT_NOTICE];
+  const preview = previewNotice(mode, postureFlags);
+  return preview ? [preview] : [];
+}
+function modeEcho(mode, apiFailurePosture) {
+  if (apiFailurePosture === null) return mode;
+  if (apiFailurePosture === "local") return `${mode} (fallback if the policy can't be fetched)`;
+  return "set by the CodeCargo policy";
+}
+function sudoLockdownEcho(sudoLockdown, apiPolicy) {
+  if (!apiPolicy) return String(sudoLockdown);
+  return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`;
+}
+function parseModeFile(raw) {
+  const value = raw?.trim();
+  return value === "enforce" || value === "audit" ? value : null;
+}
+function parsePostures(raw) {
+  if (raw === null) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const clean = (v) => typeof v === "string" ? v.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 400) : "";
+  const lines = [];
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const l = entry;
+    const line = { posture: clean(l.posture), requested: clean(l.requested), applied: clean(l.applied) };
+    const reason = clean(l.reason);
+    if (reason) line.reason = reason;
+    if (line.posture) lines.push(line);
+  }
+  return lines;
+}
+function sudoLockdownReport(args) {
+  const line = args.postures?.find((l) => l.posture === "sudo-lockdown");
+  if (line) {
+    if (line.applied === "true") return "Sudo lockdown: on";
+    return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ""}`;
+  }
+  if (!args.policyLoaded) {
+    return `Sudo lockdown: ${args.inputSudoLockdown} (no policy was loaded; this step's input applies)`;
+  }
+  return "Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)";
+}
+function effectiveReport(args) {
+  const { inputMode, effective, downgraded, postureFlags } = args;
+  const sudo = sudoLockdownReport({
+    inputSudoLockdown: args.inputSudoLockdown,
+    policyLoaded: effective !== null && !downgraded,
+    postures: args.postures
+  });
+  if (effective === null) {
+    return {
+      info: [`Mode: ${inputMode} (no policy was loaded; this step's configuration applies)`, sudo],
+      notices: modeNotices(inputMode, postureFlags)
+    };
+  }
+  const source = downgraded ? "the policy-fetch failure posture" : "the CodeCargo policy";
+  const notices = modeNotices(effective, postureFlags);
+  if (effective === "enforce" && inputMode === "audit" && !downgraded) {
+    notices.unshift("CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`");
+  }
+  return { info: [`Mode: ${effective} (set by ${source})`, sudo], notices };
+}
+
 // src/resolvconf.ts
 var import_fs5 = require("fs");
 var RESOLV_CONF = "/etc/resolv.conf";
@@ -25858,6 +25935,8 @@ var READY_FILE = "/tmp/cargowall-ready";
 var PID_FILE = "/tmp/cargowall.pid";
 var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
+var MODE_FILE = "/tmp/cargowall-mode";
+var POSTURES_FILE = "/tmp/cargowall-postures";
 var STARTUP_TIMEOUT = 30;
 var EXIT_REFUSED = 3;
 var VALID_MODES = ["enforce", "audit"];
@@ -25921,7 +26000,6 @@ async function start() {
   ];
   if (mode === "audit") {
     args.push("--audit-mode");
-    notice("CargoWall running in AUDIT MODE - connections logged but NOT blocked");
   }
   if (debug2) {
     args.push("--debug");
@@ -25937,11 +26015,6 @@ async function start() {
     args.push("--allow-existing-connections");
   }
   args.push(...postureFlags);
-  if (mode !== "audit" && postureFlags.includes("--container-egress=enforce")) {
-    notice(
-      `CargoWall v2 preview enforcement is ON (${postureFlags.join(" ")}) - these knobs are experimental and can block traffic that an L4-only policy allowed`
-    );
-  }
   const offline = getInput("offline") === "true";
   const apiUrl = getInput("api-url");
   const skipPolicyFetch = getInput("skip-policy-fetch") === "true";
@@ -25972,8 +26045,12 @@ async function start() {
   if (configFile) {
     args.push(`--config=${configFile}`);
   }
+  const apiFailurePosture = apiFailureLabel === null ? null : apiFailure.value;
+  if (apiFailurePosture === null) {
+    for (const notice2 of modeNotices(mode, postureFlags)) notice(notice2);
+  }
   info("Configuration:");
-  info(`  Mode: ${mode}`);
+  info(`  Mode: ${modeEcho(mode, apiFailurePosture)}`);
   if (allowedHosts) info(`  Allowed hosts: ${allowedHosts}`);
   if (allowedCidrs) info(`  Allowed CIDRs: ${allowedCidrs}`);
   if (searchDomains) info(`  Search domains: ${searchDomains}`);
@@ -25982,7 +26059,7 @@ async function start() {
   if (configFile) info(`  Config file: ${configFile}`);
   const jobId = getInput("job-id");
   if (jobId) info(`  Job run ID: ${jobId}`);
-  info(`  Sudo lockdown: ${sudoLockdown}`);
+  info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null)}`);
   if (postureFlags.length > 0) info(`  v2 preview postures: ${postureFlags.join(" ")}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
@@ -26099,6 +26176,18 @@ async function start() {
   }
   info("CargoWall is ready");
   await warnOnDowngrade(spawnedAtMs);
+  if (apiFailurePosture !== null) {
+    const report = effectiveReport({
+      inputMode: mode,
+      inputSudoLockdown: sudoLockdown,
+      effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
+      downgraded: await readDowngradeFile(spawnedAtMs) !== null,
+      postureFlags,
+      postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
+    });
+    for (const line of report.info) info(line);
+    for (const notice2 of report.notices) notice(notice2);
+  }
   cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");
@@ -26220,14 +26309,17 @@ async function readStateFile(filePath) {
   }
 }
 async function readDowngradeFile(spawnedAtMs) {
+  return readFreshStateFile(DOWNGRADE_FILE, spawnedAtMs);
+}
+async function readFreshStateFile(filePath, spawnedAtMs) {
   try {
-    if ((await import_fs6.promises.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs6.promises.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
     return null;
   }
-  return readStateFile(DOWNGRADE_FILE);
+  return readStateFile(filePath);
 }
 function isLockdownRecord(raw) {
   if (raw === null) return false;

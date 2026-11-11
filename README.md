@@ -163,6 +163,8 @@ Run in audit mode to log connections without blocking them — useful for unders
     mode: audit
 ```
 
+A policy fetched from the [CodeCargo platform](#codecargo-platform) replaces `mode`, and `sudo-lockdown` too when the policy sets it. With one in play, the start step doesn't announce `mode` as the run's mode, and the configuration echo shows it only as a fallback, for when a fetch failure would use it. Once cargowall is ready, the step reports the mode it applies (`Mode: enforce (set by the CodeCargo policy)`) and the sudo lockdown, which cargowall versions newer than v2.0.0-rc.13 report as on or not applied.
+
 ### When the CodeCargo Policy Can't Be Fetched
 
 The action fetches the resolved policy from the [CodeCargo platform](#codecargo-platform) at startup (unless `offline: true`), and `api-failure-mode` decides what happens when that fetch genuinely fails. **This default matters even if you don't use the platform** — see the trade-off note below the table.

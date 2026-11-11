@@ -60,6 +60,9 @@ const READY_FILE = '/tmp/cargowall-ready'
 const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 const PID_FILE = '/tmp/cargowall.pid'
+const MODE_FILE = '/tmp/cargowall-mode'
+const POSTURES_FILE = '/tmp/cargowall-postures'
+const AUDIT_NOTICE = 'CargoWall running in AUDIT MODE - connections logged but NOT blocked'
 
 /** The launcher exits with code as soon as start() listens for it. */
 function launcherExitsWith(code: number): void {
@@ -351,6 +354,108 @@ describe('start() argument construction', () => {
     it('omits --audit-mode by default, since the default is enforce', async () => {
       withInputs({})
       expect(await cargowallArgs()).not.toContain('--audit-mode')
+    })
+  })
+
+  describe('mode announcement', () => {
+    const API = { 'api-url': 'https://app.codecargo.com' }
+
+    it('announces an inputs-only audit run up front, as before', async () => {
+      withInputs({ mode: 'audit' })
+      await start()
+      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
+      expect(core.info).toHaveBeenCalledWith('  Mode: audit')
+      expect(core.info).toHaveBeenCalledWith('  Sudo lockdown: false')
+    })
+
+    it("reports the policy's mode, not the input's, once cargowall is ready", async () => {
+      withInputs({ ...API, mode: 'audit' })
+      withFiles({ [READY_FILE]: '', [MODE_FILE]: 'enforce\n' })
+
+      await start()
+
+      expect(core.notice).not.toHaveBeenCalledWith(AUDIT_NOTICE)
+      expect(core.notice).toHaveBeenCalledWith(
+        "CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`"
+      )
+      expect(core.info).toHaveBeenCalledWith("  Mode: audit (fallback if the policy can't be fetched)")
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringMatching(/^ {2}Sudo lockdown: false \(this step's input; a CodeCargo policy/)
+      )
+      expect(core.info).toHaveBeenCalledWith('Mode: enforce (set by the CodeCargo policy)')
+      expect(core.info).toHaveBeenCalledWith(
+        'Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)'
+      )
+    })
+
+    it('reports the sudo lockdown the posture record names, applied or not', async () => {
+      withInputs({ ...API, mode: 'audit' })
+      withFiles({
+        [READY_FILE]: '',
+        [MODE_FILE]: 'enforce\n',
+        [POSTURES_FILE]: '[{"posture":"dns-redirect","requested":"true","applied":"true"},' +
+          '{"posture":"sudo-lockdown","requested":"true","applied":"true"}]',
+      })
+      await start()
+      expect(core.info).toHaveBeenCalledWith('Sudo lockdown: on')
+
+      vi.mocked(core.info).mockClear()
+      withFiles({
+        [READY_FILE]: '',
+        [MODE_FILE]: 'enforce\n',
+        [POSTURES_FILE]: '[{"posture":"sudo-lockdown","requested":"true","applied":"false",' +
+          '"reason":"sudo lockdown incomplete, /etc/sudoers could not be amended"}]',
+      })
+      await start()
+      expect(core.info).toHaveBeenCalledWith(
+        'Sudo lockdown: not applied (sudo lockdown incomplete, /etc/sudoers could not be amended)'
+      )
+      expect(core.info).not.toHaveBeenCalledWith('Sudo lockdown: on')
+    })
+
+    it("announces audit mode after ready when that is the policy's mode", async () => {
+      withInputs({ ...API, mode: 'enforce' })
+      withFiles({ [READY_FILE]: '', [MODE_FILE]: 'audit\n' })
+
+      await start()
+
+      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
+      expect(core.info).toHaveBeenCalledWith('Mode: audit (set by the CodeCargo policy)')
+    })
+
+    it("falls back to the step's mode when no policy was loaded", async () => {
+      withInputs({ ...API, mode: 'audit' })
+
+      await start()
+
+      expect(core.info).toHaveBeenCalledWith(
+        "Mode: audit (no policy was loaded; this step's configuration applies)"
+      )
+      expect(core.info).toHaveBeenCalledWith(
+        "Sudo lockdown: false (no policy was loaded; this step's input applies)"
+      )
+      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
+    })
+
+    it("ignores a previous job's mode file", async () => {
+      withInputs({ ...API, mode: 'audit' })
+      withFiles({ [READY_FILE]: '', [MODE_FILE]: 'enforce\n' }, { [MODE_FILE]: 1_000_000 })
+
+      await start()
+
+      expect(core.info).toHaveBeenCalledWith(
+        "Mode: audit (no policy was loaded; this step's configuration applies)"
+      )
+    })
+
+    it('treats a run whose OIDC token failed as inputs-only', async () => {
+      withInputs({ ...API, mode: 'audit' })
+      vi.mocked(core.getIDToken).mockRejectedValueOnce(new Error('no id-token permission'))
+
+      await start()
+
+      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
+      expect(core.info).toHaveBeenCalledWith('  Mode: audit')
     })
   })
 
