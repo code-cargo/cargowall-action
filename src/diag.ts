@@ -159,33 +159,133 @@ async function findVersionedDiagDirs(): Promise<string[]> {
   return results
 }
 
-// One Worker trace line per executed step, e.g.:
+// One Worker trace line per step the runner takes up, run or skipped, e.g.:
 //   [2026-08-06 18:23:46Z INFO StepsRunner] Processing step: DisplayName='Run tests', ...
 // The prefix is the runner's Tracing format: [<UTC "u" timestamp> <level> <source>].
 const STEP_LINE_REGEX =
   /^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z [^\]]*\].*?Processing step: DisplayName='([^']+)'/
+const STEP_NAME_REGEX = /Processing step: DisplayName='([^']+)'/
+const TRACE_LINE_REGEX = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?Z [^\]]*\]/
+// The trace line a step whose if: is false gets after its Processing line.
+// It must be StepsRunner's: a composite's handler writes the same message,
+// under its own source, for an inner step it skips, inside a step that ran.
+const SKIPPED = 'StepsRunner] Skipping step due to condition evaluation.'
+// Each step that ran gets one of these when it finishes, its JSON indented
+// over the lines that follow, e.g. for a main step:
+//   [2026-11-06 20:20:04Z INFO ExecutionContext] Publish step telemetry for current step {
+//     "action": "sh",
+//     "stage": "Main",
+//     "stepContextName": "build",
+//     ...
+//   }.
+// A composite's inner steps get one each first, with isEmbedded set.
+const TELEMETRY = 'Publish step telemetry for current step'
+
+type Telemetry = { stage?: string; stepContextName?: string; hasPostStep?: boolean; isEmbedded?: boolean }
+type Taken = StepEntry & { skipped?: boolean; telemetry?: Telemetry }
+
+/** The JSON in a telemetry record and its continuation lines, or null. */
+function telemetryOf(lines: string[]): Telemetry | null {
+  const body = lines.join('\n')
+  const a = body.indexOf('{')
+  const b = body.lastIndexOf('}')
+  if (a < 0 || b < a) return null
+  try {
+    return JSON.parse(body.slice(a, b + 1)) as Telemetry
+  } catch {
+    return null
+  }
+}
 
 /**
- * Parse Worker log content into the executed steps, in execution order, with
- * RFC3339 start times taken from each trace line's timestamp prefix. A line
- * whose prefix doesn't parse still contributes its name (null started_at —
- * the binary just can't match a boundary to it) rather than shifting every
- * later step's position. Each step's completed_at is chained from the next
- * step's start, mirroring what the GitHub API reports.
+ * Parse Worker log content into the steps that ran, in execution order, with
+ * RFC3339 start times taken from each Processing line's timestamp prefix. A
+ * line whose prefix doesn't parse still contributes its name (null
+ * started_at — the binary just can't match a boundary to it by time) rather
+ * than shifting every later step's position. Each step's completed_at is
+ * chained from the next step's start, mirroring what the GitHub API reports.
+ *
+ * A step skipped by its if: is left out: it never ran, and listed with a
+ * start time it would take the next step's processes for itself.
+ *
+ * context_name, the GITHUB_ACTION a step's processes carry, comes from the
+ * step's telemetry: a main step's records it. A post step's doesn't, but
+ * it carries its main step's GITHUB_ACTION, and the runner names it
+ * "Post <main step's name>": it takes the context name of the main step of
+ * that name whose telemetry says it has a post step. Post steps run in the
+ * reverse of their main steps' order, so of several such, each takes the
+ * latest one not yet taken. The post step running now, whose telemetry
+ * isn't written yet, is matched by name the same way, and so is a post
+ * step skipped by its post-if, so that it takes its own main step before
+ * it is left out. Every main step runs before any post step, so a step
+ * with no telemetry is taken for one only after the last step whose
+ * telemetry says Main: before that, a step named "Post ..." is a main
+ * step whose own telemetry is missing. Pre steps get none: they run
+ * before any main step, cargowall's own included.
+ *
+ * Telemetry is the latest Processing line's, which holds while steps run
+ * one at a time. A step run in the background would finish after later
+ * steps started, and its telemetry would go to whichever step is latest.
  */
 export function parseWorkerSteps(content: string): StepEntry[] {
-  const steps: StepEntry[] = []
+  const taken: Taken[] = []
+  let telemetry: string[] | null = null
+  const endTelemetry = (): void => {
+    const t = telemetry && telemetryOf(telemetry)
+    const cur = taken[taken.length - 1]
+    if (t && cur && !t.isEmbedded) cur.telemetry = t
+    telemetry = null
+  }
   for (const line of content.split('\n')) {
-    const m = line.match(STEP_LINE_REGEX)
-    if (m) {
-      steps.push({ name: m[3], started_at: `${m[1]}T${m[2]}Z`, completed_at: null })
+    if (telemetry && !TRACE_LINE_REGEX.test(line) && !STEP_NAME_REGEX.test(line)) {
+      telemetry.push(line)
       continue
     }
-    const nameOnly = line.match(/Processing step: DisplayName='([^']+)'/)
+    endTelemetry()
+    const m = line.match(STEP_LINE_REGEX)
+    if (m) {
+      taken.push({ name: m[3], started_at: `${m[1]}T${m[2]}Z`, completed_at: null })
+      continue
+    }
+    const nameOnly = line.match(STEP_NAME_REGEX)
     if (nameOnly) {
-      steps.push({ name: nameOnly[1], started_at: null, completed_at: null })
+      taken.push({ name: nameOnly[1], started_at: null, completed_at: null })
+      continue
+    }
+    if (line.includes(SKIPPED) && taken.length > 0) {
+      taken[taken.length - 1].skipped = true
+    } else if (line.includes(TELEMETRY)) {
+      telemetry = [line]
     }
   }
+  endTelemetry()
+
+  let lastMain = -1
+  taken.forEach((s, i) => {
+    if (s.telemetry?.stage === 'Main') lastMain = i
+  })
+  const claimed = new Set<Taken>()
+  taken.forEach((s, i) => {
+    const stage = s.telemetry?.stage
+    if (stage === 'Main' && s.telemetry?.stepContextName) {
+      s.context_name = s.telemetry.stepContextName
+    } else if ((stage === 'Post' || (!s.telemetry && i > lastMain)) && s.name.startsWith('Post ')) {
+      const main = taken
+        .filter(m => m.name === s.name.slice('Post '.length) && m.telemetry?.hasPostStep && m.context_name && !claimed.has(m))
+        .pop()
+      if (main) {
+        claimed.add(main)
+        s.context_name = main.context_name
+      }
+    }
+  })
+
+  const ran = taken.filter(s => !s.skipped)
+  const steps: StepEntry[] = ran.map(s => {
+    const step: StepEntry = { name: s.name, started_at: s.started_at, completed_at: null }
+    if (s.context_name) step.context_name = s.context_name
+    return step
+  })
   for (let i = 0; i + 1 < steps.length; i++) {
     steps[i].completed_at = steps[i + 1].started_at
   }

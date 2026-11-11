@@ -111,6 +111,252 @@ describe('parseWorkerSteps', () => {
   })
 })
 
+// The records a hosted runner (2.338.2) writes per step, as its Worker log
+// has them: a Processing line, then, for a step whose if: is false, a
+// Skipping line, or, for one that ran, its telemetry when it finishes.
+const at = (s: number): string => `[2026-11-06 20:10:${String(s).padStart(2, '0')}Z INFO`
+const processing = (s: number, name: string): string => `${at(s)} StepsRunner] Processing step: DisplayName='${name}'`
+const skipping = (s: number): string =>
+  [
+    `${at(s)} StepsRunner] Evaluating: (success() && false)`,
+    `${at(s)} StepsRunner] Result: false`,
+    `${at(s)} StepsRunner] Skipping step due to condition evaluation.`,
+  ].join('\n')
+const telemetry = (s: number, fields: Record<string, unknown>): string =>
+  [
+    `${at(s)} StepsRunner] Step result: `,
+    `${at(s)} ExecutionContext] Publish step telemetry for current step ${JSON.stringify(
+      { result: 'succeeded', errorMessages: [], ...fields },
+      null,
+      2
+    )}.`,
+    `${at(s)} StepsRunner] Current state: job state = ''`,
+  ].join('\n')
+const main = (s: number, context: string, extra: Record<string, unknown> = {}): string =>
+  telemetry(s, { action: 'sh', type: 'run', stage: 'Main', stepContextName: context, ...extra })
+
+const JOB = [
+  processing(1, 'Pre Remote with pre and post'),
+  telemetry(1, { action: 'code-cargo/plan-prepost', type: 'node24', stage: 'Pre' }),
+  processing(1, 'Run actions/checkout@v6'),
+  main(2, '__actions_checkout', { action: 'actions/checkout', hasPreStep: false, hasPostStep: true }),
+  processing(2, 'Start CargoWall'),
+  main(3, '__code-cargo_cargowall-action', { action: 'code-cargo/cargowall-action', hasPostStep: true }),
+  processing(3, 'Named step'),
+  main(3, 'named'),
+  processing(3, 'Skipped step'),
+  skipping(3),
+  processing(3, 'Same name'),
+  main(3, '__run_3'),
+  processing(3, 'Same name'),
+  main(3, '__run_4'),
+  processing(3, 'Composite'),
+  telemetry(3, { action: 'bash', type: 'run', stage: 'Main', stepContextName: 'composite.__run', isEmbedded: true }),
+  telemetry(3, { action: 'bash', type: 'run', stage: 'Main', stepContextName: 'composite.__run_2', isEmbedded: true }),
+  main(3, 'composite', { type: 'composite', hasPreStep: false, hasPostStep: false }),
+  processing(3, 'Remote with pre and post'),
+  main(4, 'prepost', { type: 'node24', hasPreStep: true, hasPostStep: true }),
+  processing(4, 'Post skipped'),
+  main(4, 'postif', { type: 'node24', hasPostStep: true }),
+  processing(4, 'Last step'),
+  main(4, '__run_6'),
+  processing(5, 'Post Post skipped'),
+  skipping(5),
+  processing(5, 'Post Run actions/checkout@v6'),
+  telemetry(5, { action: 'actions/checkout', type: 'node24', stage: 'Post' }),
+  processing(6, 'Post Remote with pre and post'),
+  telemetry(6, { action: 'code-cargo/plan-prepost', type: 'node24', stage: 'Post' }),
+  // This one is running: its telemetry comes when it finishes.
+  processing(6, 'Post Start CargoWall'),
+  `${at(6)} StepsRunner] Evaluating: always()`,
+].join('\n')
+
+describe('parseWorkerSteps context names', () => {
+  it('names each step that ran by its runner context name, and leaves out the ones skipped', () => {
+    const steps = parseWorkerSteps(JOB)
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Pre Remote with pre and post', undefined],
+      ['Run actions/checkout@v6', '__actions_checkout'],
+      ['Start CargoWall', '__code-cargo_cargowall-action'],
+      ['Named step', 'named'],
+      ['Same name', '__run_3'],
+      ['Same name', '__run_4'],
+      ['Composite', 'composite'],
+      ['Remote with pre and post', 'prepost'],
+      ['Post skipped', 'postif'],
+      ['Last step', '__run_6'],
+      ['Post Run actions/checkout@v6', '__actions_checkout'],
+      ['Post Remote with pre and post', 'prepost'],
+      ['Post Start CargoWall', '__code-cargo_cargowall-action'],
+    ])
+  })
+
+  it('chains completed_at past a skipped step to the next step that ran', () => {
+    const steps = parseWorkerSteps(JOB)
+    const named = steps.find(s => s.name === 'Named step')
+    expect(named?.completed_at).toBe('2026-11-06T20:10:03Z')
+    expect(steps.find(s => s.name === 'Skipped step')).toBeUndefined()
+  })
+
+  it('omits context_name where there is none, so older binaries see the same JSON', () => {
+    const steps = parseWorkerSteps(JOB)
+    expect(Object.keys(steps[0])).toEqual(['name', 'started_at', 'completed_at'])
+    expect(JSON.stringify(steps[1])).toContain('"context_name":"__actions_checkout"')
+  })
+
+  it('gives post steps of same-named main steps their context names latest first', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Cache'),
+        main(1, 'cache_a', { hasPostStep: true }),
+        processing(2, 'Cache'),
+        main(2, 'cache_b', { hasPostStep: true }),
+        processing(3, 'Post Cache'),
+        telemetry(3, { stage: 'Post' }),
+        processing(4, 'Post Cache'),
+        telemetry(4, { stage: 'Post' }),
+      ].join('\n')
+    )
+    expect(steps.map(s => s.context_name)).toEqual(['cache_a', 'cache_b', 'cache_b', 'cache_a'])
+  })
+
+  it('names a post step only after a main step that has one', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Deploy'),
+        main(1, 'deploy'),
+        processing(2, 'Post Deploy'),
+        telemetry(2, { stage: 'Post' }),
+        processing(3, 'Post deploy notes'),
+        main(3, 'notes'),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Deploy', 'deploy'],
+      ['Post Deploy', undefined],
+      ['Post deploy notes', 'notes'],
+    ])
+  })
+
+  it('keeps a composite whose inner step is skipped: only StepsRunner skips a step', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Setup tools'),
+        `${at(1)} CompositeActionHandler] Processing embedded step: DisplayName='Windows only'`,
+        `${at(1)} CompositeActionHandler] Skipping step due to condition evaluation.`,
+        telemetry(1, { stage: 'Main', stepContextName: 'setup.__run', isEmbedded: true }),
+        main(1, 'setup', { type: 'composite' }),
+        processing(2, 'Build'),
+        main(2, 'build'),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Setup tools', 'setup'],
+      ['Build', 'build'],
+    ])
+    // Without its own telemetry, as when that record doesn't parse, it
+    // stays all the same.
+    const untold = parseWorkerSteps(
+      [
+        processing(1, 'Setup tools'),
+        `${at(1)} CompositeActionHandler] Skipping step due to condition evaluation.`,
+        processing(2, 'Build'),
+      ].join('\n')
+    )
+    expect(untold.map(s => s.name)).toEqual(['Setup tools', 'Build'])
+  })
+
+  it('takes no embedded record for the step itself', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Composite'),
+        telemetry(1, { stage: 'Main', stepContextName: 'composite.__run', isEmbedded: true }),
+        telemetry(1, { stage: 'Main', stepContextName: 'composite.__run_2', isEmbedded: true }),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([['Composite', undefined]])
+  })
+
+  it('lets a post step skipped by its post-if take its own main step first', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'X'),
+        main(1, 'x1', { hasPostStep: true }),
+        processing(2, 'X'),
+        main(2, 'x2', { hasPostStep: true }),
+        // Posts run in reverse: x2's is skipped, then x1's runs.
+        processing(3, 'Post X'),
+        `${at(3)} StepsRunner] Evaluating: false`,
+        `${at(3)} StepsRunner] Skipping step due to condition evaluation.`,
+        processing(4, 'Post X'),
+        telemetry(4, { stage: 'Post' }),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['X', 'x1'],
+      ['X', 'x2'],
+      ['Post X', 'x1'],
+    ])
+  })
+
+  it('takes no main step for a main step named Post that has no telemetry', () => {
+    const job = (record: string): string =>
+      [
+        processing(1, 'Cache'),
+        main(1, 'cache', { hasPostStep: true }),
+        processing(2, 'Post Cache'),
+        record,
+        processing(3, 'Build'),
+        main(3, 'build'),
+        processing(4, 'Post Cache'),
+        telemetry(4, { stage: 'Post' }),
+      ].join('\n')
+    // Its telemetry doesn't parse: it keeps no context name, and Cache's
+    // post step still takes Cache's.
+    const untold = parseWorkerSteps(job(`${at(2)} ExecutionContext] Publish step telemetry for current step {`))
+    expect(untold.map(s => [s.name, s.context_name])).toEqual([
+      ['Cache', 'cache'],
+      ['Post Cache', undefined],
+      ['Build', 'build'],
+      ['Post Cache', 'cache'],
+    ])
+    // Skipped by its if:, it is left out without taking Cache's.
+    const skipped = parseWorkerSteps(job(skipping(2)))
+    expect(skipped.map(s => [s.name, s.context_name])).toEqual([
+      ['Cache', 'cache'],
+      ['Build', 'build'],
+      ['Post Cache', 'cache'],
+    ])
+  })
+
+  it('takes a main step for no step whose name only ends with it', () => {
+    const steps = parseWorkerSteps(
+      [processing(1, 'Build'), main(1, 'build', { hasPostStep: true }), processing(2, 'Lint Build')].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Build', 'build'],
+      ['Lint Build', undefined],
+    ])
+  })
+
+  it('keeps a step whose telemetry does not parse, with no context name', () => {
+    const steps = parseWorkerSteps(
+      [
+        processing(1, 'Build'),
+        `${at(1)} ExecutionContext] Publish step telemetry for current step {`,
+        '  "stage": "Main",',
+        '  "stepContextName": "build",',
+        processing(2, 'Test'),
+        main(2, 'test'),
+      ].join('\n')
+    )
+    expect(steps.map(s => [s.name, s.context_name])).toEqual([
+      ['Build', undefined],
+      ['Test', 'test'],
+    ])
+  })
+})
+
 describe('parsePpid', () => {
   it('reads the field after the parenthesised comm', () => {
     expect(parsePpid('1234 (node) S 1200 1234 1234 0 -1 4194560 100')).toBe(1200)
