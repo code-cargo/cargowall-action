@@ -103,11 +103,13 @@ export function parsePostures(raw: string | null): PostureLine[] | null {
 }
 
 /**
- * The sudo lockdown cargowall applies, as the step reports it. The posture
- * record carries a `sudo-lockdown` line whenever the flag or the policy asked
- * for the lockdown, with "true" for a lockdown that came up; anything else did
- * not. A cargowall that predates that line, like the pinned one, records
- * nothing about the lockdown, so a missing line claims nothing either way.
+ * The sudo lockdown cargowall applies, as the step reports it. cargowall
+ * publishes its posture record before ready, and the record carries a
+ * `sudo-lockdown` line whenever the flag or the policy asked for the lockdown,
+ * with "true" for a lockdown that came up; anything else did not. So a record
+ * without the line means neither asked, and the lockdown is off. With no
+ * record this step can trust (absent, stale or not root-owned, see
+ * readFreshStateFile), the report claims nothing either way.
  */
 export function sudoLockdownReport(args: {
   inputSudoLockdown: boolean
@@ -118,6 +120,12 @@ export function sudoLockdownReport(args: {
   if (line) {
     if (line.applied === 'true') return 'Sudo lockdown: on'
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ''}`
+  }
+  if (args.postures !== null) {
+    // The input asked for it and nothing did: a loaded policy turned it off.
+    return args.inputSudoLockdown && args.policyLoaded
+      ? "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)"
+      : 'Sudo lockdown: off'
   }
   const input = `this step's input: ${args.inputSudoLockdown}`
   if (!args.policyLoaded) return `Sudo lockdown: not reported by cargowall (${input}; no policy was loaded)`

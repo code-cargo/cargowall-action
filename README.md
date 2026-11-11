@@ -163,7 +163,7 @@ Run in audit mode to log connections without blocking them — useful for unders
     mode: audit
 ```
 
-A policy fetched from the [CodeCargo platform](#codecargo-platform) replaces `mode`, and `sudo-lockdown` too when the policy sets it. With one in play, the start step doesn't announce `mode` as the run's mode, and the configuration echo shows it only as the fallback for a run where no policy loads. Once cargowall is ready, the step reports the mode it applies (`Mode: enforce (set by the CodeCargo policy)`) and the sudo lockdown, which cargowall versions newer than v2.0.0-rc.13 report as on or not applied.
+A policy fetched from the [CodeCargo platform](#codecargo-platform) replaces `mode`, and `sudo-lockdown` too when the policy sets it. With one in play, the start step doesn't announce `mode` as the run's mode, and the configuration echo shows it only as the fallback for a run where no policy loads. Once cargowall is ready, the step reports the mode it applies (`Mode: enforce (set by the CodeCargo policy)`) and the sudo lockdown: on, off, or not applied with cargowall's reason. Without a posture record from cargowall that the step can trust, it says the lockdown was not reported instead.
 
 ### When the CodeCargo Policy Can't Be Fetched
 
@@ -480,6 +480,10 @@ With this configuration, `sudo apt-get install ...` and `sudo docker build ...` 
 
 Sudo lockdown also removes the current user from the `docker` group. This is because Docker group membership grants the ability to run containers with root-level access, which could be used to bypass the firewall.
 
+That removal is not a boundary. It doesn't take docker access from a step that already has it, and access to the docker socket is root-equivalent on the host, so docker access is outside what the lockdown guarantees. CargoWall warns instead when the job's credentials can still write `/var/run/docker.sock` or the socket the runner's `DOCKER_HOST` names, and when that `DOCKER_HOST` is a network address, which no group restricts.
+
+Under an enforcing policy, a lockdown that doesn't come up fails the step; see [CargoWall refused to start](#cargowall-refused-to-start). Under an auditing policy it only warns, and the job summary lists it among the postures not applied.
+
 ### Binary Verification
 
 The cargowall binary is pinned to a version *and* a SHA-256 digest baked into
@@ -547,6 +551,13 @@ the layer:
     interface's address, a route more specific than the generic one sends it
     out a link, or it is the DNS upstream. This counts only where Docker could
     be present: a Docker socket or a bridge.
+- **`--sudo-lockdown=true`, when the policy enforces:** the sudo lockdown,
+  asked for by the `sudo-lockdown` input or by the CodeCargo policy, didn't
+  come up, so the job would run with the runner's sudo unchanged. Either it
+  couldn't be applied, a check once it was in place saw sudo still run a
+  command the allowlist doesn't name as root, or the job's steps run as root,
+  which no sudo lockdown can restrict, or as a user CargoWall can't tell. A
+  runner with no sudo at all has nothing to lock down, and starts.
 
 The same refusal can come after the step has passed. When the Docker daemon is
 still starting as CargoWall starts, `container-egress: enforce` is decided once

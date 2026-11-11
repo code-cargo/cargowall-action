@@ -51,6 +51,8 @@ import { start } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
 const PID_FILE = '/tmp/cargowall.pid'
+const MODE_FILE = '/tmp/cargowall-mode'
+const POSTURES_FILE = '/tmp/cargowall-postures'
 const LAUNCHER_PID = 4242
 
 interface StateFile {
@@ -181,5 +183,46 @@ describe('start() and the ready sentinel', () => {
     expect(await start()).toEqual({ supported: false, pid: null })
     expect(core.error).toHaveBeenCalledWith('CargoWall process exited unexpectedly')
     expect(core.info).not.toHaveBeenCalledWith('CargoWall is ready')
+  })
+})
+
+describe('start() and the posture record', () => {
+  const REDIRECT_ONLY = '[{"posture":"dns-redirect","requested":"true","applied":"true"}]'
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(core.getMultilineInput).mockImplementation((name: string) =>
+      name === 'github-service-hosts' ? ['github.com'] : name === 'azure-infra-hosts' ? ['trafficmanager.net'] : []
+    )
+    vi.mocked(core.getInput).mockImplementation((name: string) => (name === 'api-url' ? 'https://app.codecargo.com' : ''))
+    vi.mocked(core.getIDToken).mockResolvedValue('oidc-token')
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
+  })
+
+  it('reports the lockdown off from a root-owned record with no lockdown line', async () => {
+    withStateFiles({
+      [READY_FILE]: ready(0),
+      [MODE_FILE]: { body: 'enforce\n', owner: 0 },
+      [POSTURES_FILE]: { body: REDIRECT_ONLY, owner: 0 },
+    }, 0)
+
+    await start()
+
+    expect(core.info).toHaveBeenCalledWith('Sudo lockdown: off')
+  })
+
+  it('claims nothing about the lockdown from a record another user owns', async () => {
+    withStateFiles({
+      [READY_FILE]: ready(0),
+      [MODE_FILE]: { body: 'enforce\n', owner: 0 },
+      [POSTURES_FILE]: { body: REDIRECT_ONLY, owner: 1001 },
+    }, 0)
+
+    await start()
+
+    expect(core.info).not.toHaveBeenCalledWith('Sudo lockdown: off')
+    expect(core.info).toHaveBeenCalledWith(
+      "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)"
+    )
   })
 })

@@ -138,9 +138,25 @@ describe('sudoLockdownReport', () => {
     expect(report).toBe('Sudo lockdown: not applied (visudo rejected the result)')
   })
 
-  it('claims nothing when cargowall records no lockdown line', () => {
-    expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(`[${REDIRECT_LINE}]`) }))
-      .toBe("Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)")
+  it('reports the lockdown off when the record has no lockdown line', () => {
+    for (const raw of [`[${REDIRECT_LINE}]`, '[]']) {
+      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(raw) }))
+        .toBe('Sudo lockdown: off')
+      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: false, postures: parsePostures(raw) }))
+        .toBe('Sudo lockdown: off')
+    }
+  })
+
+  it("names the policy when it turned off the lockdown this step's input asked for", () => {
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, postures: parsePostures(`[${REDIRECT_LINE}]`) }))
+      .toBe("Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)")
+  })
+
+  it('claims nothing without a record it can trust', () => {
+    for (const raw of [null, 'not json', '{"posture":"sudo-lockdown"}']) {
+      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(raw) }))
+        .toBe("Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)")
+    }
   })
 
   it('names the input, and no policy, when none was loaded', () => {
@@ -154,7 +170,7 @@ describe('effectiveReport (a policy was to come from the API)', () => {
     const r = effectiveReport({ ...base, inputMode: 'audit', effective: 'enforce', postures: parsePostures(`[${REDIRECT_LINE}]`) })
     expect(r.info).toEqual([
       'Mode: enforce (set by the CodeCargo policy)',
-      "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)",
+      'Sudo lockdown: off',
     ])
     expect(r.notices).toEqual([
       "CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`",

@@ -11,11 +11,11 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
-// Moving past rc.13 to a cargowall that writes the `sudo-lockdown` line of its
-// posture record changes what a missing line means: the lockdown was not
-// asked for, so it is off. sudoLockdownReport (src/effective.ts) must say so
-// then, instead of "not reported by cargowall".
-const CARGOWALL_VERSION = 'v2.0.0-rc.13'
+// The pinned cargowall must publish its posture record before ready, with a
+// `sudo-lockdown` line whenever the flag or the policy asked for the lockdown:
+// sudoLockdownReport (src/effective.ts) reports a record without that line as
+// the lockdown off.
+const CARGOWALL_VERSION = 'v2.0.0-rc.14'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
@@ -31,8 +31,8 @@ const CARGOWALL_REPO = 'code-cargo/cargowall'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: 'bdf4c8a89c932bb7ba558967acbf0c786cb968533b44243b4fa2ac9b1765f5c0',
-  arm64: '115334466613d796aa583a36a3a646cd750e5a1aa7527ff7d871facdefaa6f67'
+  amd64: '43816650d374589960c9121977f38cda9d65dbd8b646eca8e36b1d5c49bc9c24',
+  arm64: '00b76eafb1882d6c12f6cdfd97e3066987a97d2178fdf11ea669d351689236d6'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS
