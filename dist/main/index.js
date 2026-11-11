@@ -21561,11 +21561,11 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v2.0.0-rc.13";
+var CARGOWALL_VERSION = "v2.0.0-rc.14";
 var CARGOWALL_REPO = "code-cargo/cargowall";
 var CARGOWALL_DIGESTS = {
-  amd64: "bdf4c8a89c932bb7ba558967acbf0c786cb968533b44243b4fa2ac9b1765f5c0",
-  arm64: "115334466613d796aa583a36a3a646cd750e5a1aa7527ff7d871facdefaa6f67"
+  amd64: "43816650d374589960c9121977f38cda9d65dbd8b646eca8e36b1d5c49bc9c24",
+  arm64: "00b76eafb1882d6c12f6cdfd97e3066987a97d2178fdf11ea669d351689236d6"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -25820,6 +25820,9 @@ function sudoLockdownReport(args) {
   if (line) {
     if (line.applied === "true") return "Sudo lockdown: on";
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ""}`;
+  }
+  if (args.postures !== null) {
+    return args.inputSudoLockdown && args.policyLoaded ? "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)" : "Sudo lockdown: off";
   }
   const input = `this step's input: ${args.inputSudoLockdown}`;
   if (!args.policyLoaded) return `Sudo lockdown: not reported by cargowall (${input}; no policy was loaded)`;
