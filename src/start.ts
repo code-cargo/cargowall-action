@@ -501,21 +501,17 @@ async function sudoKillZero(pid: number): Promise<boolean> {
  * is denied. Returns null if absent/unreadable (e.g. cargowall hasn't reached
  * the pidfile write yet).
  *
- * Anchored like the other state files: a stale pidfile from a previous run
- * points at a dead (or recycled) PID, and trusting it trips the liveness check
- * into a false "exited unexpectedly" verdict.
+ * Read and anchored like the other state files (readFreshStateFile). A stale
+ * pidfile from a previous run points at a dead (or recycled) PID, and trusting
+ * it trips the liveness check into a false "exited unexpectedly" verdict. And
+ * the PID is trusted only from a root-owned file, since stopCargowall signals
+ * it as root.
  */
 async function readPidFile(spawnedAtMs: number): Promise<number | null> {
-  try {
-    if ((await fs.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
-      return null
-    }
-    const out = await fs.readFile(PID_FILE, 'utf8')
-    const pid = parseInt(out.trim(), 10)
-    return Number.isInteger(pid) && pid > 0 ? pid : null
-  } catch {
-    return null
-  }
+  const raw = await readFreshStateFile(PID_FILE, spawnedAtMs)
+  if (raw === null) return null
+  const pid = parseInt(raw.trim(), 10)
+  return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
 /**
@@ -774,8 +770,15 @@ async function warnOnDowngrade(spawnedAtMs: number): Promise<void> {
   if (message) core.warning(message)
 }
 
-/** Best-effort SIGTERM to cargowall (real PID and/or launcher PID). */
+/**
+ * Best-effort SIGTERM to cargowall: its real PID, from a trusted pidfile, and
+ * the launcher this step spawned, which passes the signal on. With no trusted
+ * pidfile, the launcher is the whole stop path.
+ */
 async function stopCargowall(pids: Array<number | null>): Promise<void> {
+  if (pids[0] == null) {
+    core.info('No root-owned cargowall pidfile; stopping cargowall through its launcher')
+  }
   for (const pid of pids) {
     if (pid == null) continue
     await exec.exec('sudo', ['kill', String(pid)], { ignoreReturnCode: true, silent: true })

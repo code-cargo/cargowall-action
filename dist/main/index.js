@@ -26231,16 +26231,10 @@ async function sudoKillZero(pid) {
   return rc === 0;
 }
 async function readPidFile(spawnedAtMs) {
-  try {
-    if ((await import_fs6.promises.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
-      return null;
-    }
-    const out = await import_fs6.promises.readFile(PID_FILE, "utf8");
-    const pid = parseInt(out.trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
+  const raw = await readFreshStateFile(PID_FILE, spawnedAtMs);
+  if (raw === null) return null;
+  const pid = parseInt(raw.trim(), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 async function clearStartupFiles() {
   const rc = await exec("sudo", ["rm", "-f", READY_FILE, PID_FILE, FAILURE_FILE, DOWNGRADE_FILE], {
@@ -26357,6 +26351,9 @@ async function warnOnDowngrade(spawnedAtMs) {
   if (message) warning(message);
 }
 async function stopCargowall(pids) {
+  if (pids[0] == null) {
+    info("No root-owned cargowall pidfile; stopping cargowall through its launcher");
+  }
   for (const pid of pids) {
     if (pid == null) continue;
     await exec("sudo", ["kill", String(pid)], { ignoreReturnCode: true, silent: true });
