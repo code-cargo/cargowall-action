@@ -3,6 +3,8 @@ import * as exec from '@actions/exec'
 import * as github from '@actions/github'
 import { promises as fs } from 'fs'
 import { findDiagDir, readWorkerSteps } from './diag'
+import { parseModeFile } from './effective'
+import { readStateFile } from './start'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -100,13 +102,11 @@ export async function generateSummary(opts: { render: boolean } = { render: true
 
       // Prefer the effective mode written by the Go binary (which may have
       // been overridden by the SaaS policy) over the static Action input.
+      // Read like every cargowall state file: a planted one must not be
+      // believed.
       let effectiveMode = core.getInput('mode') || 'enforce'
-      try {
-        const modeFromFile = (await fs.readFile('/tmp/cargowall-mode', 'utf8')).trim()
-        if (modeFromFile) effectiveMode = modeFromFile
-      } catch {
-        // State file not present — use Action input as fallback
-      }
+      const modeFromFile = parseModeFile(await readStateFile('/tmp/cargowall-mode'))
+      if (modeFromFile) effectiveMode = modeFromFile
       summaryArgs.push('--mode', effectiveMode)
       summaryArgs.push('--default-action', 'deny')
       // --job-status is never passed: it only ever came from the Actions API,

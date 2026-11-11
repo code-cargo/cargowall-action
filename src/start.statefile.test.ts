@@ -3,7 +3,7 @@ import { promises as fs } from 'fs'
 import { execFileSync } from 'child_process'
 import * as os from 'os'
 import * as path from 'path'
-import { readStateFile } from './start'
+import { readStateFile, stateFileOwner } from './start'
 
 /**
  * Real-filesystem tests for readStateFile — deliberately NO fs mocks, because
@@ -21,11 +21,17 @@ import { readStateFile } from './start'
 
 let dir: string
 
+// cargowall's files are root's; these tests can't chown, so the files they
+// write stand in for root's by making their own uid the owner to accept.
+const rootUid = stateFileOwner.uid
+
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-statefile-'))
+  stateFileOwner.uid = process.getuid!()
 })
 
 afterAll(async () => {
+  stateFileOwner.uid = rootUid
   await fs.rm(dir, { recursive: true, force: true })
 })
 
@@ -60,5 +66,16 @@ describe('readStateFile (real fs)', () => {
     const result = await readStateFile(p)
     expect(result).not.toBeNull()
     expect(result!.length).toBe(8192)
+  })
+
+  it("ignores a file another user planted, however well-formed", async () => {
+    const p = path.join(dir, 'planted')
+    await fs.writeFile(p, 'enforce')
+    stateFileOwner.uid = process.getuid!() + 1
+    try {
+      expect(await readStateFile(p)).toBeNull()
+    } finally {
+      stateFileOwner.uid = process.getuid!()
+    }
   })
 })

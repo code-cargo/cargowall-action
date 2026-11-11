@@ -5,6 +5,7 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
+import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
@@ -17,6 +18,12 @@ const PID_FILE = '/tmp/cargowall.pid'
 // are shared with the Go binary — keep them in sync.
 const FAILURE_FILE = '/tmp/cargowall-failed'
 const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
+// The effective mode cargowall applies, written when it takes its mode from a
+// fetched policy or a policy-fetch failure posture (cmd/start.go modeFile).
+const MODE_FILE = '/tmp/cargowall-mode'
+// cargowall's record of each requested layer's posture (cmd/postures.go
+// posturesFile), which names the sudo lockdown in versions that report it.
+const POSTURES_FILE = '/tmp/cargowall-postures'
 const STARTUP_TIMEOUT = 30
 // `cargowall start`'s exit status for a refused posture (cmd/postures.go
 // exitRefused) — keep in sync. See sentinelRefusal.
@@ -120,7 +127,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   if (mode === 'audit') {
     args.push('--audit-mode')
-    core.notice('CargoWall running in AUDIT MODE - connections logged but NOT blocked')
   }
 
   if (debug) {
@@ -140,17 +146,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   args.push(...postureFlags)
-
-  // One condition covers both knobs: an L7 enforce rung is rejected above
-  // without this flag. Silent under `mode: audit`, which defers every drop —
-  // announcing enforcement next to "connections logged but NOT blocked" would
-  // put two contradictory annotations on the same step.
-  if (mode !== 'audit' && postureFlags.includes('--container-egress=enforce')) {
-    core.notice(
-      `CargoWall v2 preview enforcement is ON (${postureFlags.join(' ')}) - these knobs are ` +
-        `experimental and can block traffic that an L4-only policy allowed`
-    )
-  }
 
   // When api-url is configured and offline mode is not enabled, fetch OIDC
   // token and pass API flags so the Go binary can fetch the resolved policy
@@ -202,9 +197,17 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     args.push(`--config=${configFile}`)
   }
 
+  // A fetched policy replaces this step's mode, so with one in play the mode
+  // is announced once cargowall reports it, after ready. Inputs alone are the
+  // run's mode.
+  const apiFailurePosture = apiFailureLabel === null ? null : apiFailure.value
+  if (apiFailurePosture === null) {
+    for (const notice of modeNotices(mode, postureFlags)) core.notice(notice)
+  }
+
   // Log configuration
   core.info('Configuration:')
-  core.info(`  Mode: ${mode}`)
+  core.info(`  Mode: ${modeEcho(mode, apiFailurePosture)}`)
   if (allowedHosts) core.info(`  Allowed hosts: ${allowedHosts}`)
   if (allowedCidrs) core.info(`  Allowed CIDRs: ${allowedCidrs}`)
   if (searchDomains) core.info(`  Search domains: ${searchDomains}`)
@@ -213,7 +216,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (configFile) core.info(`  Config file: ${configFile}`)
   const jobId = core.getInput('job-id')
   if (jobId) core.info(`  Job run ID: ${jobId}`)
-  core.info(`  Sudo lockdown: ${sudoLockdown}`)
+  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null)}`)
   if (postureFlags.length > 0) core.info(`  v2 preview postures: ${postureFlags.join(' ')}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
@@ -331,16 +334,13 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   let cargowallPid: number | null = null
   let ready = false
   for (let i = 0; i < STARTUP_TIMEOUT; i++) {
-    try {
-      // Anchored like the other state files: a stale ready file that survived
-      // a failed clearStartupFiles rm must not short-circuit the wait with a
-      // false "ready" while this run's cargowall is still coming up.
-      if ((await fs.stat(READY_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS) {
-        ready = true
-        break
-      }
-    } catch {
-      // Not ready yet
+    // Read like the other state files (readFreshStateFile): a stale ready
+    // file that survived a failed clearStartupFiles rm must not short-circuit
+    // the wait with a false "ready" while this run's cargowall is still coming
+    // up, and the sentinel counts only when root-owned.
+    if ((await readFreshStateFile(READY_FILE, spawnedAtMs)) !== null) {
+      ready = true
+      break
     }
 
     // cargowall reported a startup failure.
@@ -396,6 +396,19 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // now that startup succeeded. Deliberately after the ready check: a lockdown
   // exits above, so anything recorded here belongs to a run that came up.
   await warnOnDowngrade(spawnedAtMs)
+  // With a policy in play, the posture to announce is the one cargowall applies.
+  if (apiFailurePosture !== null) {
+    const report = effectiveReport({
+      inputMode: mode,
+      inputSudoLockdown: sudoLockdown,
+      effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
+      downgraded: (await readDowngradeFile(spawnedAtMs)) !== null,
+      postureFlags,
+      postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs)),
+    })
+    for (const line of report.info) core.info(line)
+    for (const notice of report.notices) core.notice(notice)
+  }
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
@@ -485,21 +498,17 @@ async function sudoKillZero(pid: number): Promise<boolean> {
  * is denied. Returns null if absent/unreadable (e.g. cargowall hasn't reached
  * the pidfile write yet).
  *
- * Anchored like the other state files: a stale pidfile from a previous run
- * points at a dead (or recycled) PID, and trusting it trips the liveness check
- * into a false "exited unexpectedly" verdict.
+ * Read and anchored like the other state files (readFreshStateFile). A stale
+ * pidfile from a previous run points at a dead (or recycled) PID, and trusting
+ * it trips the liveness check into a false "exited unexpectedly" verdict. And
+ * the PID is trusted only from a root-owned file, since stopCargowall signals
+ * it as root.
  */
 async function readPidFile(spawnedAtMs: number): Promise<number | null> {
-  try {
-    if ((await fs.stat(PID_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
-      return null
-    }
-    const out = await fs.readFile(PID_FILE, 'utf8')
-    const pid = parseInt(out.trim(), 10)
-    return Number.isInteger(pid) && pid > 0 ? pid : null
-  } catch {
-    return null
-  }
+  const raw = await readFreshStateFile(PID_FILE, spawnedAtMs)
+  if (raw === null) return null
+  const pid = parseInt(raw.trim(), 10)
+  return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
 /**
@@ -617,10 +626,21 @@ async function readFailureFile(spawnedAtMs: number): Promise<StartupFailure | nu
  * lstat→open race the same way; it does not affect reads of a regular file.
  * The fstat re-check after open closes the remaining swap window.
  *
+ * The file must also be owned by stateFileOwner. Until cargowall writes a
+ * file, its path is free, and a file another user planted there must not be
+ * believed: a mode file claiming enforcement in a run that enforces nothing,
+ * say.
+ *
  * Exported for the real-filesystem tests — the mocked-fs suite cannot
  * exercise the FIFO/symlink/ordering behaviour.
  */
 const MAX_STATE_FILE_BYTES = 8192
+
+/**
+ * The owner every cargowall state file must have: root, which cargowall runs
+ * as. Tests that can't chown set it to their own uid.
+ */
+export const stateFileOwner = { uid: 0 }
 
 export async function readStateFile(filePath: string): Promise<string | null> {
   try {
@@ -638,7 +658,8 @@ export async function readStateFile(filePath: string): Promise<string | null> {
     return null
   }
   try {
-    if (!(await handle.stat()).isFile()) return null
+    const st = await handle.stat()
+    if (!st.isFile() || st.uid !== stateFileOwner.uid) return null
     const buf = Buffer.alloc(MAX_STATE_FILE_BYTES)
     const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0)
     return buf.toString('utf8', 0, bytesRead)
@@ -658,14 +679,23 @@ export async function readStateFile(filePath: string): Promise<string | null> {
  * thrown lockdown, or a healthy run into a false posture warning.
  */
 async function readDowngradeFile(spawnedAtMs: number): Promise<string | null> {
+  return readFreshStateFile(DOWNGRADE_FILE, spawnedAtMs)
+}
+
+/**
+ * A state file this run's cargowall wrote, or null. Anchored like the failure
+ * sentinel: one whose mtime predates this run's spawn is a leftover from a
+ * reused runner and says nothing about this run.
+ */
+export async function readFreshStateFile(filePath: string, spawnedAtMs: number): Promise<string | null> {
   try {
-    if ((await fs.stat(DOWNGRADE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await fs.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null
     }
   } catch {
     return null // Absent — the common case.
   }
-  return readStateFile(DOWNGRADE_FILE)
+  return readStateFile(filePath)
 }
 
 /**
@@ -737,8 +767,15 @@ async function warnOnDowngrade(spawnedAtMs: number): Promise<void> {
   if (message) core.warning(message)
 }
 
-/** Best-effort SIGTERM to cargowall (real PID and/or launcher PID). */
+/**
+ * Best-effort SIGTERM to cargowall: its real PID, from a trusted pidfile, and
+ * the launcher this step spawned, which passes the signal on. With no trusted
+ * pidfile, the launcher is the whole stop path.
+ */
 async function stopCargowall(pids: Array<number | null>): Promise<void> {
+  if (pids[0] == null) {
+    core.info('No root-owned cargowall pidfile; stopping cargowall through its launcher')
+  }
   for (const pid of pids) {
     if (pid == null) continue
     await exec.exec('sudo', ['kill', String(pid)], { ignoreReturnCode: true, silent: true })

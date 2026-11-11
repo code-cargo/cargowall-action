@@ -25238,6 +25238,12 @@ var loopback = new import_net.BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
 
+// src/effective.ts
+function parseModeFile(raw) {
+  const value = raw?.trim();
+  return value === "enforce" || value === "audit" ? value : null;
+}
+
 // src/start.ts
 var STALE_SLACK_MS = 2e3;
 function sentinelReason(raw) {
@@ -25258,6 +25264,7 @@ function sentinelRefusal(raw) {
   return m ? m[1] : null;
 }
 var MAX_STATE_FILE_BYTES = 8192;
+var stateFileOwner = { uid: 0 };
 async function readStateFile(filePath) {
   try {
     if (!(await import_fs4.promises.lstat(filePath)).isFile()) return null;
@@ -25274,7 +25281,8 @@ async function readStateFile(filePath) {
     return null;
   }
   try {
-    if (!(await handle.stat()).isFile()) return null;
+    const st = await handle.stat();
+    if (!st.isFile() || st.uid !== stateFileOwner.uid) return null;
     const buf = Buffer.alloc(MAX_STATE_FILE_BYTES);
     const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0);
     return buf.toString("utf8", 0, bytesRead);
@@ -25284,6 +25292,16 @@ async function readStateFile(filePath) {
     await handle.close().catch(() => {
     });
   }
+}
+async function readFreshStateFile(filePath, spawnedAtMs) {
+  try {
+    if ((await import_fs4.promises.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return readStateFile(filePath);
 }
 
 // src/summary.ts
@@ -25510,11 +25528,8 @@ async function generateSummary(opts = { render: true }) {
         summaryArgs.push("--job-run-id", jobId);
       }
       let effectiveMode = getInput("mode") || "enforce";
-      try {
-        const modeFromFile = (await import_fs7.promises.readFile("/tmp/cargowall-mode", "utf8")).trim();
-        if (modeFromFile) effectiveMode = modeFromFile;
-      } catch {
-      }
+      const modeFromFile = parseModeFile(await readStateFile("/tmp/cargowall-mode"));
+      if (modeFromFile) effectiveMode = modeFromFile;
       summaryArgs.push("--mode", effectiveMode);
       summaryArgs.push("--default-action", "deny");
       try {
@@ -25593,13 +25608,7 @@ async function report() {
       return;
     }
     const spawnedAtMs = Number(getState("cargowall-spawned-at"));
-    let downgraded = false;
-    if (spawnedAtMs > 0) {
-      try {
-        downgraded = (await import_fs8.promises.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS;
-      } catch {
-      }
-    }
+    const downgraded = spawnedAtMs > 0 && await readFreshStateFile(DOWNGRADE_FILE, spawnedAtMs) !== null;
     if (!pid && !downgraded) {
       info("CargoWall never ran in this job, skipping summary");
       await cleanup();
