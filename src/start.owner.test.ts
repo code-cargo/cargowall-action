@@ -225,4 +225,22 @@ describe('start() and the posture record', () => {
       "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)"
     )
   })
+
+  it.each(['binary-path', 'source-ref'])('claims nothing from a record with no lockdown line when %s chose the binary', async input => {
+    vi.mocked(core.getInput).mockImplementation((name: string) =>
+      name === 'api-url' ? 'https://app.codecargo.com' : name === input ? 'given' : ''
+    )
+    withStateFiles({
+      [READY_FILE]: ready(0),
+      [MODE_FILE]: { body: 'enforce\n', owner: 0 },
+      [POSTURES_FILE]: { body: REDIRECT_ONLY, owner: 0 },
+    }, 0)
+
+    await start()
+
+    expect(core.info).not.toHaveBeenCalledWith('Sudo lockdown: off')
+    expect(core.info).toHaveBeenCalledWith(
+      "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)"
+    )
+  })
 })

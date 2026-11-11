@@ -25,6 +25,7 @@ const base = {
   inputSudoLockdown: false,
   downgraded: false,
   postureFlags: [] as string[],
+  pinnedBinary: true,
   postures: null,
 }
 
@@ -120,12 +121,12 @@ describe('parsePostures', () => {
 
 describe('sudoLockdownReport', () => {
   it('reports a lockdown that came up as on', () => {
-    expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(`[${sudoLine('true')}]`) }))
+    expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, pinnedBinary: true, postures: parsePostures(`[${sudoLine('true')}]`) }))
       .toBe('Sudo lockdown: on')
   })
 
   it('reads only "true" as on: a garbled value is not', () => {
-    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, postures: parsePostures(`[${sudoLine('yes')}]`) }))
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, pinnedBinary: true, postures: parsePostures(`[${sudoLine('yes')}]`) }))
       .toBe('Sudo lockdown: not applied')
   })
 
@@ -133,6 +134,7 @@ describe('sudoLockdownReport', () => {
     const report = sudoLockdownReport({
       inputSudoLockdown: true,
       policyLoaded: true,
+      pinnedBinary: true,
       postures: parsePostures(`[${sudoLine('false', 'visudo rejected the result')}]`),
     })
     expect(report).toBe('Sudo lockdown: not applied (visudo rejected the result)')
@@ -140,27 +142,44 @@ describe('sudoLockdownReport', () => {
 
   it('reports the lockdown off when the record has no lockdown line', () => {
     for (const raw of [`[${REDIRECT_LINE}]`, '[]']) {
-      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(raw) }))
+      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, pinnedBinary: true, postures: parsePostures(raw) }))
         .toBe('Sudo lockdown: off')
-      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: false, postures: parsePostures(raw) }))
+      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: false, pinnedBinary: true, postures: parsePostures(raw) }))
         .toBe('Sudo lockdown: off')
     }
   })
 
+  it('reports the lockdown off, blaming no policy, when none was loaded', () => {
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, pinnedBinary: true, postures: parsePostures(`[${REDIRECT_LINE}]`) }))
+      .toBe('Sudo lockdown: off')
+  })
+
+  it('claims nothing from a missing line when the binary is not the pinned download', () => {
+    // What cargowall rc.10 to rc.13 publish whatever the lockdown did: a
+    // record with no lockdown line.
+    const older = parsePostures(`[${REDIRECT_LINE}]`)
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, pinnedBinary: false, postures: older }))
+      .toBe("Sudo lockdown: not reported by cargowall (this step's input: true, which a CodeCargo policy that sets sudo lockdown replaces)")
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, pinnedBinary: false, postures: older }))
+      .toBe("Sudo lockdown: not reported by cargowall (this step's input: true; no policy was loaded)")
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, pinnedBinary: false, postures: parsePostures(`[${sudoLine('true')}]`) }))
+      .toBe('Sudo lockdown: on')
+  })
+
   it("names the policy when it turned off the lockdown this step's input asked for", () => {
-    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, postures: parsePostures(`[${REDIRECT_LINE}]`) }))
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, pinnedBinary: true, postures: parsePostures(`[${REDIRECT_LINE}]`) }))
       .toBe("Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)")
   })
 
   it('claims nothing without a record it can trust', () => {
     for (const raw of [null, 'not json', '{"posture":"sudo-lockdown"}']) {
-      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(raw) }))
+      expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, pinnedBinary: true, postures: parsePostures(raw) }))
         .toBe("Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)")
     }
   })
 
   it('names the input, and no policy, when none was loaded', () => {
-    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, postures: null }))
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, pinnedBinary: true, postures: null }))
       .toBe("Sudo lockdown: not reported by cargowall (this step's input: true; no policy was loaded)")
   })
 })

@@ -103,17 +103,21 @@ export function parsePostures(raw: string | null): PostureLine[] | null {
 }
 
 /**
- * The sudo lockdown cargowall applies, as the step reports it. cargowall
- * publishes its posture record before ready, and the record carries a
- * `sudo-lockdown` line whenever the flag or the policy asked for the lockdown,
- * with "true" for a lockdown that came up; anything else did not. So a record
- * without the line means neither asked, and the lockdown is off. With no
- * record this step can trust (absent, stale or not root-owned, see
- * readFreshStateFile), the report claims nothing either way.
+ * The sudo lockdown cargowall applies, as the step reports it. The pinned
+ * cargowall publishes its posture record before ready, and the record carries
+ * a `sudo-lockdown` line whenever the flag or the policy asked for the
+ * lockdown, with "true" for a lockdown that came up; anything else did not.
+ * So from the pinned binary (`pinnedBinary`: neither binary-path nor
+ * source-ref), a record without the line means neither asked, and the lockdown
+ * is off. A binary from binary-path or source-ref may predate the line, so a
+ * record without it claims nothing, as does no record this step can trust
+ * (absent, stale, malformed, not an array or not root-owned; see
+ * readFreshStateFile and parsePostures).
  */
 export function sudoLockdownReport(args: {
   inputSudoLockdown: boolean
   policyLoaded: boolean
+  pinnedBinary: boolean
   postures: PostureLine[] | null
 }): string {
   const line = args.postures?.find(l => l.posture === 'sudo-lockdown')
@@ -121,7 +125,7 @@ export function sudoLockdownReport(args: {
     if (line.applied === 'true') return 'Sudo lockdown: on'
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ''}`
   }
-  if (args.postures !== null) {
+  if (args.postures !== null && args.pinnedBinary) {
     // The input asked for it and nothing did: a loaded policy turned it off.
     return args.inputSudoLockdown && args.policyLoaded
       ? "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)"
@@ -151,12 +155,14 @@ export function effectiveReport(args: {
   effective: 'enforce' | 'audit' | null
   downgraded: boolean
   postureFlags: string[]
+  pinnedBinary: boolean
   postures: PostureLine[] | null
 }): EffectiveReport {
   const { inputMode, effective, downgraded, postureFlags } = args
   const sudo = sudoLockdownReport({
     inputSudoLockdown: args.inputSudoLockdown,
     policyLoaded: effective !== null && !downgraded,
+    pinnedBinary: args.pinnedBinary,
     postures: args.postures,
   })
   if (downgraded) {

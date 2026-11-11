@@ -404,6 +404,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
       downgraded: (await readDowngradeFile(spawnedAtMs)) !== null,
       postureFlags,
+      // setup installed the pinned download unless one of these was given.
+      pinnedBinary: !core.getInput('binary-path') && !core.getInput('source-ref'),
       postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs)),
     })
     for (const line of report.info) core.info(line)
