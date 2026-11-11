@@ -11,6 +11,10 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
+// Moving past rc.13 to a cargowall that writes the `sudo-lockdown` line of its
+// posture record changes what a missing line means: the lockdown was not
+// asked for, so it is off. sudoLockdownReport (src/effective.ts) must say so
+// then, instead of "not reported by cargowall".
 const CARGOWALL_VERSION = 'v2.0.0-rc.13'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 

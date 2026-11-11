@@ -633,10 +633,21 @@ async function readFailureFile(spawnedAtMs: number): Promise<StartupFailure | nu
  * lstat→open race the same way; it does not affect reads of a regular file.
  * The fstat re-check after open closes the remaining swap window.
  *
+ * The file must also be owned by stateFileOwner. Until cargowall writes a
+ * file, its path is free, and a file another user planted there must not be
+ * believed: a mode file claiming enforcement in a run that enforces nothing,
+ * say.
+ *
  * Exported for the real-filesystem tests — the mocked-fs suite cannot
  * exercise the FIFO/symlink/ordering behaviour.
  */
 const MAX_STATE_FILE_BYTES = 8192
+
+/**
+ * The owner every cargowall state file must have: root, which cargowall runs
+ * as. Tests that can't chown set it to their own uid.
+ */
+export const stateFileOwner = { uid: 0 }
 
 export async function readStateFile(filePath: string): Promise<string | null> {
   try {
@@ -654,7 +665,8 @@ export async function readStateFile(filePath: string): Promise<string | null> {
     return null
   }
   try {
-    if (!(await handle.stat()).isFile()) return null
+    const st = await handle.stat()
+    if (!st.isFile() || st.uid !== stateFileOwner.uid) return null
     const buf = Buffer.alloc(MAX_STATE_FILE_BYTES)
     const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0)
     return buf.toString('utf8', 0, bytesRead)

@@ -32,14 +32,15 @@ export function modeNotices(mode: string, postureFlags: string[]): string[] {
 }
 
 /**
- * The configuration echo's mode value. With a policy in play the input is only
- * a fallback, and only under the `local` failure posture: `audit` and `fail`
- * replace it too when the policy can't be fetched.
+ * The configuration echo's mode value. Before ready nothing is known about
+ * the policy, so with one in play the echo promises nothing: the input applies
+ * when no policy loads (a job the platform has no policy for, say), and under
+ * the `audit` or `fail` failure posture a failed fetch replaces it too.
  */
 export function modeEcho(mode: string, apiFailurePosture: string | null): string {
   if (apiFailurePosture === null) return mode
-  if (apiFailurePosture === 'local') return `${mode} (fallback if the policy can't be fetched)`
-  return 'set by the CodeCargo policy'
+  const fallback = apiFailurePosture === 'local' ? mode : `${mode}; a failed fetch uses the policy-fetch failure posture`
+  return `from the CodeCargo policy if one loads (fallback: ${fallback})`
 }
 
 /**
@@ -104,8 +105,9 @@ export function parsePostures(raw: string | null): PostureLine[] | null {
 /**
  * The sudo lockdown cargowall applies, as the step reports it. The posture
  * record carries a `sudo-lockdown` line whenever the flag or the policy asked
- * for the lockdown, with "true" or "false" for what came up. A cargowall that
- * predates that line records nothing about the lockdown.
+ * for the lockdown, with "true" for a lockdown that came up; anything else did
+ * not. A cargowall that predates that line, like the pinned one, records
+ * nothing about the lockdown, so a missing line claims nothing either way.
  */
 export function sudoLockdownReport(args: {
   inputSudoLockdown: boolean
@@ -117,10 +119,9 @@ export function sudoLockdownReport(args: {
     if (line.applied === 'true') return 'Sudo lockdown: on'
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ''}`
   }
-  if (!args.policyLoaded) {
-    return `Sudo lockdown: ${args.inputSudoLockdown} (no policy was loaded; this step's input applies)`
-  }
-  return 'Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)'
+  const input = `this step's input: ${args.inputSudoLockdown}`
+  if (!args.policyLoaded) return `Sudo lockdown: not reported by cargowall (${input}; no policy was loaded)`
+  return `Sudo lockdown: not reported by cargowall (${input}, which a CodeCargo policy that sets sudo lockdown replaces)`
 }
 
 /** What the start step reports once cargowall is ready. */
@@ -132,8 +133,9 @@ export interface EffectiveReport {
 /**
  * The report of a run whose policy came, or was to come, from the API.
  * `effective` is what cargowall recorded (see parseModeFile). With nothing
- * recorded no policy was loaded, and cargowall runs on this step's inputs; a
- * downgrade (the fetch failed) loads no policy either.
+ * recorded no policy was loaded, and cargowall runs on this step's inputs. A
+ * downgrade loads no policy either, and in a run that reached ready the only
+ * one is the audit fallback, so a downgrade means audit, recorded or not.
  */
 export function effectiveReport(args: {
   inputMode: string
@@ -149,16 +151,21 @@ export function effectiveReport(args: {
     policyLoaded: effective !== null && !downgraded,
     postures: args.postures,
   })
+  if (downgraded) {
+    return {
+      info: ['Mode: audit (set by the policy-fetch failure posture)', sudo],
+      notices: modeNotices('audit', postureFlags),
+    }
+  }
   if (effective === null) {
     return {
-      info: [`Mode: ${inputMode} (no policy was loaded; this step's configuration applies)`, sudo],
+      info: [`Mode: ${inputMode} (no policy was loaded, so this step's configuration applies; cargowall's log says why)`, sudo],
       notices: modeNotices(inputMode, postureFlags),
     }
   }
-  const source = downgraded ? 'the policy-fetch failure posture' : 'the CodeCargo policy'
   const notices = modeNotices(effective, postureFlags)
-  if (effective === 'enforce' && inputMode === 'audit' && !downgraded) {
+  if (effective === 'enforce' && inputMode === 'audit') {
     notices.unshift("CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`")
   }
-  return { info: [`Mode: ${effective} (set by ${source})`, sudo], notices }
+  return { info: [`Mode: ${effective} (set by the CodeCargo policy)`, sudo], notices }
 }

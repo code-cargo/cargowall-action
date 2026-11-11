@@ -25783,8 +25783,8 @@ function modeNotices(mode, postureFlags) {
 }
 function modeEcho(mode, apiFailurePosture) {
   if (apiFailurePosture === null) return mode;
-  if (apiFailurePosture === "local") return `${mode} (fallback if the policy can't be fetched)`;
-  return "set by the CodeCargo policy";
+  const fallback = apiFailurePosture === "local" ? mode : `${mode}; a failed fetch uses the policy-fetch failure posture`;
+  return `from the CodeCargo policy if one loads (fallback: ${fallback})`;
 }
 function sudoLockdownEcho(sudoLockdown, apiPolicy) {
   if (!apiPolicy) return String(sudoLockdown);
@@ -25821,10 +25821,9 @@ function sudoLockdownReport(args) {
     if (line.applied === "true") return "Sudo lockdown: on";
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ""}`;
   }
-  if (!args.policyLoaded) {
-    return `Sudo lockdown: ${args.inputSudoLockdown} (no policy was loaded; this step's input applies)`;
-  }
-  return "Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)";
+  const input = `this step's input: ${args.inputSudoLockdown}`;
+  if (!args.policyLoaded) return `Sudo lockdown: not reported by cargowall (${input}; no policy was loaded)`;
+  return `Sudo lockdown: not reported by cargowall (${input}, which a CodeCargo policy that sets sudo lockdown replaces)`;
 }
 function effectiveReport(args) {
   const { inputMode, effective, downgraded, postureFlags } = args;
@@ -25833,18 +25832,23 @@ function effectiveReport(args) {
     policyLoaded: effective !== null && !downgraded,
     postures: args.postures
   });
+  if (downgraded) {
+    return {
+      info: ["Mode: audit (set by the policy-fetch failure posture)", sudo],
+      notices: modeNotices("audit", postureFlags)
+    };
+  }
   if (effective === null) {
     return {
-      info: [`Mode: ${inputMode} (no policy was loaded; this step's configuration applies)`, sudo],
+      info: [`Mode: ${inputMode} (no policy was loaded, so this step's configuration applies; cargowall's log says why)`, sudo],
       notices: modeNotices(inputMode, postureFlags)
     };
   }
-  const source = downgraded ? "the policy-fetch failure posture" : "the CodeCargo policy";
   const notices = modeNotices(effective, postureFlags);
-  if (effective === "enforce" && inputMode === "audit" && !downgraded) {
+  if (effective === "enforce" && inputMode === "audit") {
     notices.unshift("CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`");
   }
-  return { info: [`Mode: ${effective} (set by ${source})`, sudo], notices };
+  return { info: [`Mode: ${effective} (set by the CodeCargo policy)`, sudo], notices };
 }
 
 // src/resolvconf.ts
@@ -26281,6 +26285,7 @@ async function readFailureFile(spawnedAtMs) {
   return raw === null ? null : { reason: sentinelReason(raw), refused: sentinelRefusal(raw) };
 }
 var MAX_STATE_FILE_BYTES = 8192;
+var stateFileOwner = { uid: 0 };
 async function readStateFile(filePath) {
   try {
     if (!(await import_fs6.promises.lstat(filePath)).isFile()) return null;
@@ -26297,7 +26302,8 @@ async function readStateFile(filePath) {
     return null;
   }
   try {
-    if (!(await handle.stat()).isFile()) return null;
+    const st = await handle.stat();
+    if (!st.isFile() || st.uid !== stateFileOwner.uid) return null;
     const buf = Buffer.alloc(MAX_STATE_FILE_BYTES);
     const { bytesRead } = await handle.read(buf, 0, MAX_STATE_FILE_BYTES, 0);
     return buf.toString("utf8", 0, bytesRead);

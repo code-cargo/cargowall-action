@@ -52,13 +52,15 @@ describe('modeEcho', () => {
     expect(modeEcho('audit', null)).toBe('audit')
   })
 
-  it('labels the input as the fallback under the local failure posture', () => {
-    expect(modeEcho('audit', 'local')).toBe("audit (fallback if the policy can't be fetched)")
+  it('promises nothing before ready: the input is the fallback when no policy loads', () => {
+    expect(modeEcho('audit', 'local')).toBe('from the CodeCargo policy if one loads (fallback: audit)')
   })
 
-  it('does not mention the input when the failure posture replaces it too', () => {
-    expect(modeEcho('audit', 'audit')).toBe('set by the CodeCargo policy')
-    expect(modeEcho('enforce', 'fail')).toBe('set by the CodeCargo policy')
+  it('says a failed fetch uses the failure posture when that posture replaces the input', () => {
+    expect(modeEcho('enforce', 'audit')).toBe(
+      'from the CodeCargo policy if one loads (fallback: enforce; a failed fetch uses the policy-fetch failure posture)'
+    )
+    expect(modeEcho('audit', 'fail')).toMatch(/^from the CodeCargo policy if one loads \(fallback: audit; /)
   })
 })
 
@@ -122,6 +124,11 @@ describe('sudoLockdownReport', () => {
       .toBe('Sudo lockdown: on')
   })
 
+  it('reads only "true" as on: a garbled value is not', () => {
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, postures: parsePostures(`[${sudoLine('yes')}]`) }))
+      .toBe('Sudo lockdown: not applied')
+  })
+
   it('reports a lockdown that did not come up as not applied, never as on', () => {
     const report = sudoLockdownReport({
       inputSudoLockdown: true,
@@ -131,14 +138,14 @@ describe('sudoLockdownReport', () => {
     expect(report).toBe('Sudo lockdown: not applied (visudo rejected the result)')
   })
 
-  it("says the policy decides when this cargowall records no lockdown line", () => {
+  it('claims nothing when cargowall records no lockdown line', () => {
     expect(sudoLockdownReport({ inputSudoLockdown: false, policyLoaded: true, postures: parsePostures(`[${REDIRECT_LINE}]`) }))
-      .toBe('Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)')
+      .toBe("Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)")
   })
 
-  it('reports the input when no policy was loaded', () => {
+  it('names the input, and no policy, when none was loaded', () => {
     expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, postures: null }))
-      .toBe("Sudo lockdown: true (no policy was loaded; this step's input applies)")
+      .toBe("Sudo lockdown: not reported by cargowall (this step's input: true; no policy was loaded)")
   })
 })
 
@@ -147,7 +154,7 @@ describe('effectiveReport (a policy was to come from the API)', () => {
     const r = effectiveReport({ ...base, inputMode: 'audit', effective: 'enforce', postures: parsePostures(`[${REDIRECT_LINE}]`) })
     expect(r.info).toEqual([
       'Mode: enforce (set by the CodeCargo policy)',
-      'Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)',
+      "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)",
     ])
     expect(r.notices).toEqual([
       "CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`",
@@ -177,8 +184,14 @@ describe('effectiveReport (a policy was to come from the API)', () => {
     const r = effectiveReport({ ...base, inputSudoLockdown: true, effective: 'audit', downgraded: true })
     expect(r.info).toEqual([
       'Mode: audit (set by the policy-fetch failure posture)',
-      "Sudo lockdown: true (no policy was loaded; this step's input applies)",
+      "Sudo lockdown: not reported by cargowall (this step's input: true; no policy was loaded)",
     ])
+    expect(r.notices).toEqual([AUDIT_NOTICE])
+  })
+
+  it('reads a downgrade as audit even when its mode file is missing', () => {
+    const r = effectiveReport({ ...base, inputMode: 'enforce', effective: null, downgraded: true, postureFlags: PREVIEW })
+    expect(r.info[0]).toBe('Mode: audit (set by the policy-fetch failure posture)')
     expect(r.notices).toEqual([AUDIT_NOTICE])
   })
 
@@ -191,8 +204,8 @@ describe('effectiveReport (a policy was to come from the API)', () => {
   it('falls back to the inputs when no policy was loaded', () => {
     const r = effectiveReport({ ...base, inputMode: 'audit', effective: null })
     expect(r.info).toEqual([
-      "Mode: audit (no policy was loaded; this step's configuration applies)",
-      "Sudo lockdown: false (no policy was loaded; this step's input applies)",
+      "Mode: audit (no policy was loaded, so this step's configuration applies; cargowall's log says why)",
+      "Sudo lockdown: not reported by cargowall (this step's input: false; no policy was loaded)",
     ])
     expect(r.notices).toEqual([AUDIT_NOTICE])
   })

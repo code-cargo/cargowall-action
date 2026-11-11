@@ -89,12 +89,15 @@ function cargowallDied(): void {
  * reader uses an O_NOFOLLOW open + bounded read rather than readFile. Present
  * files default to a future mtime (unambiguously fresher than the spawn
  * anchor); pass `mtimes` to model a leftover from a previous run (an old
- * epoch) or a write landing just inside the staleness slack.
+ * epoch) or a write landing just inside the staleness slack. They are owned
+ * by root, as cargowall writes them; pass `owners` to model a file another
+ * user planted.
  */
 function withFiles(
   files: Record<string, string>,
   mtimes: Record<string, number> = {},
   links: string[] = [],
+  owners: Record<string, number> = {},
 ): void {
   vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
     if (String(p) in files || !String(p).startsWith('/tmp/cargowall')) return undefined
@@ -119,7 +122,7 @@ function withFiles(
     const content = files[String(p)]
     if (content === undefined) throw new Error(`ENOENT: ${String(p)}`)
     return {
-      stat: async () => ({ isFile: () => true }),
+      stat: async () => ({ isFile: () => true, uid: owners[String(p)] ?? 0 }),
       read: async (buf: Buffer, offset: number, length: number) => {
         const src = Buffer.from(content, 'utf8')
         const bytesRead = src.copy(buf, offset, 0, Math.min(src.length, length))
@@ -359,13 +362,44 @@ describe('start() argument construction', () => {
 
   describe('mode announcement', () => {
     const API = { 'api-url': 'https://app.codecargo.com' }
+    const NO_POLICY_MODE = (mode: string) =>
+      `Mode: ${mode} (no policy was loaded, so this step's configuration applies; cargowall's log says why)`
 
-    it('announces an inputs-only audit run up front, as before', async () => {
+    /** Every notice start() gave, and every line that reports the run's mode or sudo lockdown. */
+    function announced(): { notices: unknown[]; posture: string[] } {
+      return {
+        notices: vi.mocked(core.notice).mock.calls.map(c => c[0]),
+        posture: vi.mocked(core.info).mock.calls
+          .map(c => String(c[0]))
+          .filter(line => /^ *(Mode|Sudo lockdown):/.test(line)),
+      }
+    }
+
+    it('announces an inputs-only run exactly as before, and nothing after ready', async () => {
       withInputs({ mode: 'audit' })
+      // A mode file and a posture record must change nothing without a policy.
+      withFiles({
+        [READY_FILE]: '',
+        [MODE_FILE]: 'enforce',
+        [POSTURES_FILE]: '[{"posture":"sudo-lockdown","requested":"true","applied":"true"}]',
+      })
       await start()
-      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
-      expect(core.info).toHaveBeenCalledWith('  Mode: audit')
-      expect(core.info).toHaveBeenCalledWith('  Sudo lockdown: false')
+      expect(announced()).toEqual({
+        notices: [AUDIT_NOTICE, 'CargoWall firewall is active. Network egress is being filtered.'],
+        posture: ['  Mode: audit', '  Sudo lockdown: false'],
+      })
+    })
+
+    it('announces an inputs-only enforcing run with the preview exactly as before', async () => {
+      withInputs({ 'container-egress': 'enforce', 'sudo-lockdown': 'true' })
+      await start()
+      expect(announced()).toEqual({
+        notices: [
+          expect.stringContaining('v2 preview enforcement is ON (--container-egress=enforce)'),
+          'CargoWall firewall is active. Network egress is being filtered.',
+        ],
+        posture: ['  Mode: enforce', '  Sudo lockdown: true'],
+      })
     })
 
     it("reports the policy's mode, not the input's, once cargowall is ready", async () => {
@@ -374,18 +408,29 @@ describe('start() argument construction', () => {
 
       await start()
 
-      expect(core.notice).not.toHaveBeenCalledWith(AUDIT_NOTICE)
-      expect(core.notice).toHaveBeenCalledWith(
-        "CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`"
-      )
-      expect(core.info).toHaveBeenCalledWith("  Mode: audit (fallback if the policy can't be fetched)")
-      expect(core.info).toHaveBeenCalledWith(
-        expect.stringMatching(/^ {2}Sudo lockdown: false \(this step's input; a CodeCargo policy/)
-      )
-      expect(core.info).toHaveBeenCalledWith('Mode: enforce (set by the CodeCargo policy)')
-      expect(core.info).toHaveBeenCalledWith(
-        'Sudo lockdown: set by the CodeCargo policy (not reported by this cargowall version)'
-      )
+      expect(announced()).toEqual({
+        notices: [
+          "CargoWall is enforcing: the CodeCargo policy's mode replaces this step's `mode: audit`",
+          'CargoWall firewall is active. Network egress is being filtered.',
+        ],
+        posture: [
+          '  Mode: from the CodeCargo policy if one loads (fallback: audit)',
+          "  Sudo lockdown: false (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)",
+          'Mode: enforce (set by the CodeCargo policy)',
+          "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)",
+        ],
+      })
+    })
+
+    it("ignores a mode file another user planted, so an unloaded policy can't be claimed as enforcing", async () => {
+      withInputs({ ...API, mode: 'audit' })
+      withFiles({ [READY_FILE]: '', [MODE_FILE]: 'enforce' }, {}, [], { [MODE_FILE]: 1001 })
+
+      await start()
+
+      expect(core.info).toHaveBeenCalledWith(NO_POLICY_MODE('audit'))
+      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
+      expect(core.notice).not.toHaveBeenCalledWith(expect.stringContaining('CargoWall is enforcing'))
     })
 
     it('reports the sudo lockdown the posture record names, applied or not', async () => {
@@ -413,6 +458,24 @@ describe('start() argument construction', () => {
       expect(core.info).not.toHaveBeenCalledWith('Sudo lockdown: on')
     })
 
+    it("ignores a previous job's posture record next to this run's mode file", async () => {
+      withInputs({ ...API, mode: 'audit' })
+      withFiles(
+        {
+          [READY_FILE]: '',
+          [MODE_FILE]: 'enforce\n',
+          [POSTURES_FILE]: '[{"posture":"sudo-lockdown","requested":"true","applied":"true"}]',
+        },
+        { [POSTURES_FILE]: 1_000_000 },
+      )
+
+      await start()
+
+      expect(core.info).toHaveBeenCalledWith('Mode: enforce (set by the CodeCargo policy)')
+      expect(core.info).not.toHaveBeenCalledWith('Sudo lockdown: on')
+      expect(core.info).toHaveBeenCalledWith(expect.stringMatching(/^Sudo lockdown: not reported by cargowall/))
+    })
+
     it("announces audit mode after ready when that is the policy's mode", async () => {
       withInputs({ ...API, mode: 'enforce' })
       withFiles({ [READY_FILE]: '', [MODE_FILE]: 'audit\n' })
@@ -428,11 +491,9 @@ describe('start() argument construction', () => {
 
       await start()
 
+      expect(core.info).toHaveBeenCalledWith(NO_POLICY_MODE('audit'))
       expect(core.info).toHaveBeenCalledWith(
-        "Mode: audit (no policy was loaded; this step's configuration applies)"
-      )
-      expect(core.info).toHaveBeenCalledWith(
-        "Sudo lockdown: false (no policy was loaded; this step's input applies)"
+        "Sudo lockdown: not reported by cargowall (this step's input: false; no policy was loaded)"
       )
       expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
     })
@@ -443,9 +504,7 @@ describe('start() argument construction', () => {
 
       await start()
 
-      expect(core.info).toHaveBeenCalledWith(
-        "Mode: audit (no policy was loaded; this step's configuration applies)"
-      )
+      expect(core.info).toHaveBeenCalledWith(NO_POLICY_MODE('audit'))
     })
 
     it('treats a run whose OIDC token failed as inputs-only', async () => {
@@ -454,8 +513,10 @@ describe('start() argument construction', () => {
 
       await start()
 
-      expect(core.notice).toHaveBeenCalledWith(AUDIT_NOTICE)
-      expect(core.info).toHaveBeenCalledWith('  Mode: audit')
+      expect(announced()).toEqual({
+        notices: [AUDIT_NOTICE, 'CargoWall firewall is active. Network egress is being filtered.'],
+        posture: ['  Mode: audit', '  Sudo lockdown: false'],
+      })
     })
   })
 
