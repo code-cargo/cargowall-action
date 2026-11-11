@@ -19,7 +19,7 @@ For concepts, architecture, and platform capabilities, see the [main CargoWall r
 - **CIDR filtering**: Allow/deny based on IP address ranges
 - **DNS tunneling prevention**: Blocks DNS queries for non-allowed domains
 - **Docker support**: Automatically configures Docker containers to respect firewall rules
-- **Sudo lockdown**: Optionally restrict sudo access to prevent firewall bypass
+- **Sudo lockdown**: Optionally restrict sudo for the job's user to an allowlist; see [Sudo Lockdown](#sudo-lockdown) for its limits
 - **Graceful degradation**: Warns and continues if eBPF is unavailable
 
 ## Quick Start
@@ -163,7 +163,7 @@ Run in audit mode to log connections without blocking them — useful for unders
     mode: audit
 ```
 
-A policy fetched from the [CodeCargo platform](#codecargo-platform) replaces `mode`, and `sudo-lockdown` too when the policy sets it. With one in play, the start step doesn't announce `mode` as the run's mode, and the configuration echo shows it only as the fallback for a run where no policy loads. Once cargowall is ready, the step reports the mode it applies (`Mode: enforce (set by the CodeCargo policy)`) and the sudo lockdown: on, off, or not applied with cargowall's reason. Without a posture record from cargowall that the step can trust, it says the lockdown was not reported instead. So it does when the binary comes from `binary-path` or `source-ref` and the record has no lockdown line, since such a binary may predate the line.
+A policy fetched from the [CodeCargo platform](#codecargo-platform) replaces `mode`, and `sudo-lockdown` and `sudo-allow-commands` too when the policy sets the sudo lockdown. With one in play, the start step doesn't announce `mode` as the run's mode, and the configuration echo shows it only as the fallback for a run where no policy loads. Once cargowall is ready, the step reports the mode it applies (`Mode: enforce (set by the CodeCargo policy)`) and the sudo lockdown: on, off, or not applied with cargowall's reason. Without a posture record from cargowall that the step can trust, it says the lockdown was not reported instead. So it does when the binary comes from `binary-path` or `source-ref` and the record has no lockdown line, since such a binary may predate the line.
 
 ### When the CodeCargo Policy Can't Be Fetched
 
@@ -202,9 +202,9 @@ That distinction keeps a **reachable** API's authoritative answers from ever cha
 
 This input has no effect when `offline: true` or `api-url` is empty.
 
-### With Sudo Lockdown (Maximum Security)
+### With Sudo Lockdown
 
-Enable sudo lockdown so that later steps can't use sudo to disable the firewall. With no `sudo-allow-commands`, the job's steps get no sudo at all:
+Enable sudo lockdown so that later steps can't use sudo to disable the firewall. With no allowlist (no `sudo-allow-commands`, and no CodeCargo policy that sets one), the job's steps get no sudo at all:
 
 ```yaml
 - uses: code-cargo/cargowall-action@v1
@@ -330,7 +330,7 @@ Worth knowing before you enable it:
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line), applied only on Azure. Replaces the default list rather than adding to it; an empty value is an error                                                                                                         | See [defaults](#automatically-allowed-traffic) |
 | `config-file`                | Path to YAML/JSON config file for advanced rules                                                                                                                                                                                                                                       |                                                |
 | `fail-on-unsupported`        | Fail if CargoWall can't run here (eBPF unsupported, or startup failed) rather than warn and continue. Enforcement the runner can't apply [always fails the step](#cargowall-refused-to-start)                                                                                          | `false`                                        |
-| `sudo-lockdown`              | Enable sudo lockdown to prevent firewall bypass                                                                                                                                                                                                                                        | `false`                                        |
+| `sudo-lockdown`              | Restrict sudo for the job's user to the allowlist. Allowlisted commands and docker access are outside it — see [Sudo Lockdown](#sudo-lockdown)                                                                                                                                         | `false`                                        |
 | `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                                                                                                                                                                                                              |                                                |
 | `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                                                                                                                                                                                                                         | auto-detect                                    |
 | `allow-existing-connections` | Allow pre-existing TCP connections at startup                                                                                                                                                                                                                                          | `true`                                         |
@@ -464,7 +464,7 @@ Setting `github-service-hosts` or `azure-infra-hosts` **replaces** the correspon
 
 ### Sudo Lockdown
 
-When `sudo-lockdown: true`, sudo for the job's user runs only the commands `sudo-allow-commands` lists. Anything else, such as `sudo iptables -F`, `sudo pkill cargowall` or `sudo vim /etc/resolv.conf`, is refused:
+When `sudo-lockdown: true`, sudo for the job's user runs only the allowlist: the commands `sudo-allow-commands` lists, or the CodeCargo policy's when the policy sets the sudo lockdown. Anything else, such as `sudo iptables -F`, `sudo pkill cargowall` or `sudo vim /etc/resolv.conf`, is refused:
 
 ```yaml
 sudo-lockdown: true
@@ -472,12 +472,13 @@ sudo-allow-commands: |
   /usr/bin/apt-get
 ```
 
-That is the whole guarantee: sudo, for the job's user, runs only the allowlist. Its limits:
+That is the whole guarantee: sudo, for the job's user, runs only the allowlist. Its main limits:
 
-- **Each allowlisted command is a grant outside the guarantee.** Whatever an allowed command can do as root, any later step can do. A package manager such as `apt-get` (as above) and `docker` each give root to whoever runs them, so allowlisting either gives the job's steps root, and with it the means to disable the firewall.
-- **Docker access is outside the lockdown.** The lockdown removes the user from the `docker` group, but that reaches only logins after it. The job's steps inherit the runner's groups and keep docker access for the whole job, and access to the docker socket is root-equivalent on the host. When cargowall can tell which credentials the job's steps run with, it logs a warning if they can still write `/var/run/docker.sock` or the socket the runner's `DOCKER_HOST` names, or if that `DOCKER_HOST` is a network address, which no group restricts. The warning is a line in cargowall's log: it shows as an annotation only when the action prints that part of the log (the post step prints its last 50 lines), and otherwise in the job summary's CargoWall Process Log. No warning doesn't mean no docker access.
+- **Each allowlisted command is a grant outside the guarantee.** Whatever an allowed command can do as root, any later step can do. A package manager such as `apt-get` (as above) and `docker` each give root to whoever can run them through sudo, so allowlisting either gives the job's steps root, and with it the means to disable the firewall.
+- **Docker access is outside the lockdown.** The lockdown removes the user from the `docker` group, but that reaches only logins after it. The job's steps inherit the runner's groups and keep docker access for the whole job, and access to the docker socket is root-equivalent on the host. When cargowall can tell which credentials the job's steps run with, it logs a warning if they can still write `/var/run/docker.sock` or the socket the runner's `DOCKER_HOST` names, or if that `DOCKER_HOST` is a network address, which no group restricts. The warning is a line in cargowall's log (`/tmp/cargowall.log`, shown in the job summary's CargoWall Process Log unless `audit-summary: false`). It shows as an annotation only when the action prints that part of the log (the post step prints its last 50 lines), so don't count on one. No warning doesn't mean no docker access.
+- **Some hosts get a weaker lockdown.** Where sudo reads another policy source, or `/etc/sudoers` can't be amended, cargowall leaves the lockdown in place with a warning and the guarantee is weaker; cargowall's design.md lists these cases. They don't arise on stock runner images.
 
-A lockdown that doesn't come up fails the step whenever the run enforces: under an enforcing CodeCargo policy, or under `mode: enforce` when no policy loads and the run isn't downgraded to audit (offline, `skip-policy-fetch`, or a fetch that loaded none); see [CargoWall refused to start](#cargowall-refused-to-start). Under audit it only warns, and the job summary lists it among the postures not applied.
+A lockdown that doesn't come up fails the step whenever the run enforces: under an enforcing CodeCargo policy, or under `mode: enforce` (the default) when no policy loads (offline, `skip-policy-fetch`, or a fetch that loaded none) and the run isn't downgraded to audit; see [CargoWall refused to start](#cargowall-refused-to-start). Under audit it only warns, and the job summary lists it among the postures not applied.
 
 ### Binary Verification
 
@@ -492,7 +493,8 @@ Sigstore attestation's subject *is* the binary's SHA-256, so a byte-for-byte
 match with the pin proves the same artifact the attestation signs. The
 `check-digests` CI workflow downloads the published binaries, verifies each
 against the pin, and runs `gh attestation verify` on each, requiring the
-signature of cargowall's release workflow — on every change
+signature of cargowall's release workflow run from `main` or a `release/v*`
+branch — on every change
 and on a weekly schedule — so an unattested or tampered release asset fails in
 this repository's CI, never in your job.
 
@@ -596,9 +598,10 @@ backoff, and logs every retry —
 so a blip that recovered is visible in the log rather than silent. If asset
 delivery is degraded for longer than that, vendor the binary and skip the
 download entirely with `binary-path`. Fetch the version the action pins, its
-`CARGOWALL_VERSION` in `src/setup.ts` at the action ref you use: an older binary
-reports less (the start step can't say whether the sudo lockdown is off, for
-one), and a newer one hasn't been tested with that action.
+`CARGOWALL_VERSION` in `src/setup.ts` at the action ref you use: that's the one
+tested with that action ref. Whatever the version, the start step can't tell
+which one `binary-path` runs, so it reports the sudo lockdown as on, not
+applied, or not reported, never as off.
 
 ```yaml
 - name: Fetch cargowall
@@ -608,7 +611,7 @@ one), and a newer one hasn't been tested with that action.
       --pattern "cargowall-linux-${ARCH}" \
       --output "$RUNNER_TEMP/cargowall"
     gh attestation verify "$RUNNER_TEMP/cargowall" --repo code-cargo/cargowall \
-      --signer-workflow code-cargo/cargowall/.github/workflows/release.yml
+      --cert-identity-regex '^https://github\.com/code-cargo/cargowall/\.github/workflows/release\.yml@refs/heads/(main|release/v[0-9]+)$'
   env:
     GH_TOKEN: ${{ github.token }}
     ARCH: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
@@ -637,7 +640,9 @@ Pair it with `actions/cache` to make the download a cold-start-only cost:
 
 # Unconditional: a cache entry is writable by any workflow in the repository,
 # so the restored binary needs verifying just as much as a fresh download.
-- run: gh attestation verify "$RUNNER_TEMP/cargowall" --repo code-cargo/cargowall --signer-workflow code-cargo/cargowall/.github/workflows/release.yml
+- run: >-
+    gh attestation verify "$RUNNER_TEMP/cargowall" --repo code-cargo/cargowall
+    --cert-identity-regex '^https://github\.com/code-cargo/cargowall/\.github/workflows/release\.yml@refs/heads/(main|release/v[0-9]+)$'
   env:
     GH_TOKEN: ${{ github.token }}
 

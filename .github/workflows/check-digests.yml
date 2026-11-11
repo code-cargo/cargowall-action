@@ -52,10 +52,10 @@ jobs:
               continue
             fi
 
-            # Signed by cargowall's release workflow, not just any workflow
-            # in the repository.
+            # Signed by cargowall's release workflow, run from main or a
+            # release branch: not by any other workflow, or from another ref.
             if ! gh attestation verify "$asset" --repo code-cargo/cargowall \
-                --signer-workflow code-cargo/cargowall/.github/workflows/release.yml; then
+                --cert-identity-regex '^https://github\.com/code-cargo/cargowall/\.github/workflows/release\.yml@refs/heads/(main|release/v[0-9]+)$'; then
               echo "::error::Provenance verification failed for $asset $version"
               status=1
               continue

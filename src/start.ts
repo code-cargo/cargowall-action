@@ -22,7 +22,8 @@ const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 // fetched policy or a policy-fetch failure posture (cmd/start.go modeFile).
 const MODE_FILE = '/tmp/cargowall-mode'
 // cargowall's record of each requested layer's posture (cmd/postures.go
-// posturesFile), which names the sudo lockdown whenever it was asked for.
+// posturesFile). The pinned cargowall's names the sudo lockdown whenever it was
+// asked for.
 const POSTURES_FILE = '/tmp/cargowall-postures'
 const STARTUP_TIMEOUT = 30
 // `cargowall start`'s exit status for a refused posture (cmd/postures.go
