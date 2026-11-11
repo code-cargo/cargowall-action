@@ -25293,6 +25293,16 @@ async function readStateFile(filePath) {
     });
   }
 }
+async function readFreshStateFile(filePath, spawnedAtMs) {
+  try {
+    if ((await import_fs4.promises.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return readStateFile(filePath);
+}
 
 // src/summary.ts
 var import_fs7 = require("fs");
@@ -25541,13 +25551,7 @@ async function report() {
       return;
     }
     const spawnedAtMs = Number(getState("cargowall-spawned-at"));
-    let downgraded = false;
-    if (spawnedAtMs > 0) {
-      try {
-        downgraded = (await import_fs8.promises.stat(DOWNGRADE_FILE)).mtimeMs >= spawnedAtMs - STALE_SLACK_MS;
-      } catch {
-      }
-    }
+    const downgraded = spawnedAtMs > 0 && await readFreshStateFile(DOWNGRADE_FILE, spawnedAtMs) !== null;
     if (!pid && !downgraded) {
       info("CargoWall never ran in this job, skipping summary");
       await cleanup();

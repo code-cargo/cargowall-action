@@ -687,7 +687,7 @@ async function readDowngradeFile(spawnedAtMs: number): Promise<string | null> {
  * sentinel: one whose mtime predates this run's spawn is a leftover from a
  * reused runner and says nothing about this run.
  */
-async function readFreshStateFile(filePath: string, spawnedAtMs: number): Promise<string | null> {
+export async function readFreshStateFile(filePath: string, spawnedAtMs: number): Promise<string | null> {
   try {
     if ((await fs.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null

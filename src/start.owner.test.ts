@@ -56,6 +56,8 @@ const LAUNCHER_PID = 4242
 interface StateFile {
   body: string
   owner: number
+  /** Written before this run's spawn: a leftover from a previous job. */
+  stale?: boolean
 }
 
 /**
@@ -72,7 +74,7 @@ function withStateFiles(files: Record<string, StateFile>, readyLook = 1): void {
   vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
     if (String(p) === READY_FILE && readyLooks++ < readyLook) throw new Error('not yet')
     if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
-    return { mtimeMs: Date.now() + 5000, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
+    return { mtimeMs: files[String(p)].stale ? 0 : Date.now() + 5000, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
   })
   vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
     if (!(String(p) in files)) throw new Error(`ENOENT: ${String(p)}`)
@@ -99,6 +101,22 @@ function signalledPids(): string[] {
     .map(([, args]) => String(args?.at(-1)))
 }
 
+/**
+ * start(), run to the end of its readiness wait however many one-second
+ * sleeps that takes.
+ */
+async function startToTheEnd(): ReturnType<typeof start> {
+  vi.useFakeTimers({ toFake: ['setTimeout'] })
+  try {
+    let settled = false
+    const run = start().finally(() => { settled = true })
+    for (let i = 0; !settled && i < 1000; i++) await vi.advanceTimersByTimeAsync(1000)
+    return await run
+  } finally {
+    vi.useRealTimers()
+  }
+}
+
 /** A ready sentinel, owned by `owner`. */
 const ready = (owner: number): StateFile => ({ body: '', owner })
 
@@ -117,6 +135,22 @@ describe('start() and the cargowall pidfile', () => {
 
     expect(await start()).toEqual({ supported: true, pid: 4243 })
     expect(signalledPids()).toEqual(['4243'])
+  })
+
+  it("ignores a previous run's root-owned pidfile, and signals nothing it names", async () => {
+    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '31337\n', owner: 0, stale: true } })
+
+    expect(await start()).toEqual({ supported: true, pid: LAUNCHER_PID })
+    expect(signalledPids()).toEqual([])
+  })
+
+  it('stops cargowall through its launcher on a timeout with no trusted pidfile', async () => {
+    withStateFiles({ [PID_FILE]: { body: '31337\n', owner: 0, stale: true } })
+
+    expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
+    expect(core.error).toHaveBeenCalledWith('Timeout waiting for cargowall to be ready')
+    expect(signalledPids()).toEqual([String(LAUNCHER_PID)])
+    expect(exec.exec).toHaveBeenCalledWith('sudo', ['kill', String(LAUNCHER_PID)], expect.anything())
   })
 
   it('ignores a pidfile another user owns, and signals nothing it names', async () => {

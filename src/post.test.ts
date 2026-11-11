@@ -26,6 +26,9 @@ vi.mock('./start', async importOriginal => {
   return {
     STALE_SLACK_MS: 2000,
     readStateFile: vi.fn(async () => null),
+    // start.ts's tests cover its freshness and owner checks; these pin what
+    // post.ts asks of it.
+    readFreshStateFile: vi.fn(async () => null),
     sentinelReason: actual.sentinelReason,
     sentinelRefusal: actual.sentinelRefusal,
   }
@@ -34,8 +37,10 @@ vi.mock('./start', async importOriginal => {
 import * as core from '@actions/core'
 import { promises as fsp } from 'fs'
 import { cleanup } from './cleanup'
-import { readStateFile } from './start'
+import { readFreshStateFile, readStateFile } from './start'
 import { generateSummary } from './summary'
+
+const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
 
 /** post.ts invokes run() on import, so re-import it fresh to drive each path. */
 async function runPost(): Promise<void> {
@@ -61,6 +66,7 @@ describe('post', () => {
     // cargowall started, so the post step does its full job.
     withState({ 'cargowall-pid': '4242', 'cargowall-spawned-at': String(Date.now() - 60_000) })
     vi.mocked(fsp.stat).mockRejectedValue(new Error('ENOENT'))
+    vi.mocked(readFreshStateFile).mockResolvedValue(null)
     withInputs({})
   })
 
@@ -145,28 +151,32 @@ describe('post', () => {
   it('still pushes for a policy lockdown (fresh downgrade record, no pid)', async () => {
     // Lockdown never saves pid state (the throw happens before), but the
     // downgrade record exists and the push carries it to the dashboard.
+    const spawnedAt = Date.now() - 60_000
+    withState({ 'cargowall-spawned-at': String(spawnedAt) })
+    vi.mocked(readFreshStateFile).mockImplementation(async path =>
+      path === DOWNGRADE_FILE ? 'policy-lockdown\n' : null
+    )
+    withInputs({ 'api-url': 'https://app.codecargo.com' })
+
+    await runPost()
+
+    expect(readFreshStateFile).toHaveBeenCalledWith(DOWNGRADE_FILE, spawnedAt)
+    expect(generateSummary).toHaveBeenCalledWith({ render: true })
+  })
+
+  it("ignores a downgrade record that isn't this run's cargowall's (stale, or not root-owned)", async () => {
+    // Its mtime alone reads as fresh, but readFreshStateFile rejects it: a
+    // leftover from a previous job, or a file root does not own. Counting it
+    // pushed a zero-event record for a job where cargowall never ran.
     withState({ 'cargowall-spawned-at': String(Date.now() - 60_000) })
     vi.mocked(fsp.stat).mockResolvedValue({ mtimeMs: Date.now() } as Awaited<ReturnType<typeof fsp.stat>>)
     withInputs({ 'api-url': 'https://app.codecargo.com' })
 
     await runPost()
 
-    expect(generateSummary).toHaveBeenCalledWith({ render: true })
-  })
-
-  it('ignores a stale downgrade record from a previous job on a reused runner', async () => {
-    // The record predates this run's spawn anchor: a leftover, not this
-    // run's posture. Without the anchor this pushed a zero-event record for
-    // a job where cargowall never started.
-    withState({ 'cargowall-spawned-at': String(Date.now() - 60_000) })
-    vi.mocked(fsp.stat).mockResolvedValue(
-      { mtimeMs: Date.now() - 3_600_000 } as Awaited<ReturnType<typeof fsp.stat>>
-    )
-    withInputs({ 'api-url': 'https://app.codecargo.com' })
-
-    await runPost()
-
+    expect(readFreshStateFile).toHaveBeenCalledWith(DOWNGRADE_FILE, expect.any(Number))
     expect(generateSummary).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith('CargoWall never ran in this job, skipping summary')
     expect(cleanup).toHaveBeenCalled()
   })
 
@@ -174,11 +184,12 @@ describe('post', () => {
     // No spawn anchor ⇒ start() threw before spawning ⇒ any record on disk is
     // definitionally from a previous job.
     withState({})
-    vi.mocked(fsp.stat).mockResolvedValue({ mtimeMs: Date.now() } as Awaited<ReturnType<typeof fsp.stat>>)
+    vi.mocked(readFreshStateFile).mockResolvedValue('policy-lockdown\n')
     withInputs({ 'api-url': 'https://app.codecargo.com' })
 
     await runPost()
 
+    expect(readFreshStateFile).not.toHaveBeenCalled()
     expect(generateSummary).not.toHaveBeenCalled()
   })
 })
@@ -210,6 +221,7 @@ describe('post: a refusal decided after startup', () => {
     withState({ 'cargowall-pid': '4242', 'cargowall-spawned-at': String(Date.now() - 60_000) })
     withInputs({ 'api-url': 'https://app.codecargo.com' })
     vi.mocked(generateSummary).mockResolvedValue(undefined)
+    vi.mocked(readFreshStateFile).mockResolvedValue(null)
   })
 
   it('fails the job, after the summary that shows it', async () => {
