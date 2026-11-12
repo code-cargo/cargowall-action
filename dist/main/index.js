@@ -25886,20 +25886,35 @@ function ruleValuesProblem(rule, where, step) {
   }
   return null;
 }
+var LABEL = /^(\*\*?|[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?)$/;
 function hostnameProblem(value) {
   if ((0, import_net2.isIP)(value)) return "is an IP address: give it as type cidr";
   if (value.includes("/")) return "is a URL or a path, not a hostname: give the host alone";
   if (value.includes(":")) return "has a port: give the host alone and its ports in ports";
+  if (value.includes(",")) return "lists more than one host: give one host per rule";
   if (/\s/.test(value)) return "has whitespace";
+  if (value.startsWith(".")) return "starts with a dot: leave it out, since a name already covers its subdomains";
   if (value.endsWith(".")) return "ends with a dot: leave it out";
+  if (/[^\x20-\x7e]/.test(value)) return "has a non-ASCII character: give the punycode (xn--) form";
+  if (value.length > 253) return "is longer than 253 characters";
+  for (const label of value.split(".")) {
+    if (label.length > 63) return "has a label longer than 63 characters";
+    if (!LABEL.test(label)) {
+      return "is not a hostname: give labels of letters, digits, hyphens and underscores, or a whole-label * or **, separated by single dots";
+    }
+  }
   return null;
 }
+var SUDOERS_UNSAFE_CHARS = " ,#\n\r	`;&!()\\|*?[]";
 function allowCommandsProblem(commands) {
   if (commands === void 0) return null;
   if (!Array.isArray(commands)) return "sudoLockdown.allowCommands isn't a list";
   for (const [i, command] of commands.entries()) {
     if (typeof command !== "string" || !/^\/\S+$/.test(command)) {
       return `sudoLockdown.allowCommands[${i}] must be a bare absolute path, such as /usr/bin/apt-get: cargowall drops any arguments, which would allow the command with every argument`;
+    }
+    if ([...SUDOERS_UNSAFE_CHARS].some((c) => command.includes(c))) {
+      return `sudoLockdown.allowCommands[${i}] has a character a sudoers command path can't hold (any of ${JSON.stringify(SUDOERS_UNSAFE_CHARS)}): a comma would split it into two commands, and cargowall refuses the rest`;
     }
   }
   return null;

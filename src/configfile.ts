@@ -203,19 +203,47 @@ function ruleValuesProblem(rule: Record<string, unknown>, where: string, step: b
 }
 
 /**
+ * One label of a hostname rule's value: letters, digits, underscores and
+ * hyphens, not starting or ending with a hyphen, or a whole-label `*` or `**`
+ * pattern. A partial pattern such as `api-*` never matches in cargowall.
+ */
+const LABEL = /^(\*\*?|[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?)$/
+
+/**
  * What's wrong with a hostname rule's value, or null. cargowall takes the
  * value as given and matches DNS names against it, so a value no query name
- * can equal loads without an error and matches nothing. Patterns (`*`, `**`)
- * and underscores are names cargowall matches.
+ * can equal loads without an error and matches nothing. Only a query name's
+ * shape is admitted; the likeliest mistakes get their own message first.
  */
 function hostnameProblem(value: string): string | null {
   if (isIP(value)) return 'is an IP address: give it as type cidr'
   if (value.includes('/')) return 'is a URL or a path, not a hostname: give the host alone'
   if (value.includes(':')) return 'has a port: give the host alone and its ports in ports'
+  if (value.includes(',')) return 'lists more than one host: give one host per rule'
   if (/\s/.test(value)) return 'has whitespace'
+  if (value.startsWith('.')) return 'starts with a dot: leave it out, since a name already covers its subdomains'
   if (value.endsWith('.')) return 'ends with a dot: leave it out'
+  if (/[^\x20-\x7e]/.test(value)) return 'has a non-ASCII character: give the punycode (xn--) form'
+  if (value.length > 253) return 'is longer than 253 characters'
+  for (const label of value.split('.')) {
+    if (label.length > 63) return 'has a label longer than 63 characters'
+    if (!LABEL.test(label)) {
+      return (
+        'is not a hostname: give labels of letters, digits, hyphens and underscores, or a whole-label * or **, ' +
+        'separated by single dots'
+      )
+    }
+  }
   return null
 }
+
+/**
+ * The characters cargowall refuses in a sudoers command path (sudoersUnsafeChars
+ * in cargowall's pkg/lockdown). A comma among them matters before that check
+ * runs: cargowall joins the entries with commas and splits them again, so an
+ * entry holding one would reach it as two commands.
+ */
+const SUDOERS_UNSAFE_CHARS = ' ,#\n\r\t`;&!()\\|*?[]'
 
 /**
  * What's wrong with sudoLockdown.allowCommands, or null. cargowall keeps only
@@ -230,6 +258,13 @@ function allowCommandsProblem(commands: unknown): string | null {
       return (
         `sudoLockdown.allowCommands[${i}] must be a bare absolute path, such as /usr/bin/apt-get: cargowall ` +
         'drops any arguments, which would allow the command with every argument'
+      )
+    }
+    if ([...SUDOERS_UNSAFE_CHARS].some(c => command.includes(c))) {
+      return (
+        `sudoLockdown.allowCommands[${i}] has a character a sudoers command path can't hold ` +
+        `(any of ${JSON.stringify(SUDOERS_UNSAFE_CHARS)}): a comma would split it into two commands, ` +
+        'and cargowall refuses the rest'
       )
     }
   }

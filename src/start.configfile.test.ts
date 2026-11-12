@@ -373,6 +373,17 @@ describe('start() and config-file', () => {
     ['a trailing dot', 'example.com.', 'ends with a dot'],
     ['an IPv4 address', '1.2.3.4', 'is an IP address: give it as type cidr'],
     ['an IPv6 address', '2001:db8::1', 'is an IP address: give it as type cidr'],
+    ['a leading dot', '.example.com', 'starts with a dot: leave it out, since a name already covers its subdomains'],
+    ['a comma-joined list', 'example.com,api.example.com', 'lists more than one host: give one host per rule'],
+    ['an empty label', 'example..com', 'is not a hostname'],
+    ['a non-punycode IDN', 'bücher.example.com', 'has a non-ASCII character: give the punycode (xn--) form'],
+    ['a zero-width space', 'example.com\u200b', 'has a non-ASCII character'],
+    ['trailing punctuation', 'example.com;', 'is not a hostname'],
+    ['a leading hyphen', '-example.com', 'is not a hostname'],
+    ['a label ending in a hyphen', 'example-.com', 'is not a hostname'],
+    ['a partial pattern', 'api-*.example.com', 'is not a hostname'],
+    ['a 64-character label', `${'a'.repeat(64)}.example.com`, 'has a label longer than 63 characters'],
+    ['a 254-character name', `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(62)}`, 'is longer than 253 characters'],
   ])('refuses a hostname value that is %s, before touching the runner', async (_, value, message) => {
     for (const [body, where] of [
       [JSON.stringify({ rules: [{ type: 'hostname', value, action: 'allow' }] }), 'rules[0]'],
@@ -398,6 +409,20 @@ describe('start() and config-file', () => {
     expectNothingChanged()
   })
 
+  it.each([
+    ['a comma', '/usr/bin/true,/bin/bash'],
+    ['a glob', '/usr/bin/*'],
+    ['a semicolon', '/usr/bin/true;id'],
+    ['a backslash', '/usr/bin/a\\b'],
+  ])('refuses a sudo allowlist entry with %s, before touching the runner', async (_, entry) => {
+    withFiles({ [CONFIG]: JSON.stringify({ sudoLockdown: { enabled: true, allowCommands: ['/usr/bin/true', entry] } }) })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(
+      `config-file ${CONFIG}: sudoLockdown.allowCommands[1] has a character a sudoers command path can't hold`
+    )
+    expectNothingChanged()
+  })
+
   it('refuses a sudo allowlist that is not a list, before touching the runner', async () => {
     withFiles({ [CONFIG]: '{"sudoLockdown":{"enabled":true,"allowCommands":"/usr/bin/true"}}' })
     withInputs({ offline: 'true', 'config-file': CONFIG })
@@ -419,6 +444,14 @@ describe('start() and config-file', () => {
       '{"rules":[{"type":"hostname","value":"*.example.com","action":"allow"},{"type":"hostname","value":"**.example.com","action":"allow"},' +
         '{"type":"hostname","value":"_gateway","action":"allow"},{"type":"hostname","value":"_dmarc.example.com","action":"deny"}],' +
         '"steps":[{"id":"build","rules":[{"type":"hostname","value":"*.npmjs.org"}]}]}',
+    ],
+    [
+      'hostnames of every admitted shape',
+      JSON.stringify({
+        rules: ['_gateway', '*.npmjs.org', '**.example.com', 'xn--bcher-kva.example', `${'a'.repeat(63)}.example.com`,
+          `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(61)}`, 'a.b-c.d_e.example', 'localhost']
+          .map(value => ({ type: 'hostname', value, action: 'allow' })),
+      }),
     ],
     ['a CIDR given as an address', '{"rules":[{"type":"cidr","value":"1.2.3.4","action":"allow"},{"type":"cidr","value":"2001:db8::1","action":"allow"}]}'],
     ['a sudo allowlist of bare absolute paths', '{"sudoLockdown":{"enabled":true,"allowCommands":["/usr/bin/apt-get","/usr/bin/true"]}}'],
