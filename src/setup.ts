@@ -25,9 +25,9 @@ const BINARY_NAME = 'cargowall'
 // keys on, the errors for a dropped rule among them, which must still come
 // only from the loaded config's own rules (were auto-allows ever resolved
 // through the same path, a bad github-service-hosts pattern would fail a good
-// file's step). And the README's sentence on when cargowall applies step
-// rules, and the "Step rules are off:" and "Step rules stay off:" lines it
-// quotes.
+// file's step). And, when the pin moves to a release that binds steps to
+// their rules, the README's "no step's connections use them yet" and the
+// offline config-file e2e that asserts it.
 const CARGOWALL_VERSION = 'v2.0.0-rc.15'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
