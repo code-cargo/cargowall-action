@@ -25782,6 +25782,8 @@ var ENV_CONFIG_VARS = [
   "CARGOWALL_SEARCH_DOMAINS"
 ];
 var CONFIG_KEYS = ["rules", "defaultAction", "searchDomains", "sudoLockdown", "steps"];
+var RULE_KEYS = ["type", "value", "ports", "action"];
+var PROTOCOLS = ["all", "tcp", "udp", "icmp"];
 async function resolveConfigFile(configFile, inputs) {
   if (!configFile) return null;
   const conflicting = [
@@ -25810,13 +25812,52 @@ async function resolveConfigFile(configFile, inputs) {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error(`config-file ${configFile} isn't a JSON object`);
   }
-  const unknown = Object.keys(parsed).filter((key) => !CONFIG_KEYS.includes(key));
+  const file = parsed;
+  const unknown = Object.keys(file).filter((key) => !CONFIG_KEYS.includes(key));
   if (unknown.length > 0) {
     throw new Error(
       `config-file ${configFile} has keys cargowall doesn't read: ${unknown.join(", ")} (it reads ${CONFIG_KEYS.join(", ")})`
     );
   }
-  return resolved;
+  const problem = rulesProblem(file.rules, "rules") ?? stepsProblem(file.steps);
+  if (problem) throw new Error(`config-file ${configFile}: ${problem}`);
+  const lockdown = file.sudoLockdown;
+  return {
+    path: resolved,
+    sudoLockdown: isObject(lockdown) ? lockdown.enabled === true : null
+  };
+}
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function rulesProblem(rules, where) {
+  if (rules === void 0) return null;
+  if (!Array.isArray(rules)) return `${where} isn't a list`;
+  for (const [i, rule] of rules.entries()) {
+    if (!isObject(rule)) return `${where}[${i}] isn't an object`;
+    const unknown = Object.keys(rule).filter((key) => !RULE_KEYS.includes(key));
+    if (unknown.length > 0) {
+      return `${where}[${i}] has keys cargowall doesn't read: ${unknown.join(", ")} (a rule has ${RULE_KEYS.join(", ")})`;
+    }
+    if (rule.ports === void 0) continue;
+    if (!Array.isArray(rule.ports)) return `${where}[${i}].ports isn't a list`;
+    for (const [j, port] of rule.ports.entries()) {
+      if (!isObject(port) || !PROTOCOLS.includes(port.protocol)) {
+        return `${where}[${i}].ports[${j}] needs a protocol, one of ${PROTOCOLS.join(", ")} in lowercase, as in {"port": 443, "protocol": "tcp"}: cargowall skips a port entry without one, leaving the rule on every port`;
+      }
+    }
+  }
+  return null;
+}
+function stepsProblem(steps) {
+  if (steps === void 0) return null;
+  if (!Array.isArray(steps)) return "steps isn't a list";
+  for (const [i, step] of steps.entries()) {
+    if (!isObject(step)) return `steps[${i}] isn't an object`;
+    const problem = rulesProblem(step.rules, `steps[${i}].rules`);
+    if (problem) return problem;
+  }
+  return null;
 }
 async function requireConfigLoaded(logPath, configFile) {
   let log = "";
@@ -25861,11 +25902,15 @@ function modeEcho(mode, apiFailurePosture) {
   const fallback = apiFailurePosture === "local" ? mode : `${mode}; a failed fetch uses the policy-fetch failure posture`;
   return `from the CodeCargo policy if one loads (fallback: ${fallback})`;
 }
-function sudoLockdownEcho(sudoLockdown, apiPolicy, configFile = false) {
-  if (!apiPolicy && !configFile) return String(sudoLockdown);
-  if (!apiPolicy) return `${sudoLockdown} (this step's input; the config file's sudoLockdown replaces it)`;
-  if (!configFile) return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`;
-  return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it, and the config file's does when no policy loads)`;
+function sudoLockdownEcho(sudoLockdown, apiPolicy, fileSudoLockdown = null) {
+  if (fileSudoLockdown !== null && !apiPolicy) {
+    return `${fileSudoLockdown} (set by the config file, which replaces this step's input: ${sudoLockdown})`;
+  }
+  if (!apiPolicy) return String(sudoLockdown);
+  if (fileSudoLockdown === null) {
+    return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`;
+  }
+  return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it, and the config file's ${fileSudoLockdown} does when no policy loads)`;
 }
 function parseModeFile(raw) {
   const value = raw?.trim();
@@ -25893,7 +25938,7 @@ function parsePostures(raw) {
   return lines;
 }
 function sudoLockdownReport(args) {
-  const fromFile = args.configFile === true && !args.policyLoaded;
+  const fromFile = args.fileSetsLockdown === true && !args.policyLoaded;
   const line = args.postures?.find((l) => l.posture === "sudo-lockdown");
   if (line) {
     if (line.applied === "true") return "Sudo lockdown: on";
@@ -25920,7 +25965,7 @@ function effectiveReport(args) {
     policyLoaded: effective !== null && !downgraded,
     pinnedBinary: args.pinnedBinary,
     postures: args.postures,
-    configFile: args.configFile
+    fileSetsLockdown: args.fileSetsLockdown
   });
   if (downgraded) {
     return {
@@ -26074,7 +26119,8 @@ async function start() {
     containerEgress: getInput("container-egress"),
     tlsSni: getInput("tls-sni")
   });
-  const configFile = await resolveConfigFile(getInput("config-file"), { allowedHosts, allowedCidrs, searchDomains });
+  const config = await resolveConfigFile(getInput("config-file"), { allowedHosts, allowedCidrs, searchDomains });
+  const configFile = config?.path ?? null;
   startGroup("Starting CargoWall Firewall");
   const dnsResult = await detectDnsUpstream(getInput("dns-upstream"));
   const dnsUpstream = dnsResult.primary;
@@ -26153,7 +26199,7 @@ async function start() {
   if (configFile) info(`  Config file: ${configFile}${apiFailurePosture === null ? "" : " (when no CodeCargo policy loads)"}`);
   const jobId = getInput("job-id");
   if (jobId) info(`  Job run ID: ${jobId}`);
-  info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, configFile !== null)}`);
+  info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, config?.sudoLockdown ?? null)}`);
   if (postureFlags.length > 0) info(`  v2 preview postures: ${postureFlags.join(" ")}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
@@ -26274,12 +26320,12 @@ async function start() {
       postureFlags,
       pinnedBinary,
       postures,
-      configFile: configFile !== null
+      fileSetsLockdown: config?.sudoLockdown != null
     });
     for (const line of report.info) info(line);
     for (const notice2 of report.notices) notice(notice2);
-  } else if (configFile) {
-    info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, configFile: true }));
+  } else if (config && config.sudoLockdown !== null) {
+    info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, fileSetsLockdown: true }));
   }
   if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile);
   cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);

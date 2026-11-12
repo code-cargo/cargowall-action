@@ -24,6 +24,22 @@ export const ENV_CONFIG_VARS = [
 /** The top-level keys of cargowall's config file (FirewallConfig). */
 const CONFIG_KEYS = ['rules', 'defaultAction', 'searchDomains', 'sudoLockdown', 'steps']
 
+/** A rule's keys (cargowall's Rule), and the protocols a port entry takes. */
+const RULE_KEYS = ['type', 'value', 'ports', 'action']
+const PROTOCOLS = ['all', 'tcp', 'udp', 'icmp']
+
+/** The config file start() hands cargowall, as resolveConfigFile read it. */
+export interface ConfigFile {
+  /** Absolute, so cargowall reads the same file. */
+  path: string
+  /**
+   * The file's `sudoLockdown.enabled` when it sets `sudoLockdown`, which then
+   * replaces the sudo-lockdown input whenever no CodeCargo policy loads; null
+   * when it doesn't, leaving the input in charge.
+   */
+  sudoLockdown: boolean | null
+}
+
 /** The inputs that set the environment configuration. */
 export interface EnvConfigInputs {
   allowedHosts: string
@@ -32,14 +48,16 @@ export interface EnvConfigInputs {
 }
 
 /**
- * The config file cargowall is given, as an absolute path, or null without
- * one. Throws, before anything on the runner changes, when the file can't
- * serve: it is missing, isn't a JSON object (cargowall reads JSON only), has a
- * top-level key cargowall doesn't know (which it would ignore, loading a
- * configuration with nothing in it), or comes with inputs it would silently
- * replace. What the keys hold, cargowall checks; see requireConfigLoaded.
+ * The config file cargowall is given, or null without one. Throws, before DNS
+ * is touched or cargowall starts, when the file can't serve: it is missing,
+ * isn't a JSON object (cargowall reads JSON only), has a top-level or rule key
+ * cargowall doesn't know (which it would ignore: a misspelled "ports" makes a
+ * port-scoped allow an all-ports one), has a port entry without one of
+ * cargowall's protocols (which it would skip, leaving the rule on every port),
+ * or comes with inputs it would silently replace. The rest of what the keys
+ * hold, cargowall checks; see requireConfigLoaded.
  */
-export async function resolveConfigFile(configFile: string, inputs: EnvConfigInputs): Promise<string | null> {
+export async function resolveConfigFile(configFile: string, inputs: EnvConfigInputs): Promise<ConfigFile | null> {
   if (!configFile) return null
   const conflicting = [
     ['allowed-hosts', inputs.allowedHosts],
@@ -68,14 +86,61 @@ export async function resolveConfigFile(configFile: string, inputs: EnvConfigInp
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error(`config-file ${configFile} isn't a JSON object`)
   }
-  const unknown = Object.keys(parsed).filter(key => !CONFIG_KEYS.includes(key))
+  const file = parsed as Record<string, unknown>
+  const unknown = Object.keys(file).filter(key => !CONFIG_KEYS.includes(key))
   if (unknown.length > 0) {
     throw new Error(
       `config-file ${configFile} has keys cargowall doesn't read: ${unknown.join(', ')} ` +
         `(it reads ${CONFIG_KEYS.join(', ')})`
     )
   }
-  return resolved
+  const problem = rulesProblem(file.rules, 'rules') ?? stepsProblem(file.steps)
+  if (problem) throw new Error(`config-file ${configFile}: ${problem}`)
+  const lockdown = file.sudoLockdown
+  return {
+    path: resolved,
+    sudoLockdown: isObject(lockdown) ? lockdown.enabled === true : null,
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** What's wrong with a rule list at `where`, as cargowall would read it, or null. */
+function rulesProblem(rules: unknown, where: string): string | null {
+  if (rules === undefined) return null
+  if (!Array.isArray(rules)) return `${where} isn't a list`
+  for (const [i, rule] of rules.entries()) {
+    if (!isObject(rule)) return `${where}[${i}] isn't an object`
+    const unknown = Object.keys(rule).filter(key => !RULE_KEYS.includes(key))
+    if (unknown.length > 0) {
+      return `${where}[${i}] has keys cargowall doesn't read: ${unknown.join(', ')} (a rule has ${RULE_KEYS.join(', ')})`
+    }
+    if (rule.ports === undefined) continue
+    if (!Array.isArray(rule.ports)) return `${where}[${i}].ports isn't a list`
+    for (const [j, port] of rule.ports.entries()) {
+      if (!isObject(port) || !PROTOCOLS.includes(port.protocol as string)) {
+        return (
+          `${where}[${i}].ports[${j}] needs a protocol, one of ${PROTOCOLS.join(', ')} in lowercase, as in ` +
+          '{"port": 443, "protocol": "tcp"}: cargowall skips a port entry without one, leaving the rule on every port'
+        )
+      }
+    }
+  }
+  return null
+}
+
+/** What's wrong with the steps' rules, or null. */
+function stepsProblem(steps: unknown): string | null {
+  if (steps === undefined) return null
+  if (!Array.isArray(steps)) return "steps isn't a list"
+  for (const [i, step] of steps.entries()) {
+    if (!isObject(step)) return `steps[${i}] isn't an object`
+    const problem = rulesProblem(step.rules, `steps[${i}].rules`)
+    if (problem) return problem
+  }
+  return null
 }
 
 /**

@@ -264,18 +264,39 @@ describe('start() and config-file', () => {
     await expect(start()).resolves.toMatchObject({ supported: true })
   })
 
-  it("reports the lockdown the file set, offline, over this step's input", async () => {
+  it("announces and reports the lockdown the file set, offline, over this step's input", async () => {
     // The file turned the lockdown off: cargowall's record has no line for it.
-    withFiles(
-      { [CONFIG]: JSON.stringify({ rules: [], sudoLockdown: { enabled: false } }) },
-      { [POSTURES_FILE]: '[]' },
-    )
+    withFiles({ [CONFIG]: '{"sudoLockdown":{"enabled":false}}' }, { [POSTURES_FILE]: '[]' })
     withInputs({ offline: 'true', 'sudo-lockdown': 'true', 'config-file': CONFIG })
     await start()
 
     const info = vi.mocked(core.info).mock.calls.map(([line]) => String(line))
-    expect(info).toContain("  Sudo lockdown: true (this step's input; the config file's sudoLockdown replaces it)")
+    expect(info).toContain("  Sudo lockdown: false (set by the config file, which replaces this step's input: true)")
     expect(info).toContain("Sudo lockdown: off (set by the config file, which replaces this step's input: true)")
-    expect(info).not.toContain('Sudo lockdown: on')
+    expect(info.filter(line => /Sudo lockdown: (true|on)\b/.test(line))).toEqual([])
+  })
+
+  it("credits nothing to a file that doesn't set sudoLockdown", async () => {
+    withFiles({ [CONFIG]: CONFIG_BODY }, { [POSTURES_FILE]: '[{"posture":"sudo-lockdown","requested":"true","applied":"true"}]' })
+    withInputs({ offline: 'true', 'sudo-lockdown': 'true', 'config-file': CONFIG })
+    await start()
+
+    const info = vi.mocked(core.info).mock.calls.map(([line]) => String(line))
+    expect(info).toContain('  Sudo lockdown: true')
+    expect(info.filter(line => line.includes('config file'))).toEqual([])
+  })
+
+  it.each([
+    ['a port with no protocol', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":[{"port":443}]}]}', 'rules[0].ports[0] needs a protocol'],
+    ['an uppercase protocol', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":[{"port":443,"protocol":"TCP"}]}]}', 'rules[0].ports[0] needs a protocol'],
+    ['an unknown protocol', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":[{"port":443,"protocol":"http"}]}]}', 'rules[0].ports[0] needs a protocol'],
+    ['a port as a bare number', '{"rules":[{"type":"cidr","value":"10.0.0.0/8","action":"allow","ports":[443]}]}', 'rules[0].ports[0] needs a protocol'],
+    ['a step port with no protocol', '{"steps":[{"id":"build","rules":[{"type":"hostname","value":"a.example","ports":[{"port":443}]}]}]}', 'steps[0].rules[0].ports[0] needs a protocol'],
+    ['a misspelled rule key', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","port":[{"port":443,"protocol":"tcp"}]}]}', "rules[0] has keys cargowall doesn't read: port"],
+  ])('refuses %s, before touching the runner', async (_, body, message) => {
+    withFiles({ [CONFIG]: body })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${message}`)
+    expectNothingChanged()
   })
 })

@@ -99,7 +99,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     containerEgress: core.getInput('container-egress'),
     tlsSni: core.getInput('tls-sni'),
   })
-  const configFile = await resolveConfigFile(core.getInput('config-file'), { allowedHosts, allowedCidrs, searchDomains })
+  const config = await resolveConfigFile(core.getInput('config-file'), { allowedHosts, allowedCidrs, searchDomains })
+  const configFile = config?.path ?? null
 
   core.startGroup('Starting CargoWall Firewall')
 
@@ -219,7 +220,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (configFile) core.info(`  Config file: ${configFile}${apiFailurePosture === null ? '' : ' (when no CodeCargo policy loads)'}`)
   const jobId = core.getInput('job-id')
   if (jobId) core.info(`  Job run ID: ${jobId}`)
-  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, configFile !== null)}`)
+  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, config?.sudoLockdown ?? null)}`)
   if (postureFlags.length > 0) core.info(`  v2 preview postures: ${postureFlags.join(' ')}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
@@ -409,12 +410,13 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       postureFlags,
       pinnedBinary,
       postures,
-      configFile: configFile !== null,
+      fileSetsLockdown: config?.sudoLockdown != null,
     })
     for (const line of report.info) core.info(line)
     for (const notice of report.notices) core.notice(notice)
-  } else if (configFile) {
-    core.info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, configFile: true }))
+  } else if (config && config.sudoLockdown !== null) {
+    // The file replaced the input: report what cargowall applied.
+    core.info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, fileSetsLockdown: true }))
   }
   if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
 
