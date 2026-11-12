@@ -236,7 +236,7 @@ async function downloadAndInstall(): Promise<void> {
 
   const repo = 'code-cargo/cargowall'
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`
-  core.info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action release pins; the two are versioned separately)`)
+  core.info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action pins; the two are versioned separately)`)
 
   const binaryAsset = `cargowall-linux-${arch}`
   core.info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`)

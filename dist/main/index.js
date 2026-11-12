@@ -21562,11 +21562,20 @@ var import_promises2 = require("timers/promises");
 
 // src/version.ts
 var ACTION_VERSION = "v1.3.10";
-function actionVersionLine(version = ACTION_VERSION, env = process.env) {
+function sourceFromPath(dir) {
+  const m = dir.match(/\/_actions\/([^/]+)\/([^/]+)\/([^/]+)(\/|$)/);
+  return m ? { repo: `${m[1]}/${m[2]}`, ref: m[3] } : null;
+}
+function releaseAt(version, ref) {
+  if (ref.startsWith(version) && /^(-rc\.\d+)?$/.test(ref.slice(version.length))) return ref;
+  if (ref === version.split(".")[0]) return version;
+  return `${version} or a later commit`;
+}
+function actionVersionLine(version = ACTION_VERSION, env = process.env, dir = __dirname) {
   const repo = env.GITHUB_ACTION_REPOSITORY ?? "";
-  const ref = env.GITHUB_ACTION_REF ?? "";
-  const source = repo ? ref ? `${repo}@${ref}` : repo : "local";
-  return `cargowall-action: ${version ? `${version} (${source})` : source}`;
+  const found = repo ? { repo, ref: env.GITHUB_ACTION_REF ?? "" } : sourceFromPath(dir);
+  const source = found ? found.ref ? `${found.repo}@${found.ref}` : found.repo : "source not reported by the runner";
+  return `cargowall-action: ${version ? `${releaseAt(version, found?.ref ?? "")} (${source})` : source}`;
 }
 
 // src/setup.ts
@@ -21707,7 +21716,7 @@ async function downloadAndInstall() {
   }
   const repo = "code-cargo/cargowall";
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`;
-  info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action release pins; the two are versioned separately)`);
+  info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action pins; the two are versioned separately)`);
   const binaryAsset = `cargowall-linux-${arch3}`;
   info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`);
   const tempDir = await import_fs2.promises.mkdtemp(path4.join(os6.tmpdir(), "cargowall-"));
