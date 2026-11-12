@@ -365,6 +365,47 @@ describe('start() and config-file', () => {
   })
 
   it.each([
+    ['a host with a port', 'example.com:443', 'has a port: give the host alone and its ports in ports'],
+    ['a URL', 'https://example.com', 'is a URL or a path, not a hostname'],
+    ['a path', 'example.com/path', 'is a URL or a path, not a hostname'],
+    ['a leading space', ' example.com', 'has whitespace'],
+    ['a space inside', 'exa mple.com', 'has whitespace'],
+    ['a trailing dot', 'example.com.', 'ends with a dot'],
+    ['an IPv4 address', '1.2.3.4', 'is an IP address: give it as type cidr'],
+    ['an IPv6 address', '2001:db8::1', 'is an IP address: give it as type cidr'],
+  ])('refuses a hostname value that is %s, before touching the runner', async (_, value, message) => {
+    for (const [body, where] of [
+      [JSON.stringify({ rules: [{ type: 'hostname', value, action: 'allow' }] }), 'rules[0]'],
+      [JSON.stringify({ steps: [{ id: 'build', rules: [{ type: 'hostname', value }] }] }), 'steps[0].rules[0]'],
+    ]) {
+      vi.clearAllMocks()
+      withFiles({ [CONFIG]: body })
+      withInputs({ offline: 'true', 'config-file': CONFIG })
+      await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${where}.value ${JSON.stringify(value)} ${message}`)
+      expectNothingChanged()
+    }
+  })
+
+  it.each([
+    ['with arguments', '"/usr/bin/apt-get install -y curl"'],
+    ['a relative path', '"apt-get"'],
+    ['not a string', '42'],
+  ])('refuses a sudo allowlist entry %s, before touching the runner', async (_, entry) => {
+    // After a good entry, so the index is checked too.
+    withFiles({ [CONFIG]: `{"sudoLockdown":{"enabled":true,"allowCommands":["/usr/bin/true",${entry}]}}` })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}: sudoLockdown.allowCommands[1] must be a bare absolute path`)
+    expectNothingChanged()
+  })
+
+  it('refuses a sudo allowlist that is not a list, before touching the runner', async () => {
+    withFiles({ [CONFIG]: '{"sudoLockdown":{"enabled":true,"allowCommands":"/usr/bin/true"}}' })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}: sudoLockdown.allowCommands isn't a list`)
+    expectNothingChanged()
+  })
+
+  it.each([
     ['a step rule that says allow', '{"steps":[{"id":"build","rules":[{"type":"hostname","value":"a.example","action":"allow"}]}]}'],
     ['a default allow', '{"defaultAction":"allow","rules":[{"type":"cidr","value":"10.0.0.0/8","action":"deny"}]}'],
     [
@@ -373,6 +414,14 @@ describe('start() and config-file', () => {
         '"searchDomains":["a\\"b,{\\"rules\\":[]}\\\\"],"steps":[{"id":"a","rules":[]},{"id":"b","rules":[]}]}',
     ],
     ['a value spelled like a key beside it', '{"rules":[{"type":"hostname","value":"type","action":"allow"}]}'],
+    [
+      'hostname patterns and underscores',
+      '{"rules":[{"type":"hostname","value":"*.example.com","action":"allow"},{"type":"hostname","value":"**.example.com","action":"allow"},' +
+        '{"type":"hostname","value":"_gateway","action":"allow"},{"type":"hostname","value":"_dmarc.example.com","action":"deny"}],' +
+        '"steps":[{"id":"build","rules":[{"type":"hostname","value":"*.npmjs.org"}]}]}',
+    ],
+    ['a CIDR given as an address', '{"rules":[{"type":"cidr","value":"1.2.3.4","action":"allow"},{"type":"cidr","value":"2001:db8::1","action":"allow"}]}'],
+    ['a sudo allowlist of bare absolute paths', '{"sudoLockdown":{"enabled":true,"allowCommands":["/usr/bin/apt-get","/usr/bin/true"]}}'],
     ["the README's example", ''],
   ])('accepts %s', async (_, body) => {
     withFiles({ [CONFIG]: body || await readmeExample() })

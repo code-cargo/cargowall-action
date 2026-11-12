@@ -11360,7 +11360,7 @@ var require_dump = __commonJS({
 var require_dns = __commonJS({
   "node_modules/undici/lib/interceptor/dns.js"(exports2, module2) {
     "use strict";
-    var { isIP } = require("node:net");
+    var { isIP: isIP2 } = require("node:net");
     var { lookup } = require("node:dns");
     var DecoratorHandler = require_decorator_handler();
     var { InvalidArgumentError, InformationalError } = require_errors();
@@ -11615,7 +11615,7 @@ var require_dns = __commonJS({
       return (dispatch) => {
         return function dnsInterceptor(origDispatchOpts, handler2) {
           const origin = origDispatchOpts.origin.constructor === URL ? origDispatchOpts.origin : new URL(origDispatchOpts.origin);
-          if (isIP(origin.hostname) !== 0) {
+          if (isIP2(origin.hostname) !== 0) {
             return dispatch(origDispatchOpts, handler2);
           }
           instance.runLookup(origin, origDispatchOpts, (err, newOrigin) => {
@@ -25772,6 +25772,7 @@ async function detectDnsUpstream(userInput) {
 
 // src/configfile.ts
 var import_fs5 = require("fs");
+var import_net2 = require("net");
 var path5 = __toESM(require("path"));
 var ENV_CONFIG_VARS = [
   "CARGOWALL_DEFAULT_ACTION",
@@ -25831,7 +25832,7 @@ async function resolveConfigFile(configFile, inputs) {
     );
   }
   const lockdown = file.sudoLockdown;
-  const problem = (file.defaultAction === void 0 || ACTIONS.includes(file.defaultAction) ? null : 'defaultAction must be "allow" or "deny", in lowercase, or left out for deny: cargowall reads any other value as deny') ?? rulesProblem(file.rules, "rules", false) ?? stepsProblem(file.steps) ?? (lockdown === void 0 ? null : keysProblem(lockdown, "sudoLockdown", SUDO_LOCKDOWN_KEYS));
+  const problem = (file.defaultAction === void 0 || ACTIONS.includes(file.defaultAction) ? null : 'defaultAction must be "allow" or "deny", in lowercase, or left out for deny: cargowall reads any other value as deny') ?? rulesProblem(file.rules, "rules", false) ?? stepsProblem(file.steps) ?? (lockdown === void 0 ? null : keysProblem(lockdown, "sudoLockdown", SUDO_LOCKDOWN_KEYS) ?? allowCommandsProblem(lockdown.allowCommands));
   if (problem) throw new Error(`config-file ${configFile}: ${problem}`);
   return {
     path: resolved,
@@ -25872,12 +25873,34 @@ function ruleValuesProblem(rule, where, step) {
     return `${where}.type must be "hostname" or "cidr", in lowercase: cargowall drops a rule of any other type`;
   }
   if (typeof rule.value !== "string" || rule.value === "") return `${where}.value must be a non-empty string`;
+  if (rule.type === "hostname") {
+    const problem = hostnameProblem(rule.value);
+    if (problem) return `${where}.value ${JSON.stringify(rule.value)} ${problem}`;
+  }
   if (step) {
     if (rule.action !== void 0 && rule.action !== "allow") {
       return `${where}.action must be "allow", in lowercase, or left out: a step's rules only allow`;
     }
   } else if (!ACTIONS.includes(rule.action)) {
     return `${where}.action must be "allow" or "deny", in lowercase: cargowall matches a job rule with any other action, or none, to nothing`;
+  }
+  return null;
+}
+function hostnameProblem(value) {
+  if ((0, import_net2.isIP)(value)) return "is an IP address: give it as type cidr";
+  if (value.includes("/")) return "is a URL or a path, not a hostname: give the host alone";
+  if (value.includes(":")) return "has a port: give the host alone and its ports in ports";
+  if (/\s/.test(value)) return "has whitespace";
+  if (value.endsWith(".")) return "ends with a dot: leave it out";
+  return null;
+}
+function allowCommandsProblem(commands) {
+  if (commands === void 0) return null;
+  if (!Array.isArray(commands)) return "sudoLockdown.allowCommands isn't a list";
+  for (const [i, command] of commands.entries()) {
+    if (typeof command !== "string" || !/^\/\S+$/.test(command)) {
+      return `sudoLockdown.allowCommands[${i}] must be a bare absolute path, such as /usr/bin/apt-get: cargowall drops any arguments, which would allow the command with every argument`;
+    }
   }
   return null;
 }

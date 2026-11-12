@@ -5,6 +5,7 @@
  * reads either then.
  */
 import { promises as fs } from 'fs'
+import { isIP } from 'net'
 import * as path from 'path'
 
 /**
@@ -72,9 +73,11 @@ export interface EnvConfigInputs {
  * isn't a JSON object (cargowall reads JSON only), repeats a key, has a key
  * cargowall doesn't know (which it would ignore: a misspelled "ports" makes a
  * port-scoped allow an all-ports one), has a rule cargowall would drop or
- * never match (its type, value or action), an empty port list or a port entry
- * without one of cargowall's protocols (either leaves the rule on every port),
- * or comes with inputs it would silently replace. The rest of what the keys
+ * never match (its type, value or action, a hostname that no DNS name can
+ * be), an empty port list or a port entry without one of cargowall's
+ * protocols (either leaves the rule on every port), a sudo allowlist entry
+ * that isn't a bare absolute path, or comes with inputs it would silently
+ * replace. The rest of what the keys
  * hold, cargowall checks; see requireConfigLoaded.
  */
 export async function resolveConfigFile(configFile: string, inputs: EnvConfigInputs): Promise<ConfigFile | null> {
@@ -128,7 +131,10 @@ export async function resolveConfigFile(configFile: string, inputs: EnvConfigInp
       : 'defaultAction must be "allow" or "deny", in lowercase, or left out for deny: cargowall reads any other value as deny') ??
     rulesProblem(file.rules, 'rules', false) ??
     stepsProblem(file.steps) ??
-    (lockdown === undefined ? null : keysProblem(lockdown, 'sudoLockdown', SUDO_LOCKDOWN_KEYS))
+    (lockdown === undefined
+      ? null
+      : keysProblem(lockdown, 'sudoLockdown', SUDO_LOCKDOWN_KEYS) ??
+        allowCommandsProblem((lockdown as Record<string, unknown>).allowCommands))
   if (problem) throw new Error(`config-file ${configFile}: ${problem}`)
   return {
     path: resolved,
@@ -182,12 +188,50 @@ function ruleValuesProblem(rule: Record<string, unknown>, where: string, step: b
     return `${where}.type must be "hostname" or "cidr", in lowercase: cargowall drops a rule of any other type`
   }
   if (typeof rule.value !== 'string' || rule.value === '') return `${where}.value must be a non-empty string`
+  if (rule.type === 'hostname') {
+    const problem = hostnameProblem(rule.value)
+    if (problem) return `${where}.value ${JSON.stringify(rule.value)} ${problem}`
+  }
   if (step) {
     if (rule.action !== undefined && rule.action !== 'allow') {
       return `${where}.action must be "allow", in lowercase, or left out: a step's rules only allow`
     }
   } else if (!ACTIONS.includes(rule.action as string)) {
     return `${where}.action must be "allow" or "deny", in lowercase: cargowall matches a job rule with any other action, or none, to nothing`
+  }
+  return null
+}
+
+/**
+ * What's wrong with a hostname rule's value, or null. cargowall takes the
+ * value as given and matches DNS names against it, so a value no query name
+ * can equal loads without an error and matches nothing. Patterns (`*`, `**`)
+ * and underscores are names cargowall matches.
+ */
+function hostnameProblem(value: string): string | null {
+  if (isIP(value)) return 'is an IP address: give it as type cidr'
+  if (value.includes('/')) return 'is a URL or a path, not a hostname: give the host alone'
+  if (value.includes(':')) return 'has a port: give the host alone and its ports in ports'
+  if (/\s/.test(value)) return 'has whitespace'
+  if (value.endsWith('.')) return 'ends with a dot: leave it out'
+  return null
+}
+
+/**
+ * What's wrong with sudoLockdown.allowCommands, or null. cargowall keeps only
+ * the first word of an entry, so one with arguments would allow the command
+ * with any arguments, and it skips one that isn't an absolute path.
+ */
+function allowCommandsProblem(commands: unknown): string | null {
+  if (commands === undefined) return null
+  if (!Array.isArray(commands)) return "sudoLockdown.allowCommands isn't a list"
+  for (const [i, command] of commands.entries()) {
+    if (typeof command !== 'string' || !/^\/\S+$/.test(command)) {
+      return (
+        `sudoLockdown.allowCommands[${i}] must be a bare absolute path, such as /usr/bin/apt-get: cargowall ` +
+        'drops any arguments, which would allow the command with every argument'
+      )
+    }
   }
   return null
 }
