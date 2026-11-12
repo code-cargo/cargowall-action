@@ -21559,6 +21559,28 @@ var os6 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
 var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
+
+// src/version.ts
+var ACTION_VERSION = "";
+var ACTION_REPOSITORY = "code-cargo/cargowall-action";
+function sourceFromPath(dir) {
+  const m = dir.match(/\/_actions\/([^/]+)\/([^/]+)\/([^/]+)(\/|$)/);
+  return m ? { repo: `${m[1]}/${m[2]}`, ref: m[3] } : null;
+}
+function releaseAt(version, ref) {
+  if (ref.startsWith(version) && /^(-rc\.\d+)?$/.test(ref.slice(version.length))) return ref;
+  if (ref === version.split(".")[0]) return version;
+  return `${version} or a later commit`;
+}
+function actionVersionLine(version = ACTION_VERSION, env = process.env, dir = __dirname) {
+  const repo = env.GITHUB_ACTION_REPOSITORY ?? "";
+  const found = sourceFromPath(dir) ?? (repo ? { repo, ref: env.GITHUB_ACTION_REF ?? "" } : null);
+  const source = found ? found.ref ? `${found.repo}@${found.ref}` : found.repo : "source not reported by the runner";
+  const ref = found?.repo.toLowerCase() === ACTION_REPOSITORY ? found.ref : "";
+  return `cargowall-action: ${version ? `${releaseAt(version, ref)} (${source})` : source}`;
+}
+
+// src/setup.ts
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
 var CARGOWALL_VERSION = "v2.0.0-rc.15";
@@ -21652,6 +21674,7 @@ async function setup() {
   const binaryPath = getInput("binary-path");
   const sourceRef = getInput("source-ref");
   startGroup("CargoWall Setup");
+  info(actionVersionLine());
   try {
     if (binaryPath) {
       await installFromLocalPath(binaryPath);
@@ -21743,7 +21766,7 @@ async function downloadAndInstall() {
   }
   const repo = "code-cargo/cargowall";
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`;
-  info(`CargoWall version: ${CARGOWALL_VERSION}`);
+  info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action pins; the two are versioned separately)`);
   const binaryAsset = `cargowall-linux-${arch3}`;
   info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`);
   const tempDir = await import_fs2.promises.mkdtemp(path4.join(os6.tmpdir(), "cargowall-"));

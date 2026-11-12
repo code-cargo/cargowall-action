@@ -8,6 +8,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { pipeline } from 'stream/promises'
 import { setTimeout as sleep } from 'timers/promises'
+import { actionVersionLine } from './version'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
@@ -28,6 +29,8 @@ const BINARY_NAME = 'cargowall'
 // file's step). And, when the pin moves to a release that binds steps to
 // their rules, the README's "no step's connections use them yet" and the
 // config-file step-rules e2e that asserts it.
+// CARGOWALL_VERSION is the binary's; this action release's own version is
+// ACTION_VERSION in src/version.ts: bump it in the release PR.
 const CARGOWALL_VERSION = 'v2.0.0-rc.15'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
@@ -193,6 +196,7 @@ export async function setup(): Promise<boolean> {
   const sourceRef = core.getInput('source-ref')
 
   core.startGroup('CargoWall Setup')
+  core.info(actionVersionLine())
 
   try {
     if (binaryPath) {
@@ -308,7 +312,7 @@ async function downloadAndInstall(): Promise<void> {
 
   const repo = 'code-cargo/cargowall'
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`
-  core.info(`CargoWall version: ${CARGOWALL_VERSION}`)
+  core.info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action pins; the two are versioned separately)`)
 
   const binaryAsset = `cargowall-linux-${arch}`
   core.info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`)
