@@ -25971,7 +25971,7 @@ async function generateSummary(opts = { render: true }) {
               started_at: s.started_at,
               completed_at: s.completed_at
             }));
-            info(`GitHub API returned ${apiSteps.length} steps`);
+            info(`GitHub API returned ${currentJob.steps.length} steps`);
           }
         }
       } catch (error2) {
