@@ -66,7 +66,7 @@ inputs:
     description: 'Fail the workflow if CargoWall cannot run on this runner (vs warn and continue). Enforcement the runner cannot apply always fails the step'
     default: 'false'
   sudo-lockdown:
-    description: 'Enable sudo lockdown to prevent firewall bypass'
+    description: 'Restrict sudo for the job''s user to the allowlist (sudo-allow-commands, or the CodeCargo policy''s). Allowlisted commands and docker access are outside it; see the README''s Sudo Lockdown section'
     default: 'false'
   sudo-allow-commands:
     description: 'Command paths to allow via sudo when lockdown is enabled, one per line (e.g. /usr/bin/apt-get)'

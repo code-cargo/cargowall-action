@@ -25821,7 +25821,7 @@ function sudoLockdownReport(args) {
     if (line.applied === "true") return "Sudo lockdown: on";
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ""}`;
   }
-  if (args.postures !== null) {
+  if (args.postures !== null && args.pinnedBinary) {
     return args.inputSudoLockdown && args.policyLoaded ? "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)" : "Sudo lockdown: off";
   }
   const input = `this step's input: ${args.inputSudoLockdown}`;
@@ -25833,6 +25833,7 @@ function effectiveReport(args) {
   const sudo = sudoLockdownReport({
     inputSudoLockdown: args.inputSudoLockdown,
     policyLoaded: effective !== null && !downgraded,
+    pinnedBinary: args.pinnedBinary,
     postures: args.postures
   });
   if (downgraded) {
@@ -26187,6 +26188,8 @@ async function start() {
       effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
       downgraded: await readDowngradeFile(spawnedAtMs) !== null,
       postureFlags,
+      // setup installed the pinned download unless one of these was given.
+      pinnedBinary: !getInput("binary-path") && !getInput("source-ref"),
       postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
     });
     for (const line of report.info) info(line);
