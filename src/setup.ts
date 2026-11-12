@@ -8,9 +8,12 @@ import * as os from 'os'
 import * as path from 'path'
 import { pipeline } from 'stream/promises'
 import { setTimeout as sleep } from 'timers/promises'
+import { actionVersionLine } from './version'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
+// The cargowall binary's version. This action release's own version is
+// ACTION_VERSION in src/version.ts: bump it in the release PR.
 const CARGOWALL_VERSION = 'v1.3.8'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
@@ -175,6 +178,7 @@ export async function setup(): Promise<boolean> {
   const binaryPath = core.getInput('binary-path')
 
   core.startGroup('CargoWall Setup')
+  core.info(actionVersionLine())
 
   try {
     if (binaryPath) {
@@ -232,7 +236,7 @@ async function downloadAndInstall(): Promise<void> {
 
   const repo = 'code-cargo/cargowall'
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`
-  core.info(`CargoWall version: ${CARGOWALL_VERSION}`)
+  core.info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action release pins; the two are versioned separately)`)
 
   const binaryAsset = `cargowall-linux-${arch}`
   core.info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`)
