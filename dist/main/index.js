@@ -25787,6 +25787,8 @@ var PORT_KEYS = ["port", "protocol"];
 var STEP_KEYS = ["id", "rules"];
 var SUDO_LOCKDOWN_KEYS = ["enabled", "allowCommands"];
 var PROTOCOLS = ["all", "tcp", "udp", "icmp"];
+var RULE_TYPES = ["hostname", "cidr"];
+var ACTIONS = ["allow", "deny"];
 async function resolveConfigFile(configFile, inputs) {
   if (!configFile) return null;
   const conflicting = [
@@ -25815,6 +25817,12 @@ async function resolveConfigFile(configFile, inputs) {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error(`config-file ${configFile} isn't a JSON object`);
   }
+  const repeated = repeatedKey(raw);
+  if (repeated) {
+    throw new Error(
+      `config-file ${configFile}: ${repeated}; give each key once, since cargowall reads every occurrence and these checks only the last`
+    );
+  }
   const file = parsed;
   const unknown = Object.keys(file).filter((key) => !CONFIG_KEYS.includes(key));
   if (unknown.length > 0) {
@@ -25823,7 +25831,7 @@ async function resolveConfigFile(configFile, inputs) {
     );
   }
   const lockdown = file.sudoLockdown;
-  const problem = rulesProblem(file.rules, "rules") ?? stepsProblem(file.steps) ?? (lockdown === void 0 ? null : keysProblem(lockdown, "sudoLockdown", SUDO_LOCKDOWN_KEYS));
+  const problem = (file.defaultAction === void 0 || ACTIONS.includes(file.defaultAction) ? null : 'defaultAction must be "allow" or "deny", in lowercase, or left out for deny: cargowall reads any other value as deny') ?? rulesProblem(file.rules, "rules", false) ?? stepsProblem(file.steps) ?? (lockdown === void 0 ? null : keysProblem(lockdown, "sudoLockdown", SUDO_LOCKDOWN_KEYS));
   if (problem) throw new Error(`config-file ${configFile}: ${problem}`);
   return {
     path: resolved,
@@ -25839,15 +25847,16 @@ function keysProblem(value, where, keys) {
   if (unknown.length === 0) return null;
   return `${where} has keys cargowall doesn't read: ${unknown.join(", ")} (it reads ${keys.join(", ")}, exactly)`;
 }
-function rulesProblem(rules, where) {
+function rulesProblem(rules, where, step) {
   if (rules === void 0) return null;
   if (!Array.isArray(rules)) return `${where} isn't a list`;
   for (const [i, rule] of rules.entries()) {
-    const ruleProblem = keysProblem(rule, `${where}[${i}]`, RULE_KEYS);
+    const ruleProblem = keysProblem(rule, `${where}[${i}]`, RULE_KEYS) ?? ruleValuesProblem(rule, `${where}[${i}]`, step);
     if (ruleProblem) return ruleProblem;
     const ports = rule.ports;
     if (ports === void 0) continue;
     if (!Array.isArray(ports)) return `${where}[${i}].ports isn't a list`;
+    if (ports.length === 0) return `${where}[${i}].ports is empty, which cargowall reads as every port: leave ports out for every port`;
     for (const [j, port] of ports.entries()) {
       const portProblem = isObject(port) ? keysProblem(port, `${where}[${i}].ports[${j}]`, PORT_KEYS) : null;
       if (portProblem) return portProblem;
@@ -25858,16 +25867,64 @@ function rulesProblem(rules, where) {
   }
   return null;
 }
+function ruleValuesProblem(rule, where, step) {
+  if (!RULE_TYPES.includes(rule.type)) {
+    return `${where}.type must be "hostname" or "cidr", in lowercase: cargowall drops a rule of any other type`;
+  }
+  if (typeof rule.value !== "string" || rule.value === "") return `${where}.value must be a non-empty string`;
+  if (step) {
+    if (rule.action !== void 0 && rule.action !== "allow") {
+      return `${where}.action must be "allow", in lowercase, or left out: a step's rules only allow`;
+    }
+  } else if (!ACTIONS.includes(rule.action)) {
+    return `${where}.action must be "allow" or "deny", in lowercase: cargowall matches a job rule with any other action, or none, to nothing`;
+  }
+  return null;
+}
 function stepsProblem(steps) {
   if (steps === void 0) return null;
   if (!Array.isArray(steps)) return "steps isn't a list";
   for (const [i, step] of steps.entries()) {
-    const problem = keysProblem(step, `steps[${i}]`, STEP_KEYS) ?? rulesProblem(step.rules, `steps[${i}].rules`);
+    const problem = keysProblem(step, `steps[${i}]`, STEP_KEYS) ?? rulesProblem(step.rules, `steps[${i}].rules`, true);
     if (problem) return problem;
   }
   return null;
 }
-var LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} (Config loaded successfully|Policy loaded from CodeCargo API)( |$)/;
+function repeatedKey(raw) {
+  const stack = [];
+  const pathOf = (parent) => {
+    if (!parent) return "";
+    if (!parent.keys) return `${parent.path}[${parent.index}]`;
+    return parent.path ? `${parent.path}.${parent.key}` : parent.key;
+  };
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    const top = stack.at(-1);
+    if (c === '"') {
+      let end = i + 1;
+      while (raw[end] !== '"') end += raw[end] === "\\" ? 2 : 1;
+      if (top?.keys && top.expectKey) {
+        const key = JSON.parse(raw.slice(i, end + 1));
+        if (top.keys.has(key)) return `${top.path || "the file"} repeats the key ${key}`;
+        top.keys.add(key);
+        top.key = key;
+        top.expectKey = false;
+      }
+      i = end;
+    } else if (c === "{" || c === "[") {
+      stack.push({ path: pathOf(top), keys: c === "{" ? /* @__PURE__ */ new Set() : null, key: "", index: 0, expectKey: c === "{" });
+    } else if (c === "}" || c === "]") {
+      stack.pop();
+    } else if (c === "," && top) {
+      if (top.keys) top.expectKey = true;
+      else top.index++;
+    }
+  }
+  return null;
+}
+var FILE_LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} Config loaded successfully( |$)/;
+var POLICY_LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} Policy loaded from CodeCargo API( |$)/;
+var DROPPED = /^::error::(Unknown Rule type|Invalid CIDR\/IP|Invalid hostname pattern)( |$)/;
 async function requireConfigLoaded(logPath, configFile) {
   let log = "";
   try {
@@ -25876,9 +25933,16 @@ async function requireConfigLoaded(logPath, configFile) {
   }
   const lines = log.split("\n");
   const why = lines.find((line) => line.includes("No config loaded"));
-  if (!why && lines.some((line) => LOADED.test(line))) return;
+  const policy = lines.some((line) => POLICY_LOADED.test(line));
+  if (!why && (policy || lines.some((line) => FILE_LOADED.test(line)))) {
+    const dropped = policy ? [] : [...new Set(lines.filter((line) => DROPPED.test(line)))];
+    if (dropped.length === 0) return;
+    throw new Error(
+      `CargoWall loaded config-file ${configFile} but dropped rules from it, so they don't apply. Fix the file; cargowall said: ${dropped.map((line) => line.slice("::error::".length)).join("; ")}`
+    );
+  }
   throw new Error(
-    `CargoWall did not load config-file ${configFile}, so it is running deny-all with only CI infrastructure allowed. Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, "No config loaded").trim()}` : ""}`
+    `CargoWall did not load config-file ${configFile}, so it is running deny-all, with only CI infrastructure allowed (in audit, every other connection is reported as would-deny). Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, "No config loaded").trim()}` : ""}`
   );
 }
 function localConfigEnv(base, configFile, inputs) {
@@ -26342,8 +26406,8 @@ async function start() {
   setOutput("supported", "true");
   setOutput("pid", reportedPid);
   saveState("cargowall-pid", String(reportedPid));
-  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile);
   endGroup();
+  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile);
   notice("CargoWall firewall is active. Network egress is being filtered.");
   if (debug2) {
     startGroup("CargoWall Debug Log");

@@ -18,8 +18,10 @@ const BINARY_NAME = 'cargowall'
 // recheck what src/configfile.ts mirrors of cargowall: ENV_CONFIG_VARS against
 // LoadFromEnv; CONFIG_KEYS, RULE_KEYS, PORT_KEYS, STEP_KEYS and
 // SUDO_LOCKDOWN_KEYS against the config file's JSON tags; PROTOCOLS against
-// expandPorts; and the log lines requireConfigLoaded keys on. And the README's
-// "doesn't apply them to connections yet" for steps, once cargowall binds them.
+// expandPorts; RULE_TYPES and ACTIONS against the rule types and actions
+// cargowall acts on; and the log lines requireConfigLoaded keys on, the errors
+// for a dropped rule among them. And the README's "doesn't apply them to
+// connections yet" for steps, once cargowall binds them.
 const CARGOWALL_VERSION = 'v2.0.0-rc.14'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 

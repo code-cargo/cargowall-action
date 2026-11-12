@@ -70,6 +70,15 @@ const CONFIG_BODY = JSON.stringify({
 })
 const API = 'https://app.codecargo.com'
 
+/** The example file the README gives under "With Config File". */
+async function readmeExample(): Promise<string> {
+  const { readFileSync } = await vi.importActual<typeof import('fs')>('fs')
+  const readme = readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8')
+  const example = readme.match(/\*\*`\.github\/cargowall\.json`\*\*:\n```json\n([\s\S]*?)\n```/)
+  if (!example) throw new Error("README has no cargowall.json example")
+  return example[1]
+}
+
 /**
  * The files readFile serves (the config file and cargowall's log among them,
  * the log saying the file loaded unless a test says otherwise), and the
@@ -253,7 +262,7 @@ describe('start() and config-file', () => {
     })
     withInputs({ offline: 'true', 'config-file': CONFIG })
     await expect(start()).rejects.toThrow(
-      /did not load config-file .*running deny-all.*cargowall said: No config loaded .*cannot unmarshal number/
+      /did not load config-file .*running deny-all, with only CI infrastructure allowed \(in audit, every other connection is reported as would-deny\)\. .*cargowall said: No config loaded .*cannot unmarshal number/
     )
   })
 
@@ -318,6 +327,96 @@ describe('start() and config-file', () => {
     withInputs({ offline: 'true', 'config-file': CONFIG })
     await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${message}`)
     expectNothingChanged()
+  })
+
+  it.each([
+    ['an empty port list', '{"rules":[{"type":"cidr","value":"93.184.216.0/24","action":"allow","ports":[]}]}', 'rules[0].ports is empty, which cargowall reads as every port: leave ports out for every port'],
+    ['an empty step port list', '{"steps":[{"id":"build","rules":[{"type":"hostname","value":"a.example","ports":[]}]}]}', 'steps[0].rules[0].ports is empty'],
+    ['a capitalised type', '{"rules":[{"type":"Hostname","value":"example.com","action":"allow"}]}', 'rules[0].type must be "hostname" or "cidr", in lowercase'],
+    ['an uppercase cidr type', '{"rules":[{"type":"CIDR","value":"10.0.0.0/8","action":"allow"}]}', 'rules[0].type must be "hostname" or "cidr"'],
+    ['a rule with no type', '{"rules":[{"value":"example.com","action":"allow"}]}', 'rules[0].type must be "hostname" or "cidr"'],
+    ['a step rule with no type', '{"steps":[{"id":"build","rules":[{"value":"a.example"}]}]}', 'steps[0].rules[0].type must be "hostname" or "cidr"'],
+    ['an empty value', '{"rules":[{"type":"hostname","value":"","action":"allow"}]}', 'rules[0].value must be a non-empty string'],
+    ['a rule with no value', '{"rules":[{"type":"cidr","action":"allow"}]}', 'rules[0].value must be a non-empty string'],
+    ['a capitalised action', '{"rules":[{"type":"hostname","value":"example.com","action":"Allow"}]}', 'rules[0].action must be "allow" or "deny", in lowercase'],
+    ["the README's step rule given as a job rule", '{"rules":[{"type":"hostname","value":"npm.pkg.github.com"}]}', 'rules[0].action must be "allow" or "deny"'],
+    ['a step rule that denies', '{"steps":[{"id":"build","rules":[{"type":"hostname","value":"a.example","action":"deny"}]}]}', 'steps[0].rules[0].action must be "allow", in lowercase, or left out'],
+    ['a capitalised step action', '{"steps":[{"id":"build","rules":[{"type":"hostname","value":"a.example","action":"Allow"}]}]}', 'steps[0].rules[0].action must be "allow"'],
+    ['a capitalised defaultAction', '{"defaultAction":"Allow"}', 'defaultAction must be "allow" or "deny", in lowercase, or left out for deny'],
+    ['a null defaultAction', '{"defaultAction":null}', 'defaultAction must be "allow" or "deny"'],
+  ])('refuses %s, before touching the runner', async (_, body, message) => {
+    withFiles({ [CONFIG]: body })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${message}`)
+    expectNothingChanged()
+  })
+
+  it.each([
+    ['a repeated protocol', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":[{"port":443,"protocol":"TCP","protocol":"tcp"}]}]}', 'rules[0].ports[0] repeats the key protocol'],
+    ['a repeat spelled with an escape', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":[{"port":443,"protocol":"TCP","prot\\u006fcol":"tcp"}]}]}', 'rules[0].ports[0] repeats the key protocol'],
+    ['a repeated sudoLockdown', '{"sudoLockdown":{"enabled":true},"sudoLockdown":{"allowCommands":["/usr/bin/true"]}}', 'the file repeats the key sudoLockdown'],
+    ['a repeated rule list', '{"rules":[{"type":"cidr","value":"10.0.0.0/8","action":"allow"}],"rules":[{"type":"cidr","value":"10.0.0.0/8","action":"allow"}]}', 'the file repeats the key rules'],
+    ['a repeated key in a later step', '{"steps":[{"id":"a","rules":[]},{"id":"b","id":"c","rules":[]}]}', 'steps[1] repeats the key id'],
+  ])('refuses %s, before touching the runner', async (_, body, message) => {
+    withFiles({ [CONFIG]: body })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${message}; give each key once`)
+    expectNothingChanged()
+  })
+
+  it.each([
+    ['a step rule that says allow', '{"steps":[{"id":"build","rules":[{"type":"hostname","value":"a.example","action":"allow"}]}]}'],
+    ['a default allow', '{"defaultAction":"allow","rules":[{"type":"cidr","value":"10.0.0.0/8","action":"deny"}]}'],
+    [
+      'the same keys in different objects, and strings that look like JSON',
+      '{"rules":[{"type":"hostname","value":"example.com","action":"allow"},{"type":"cidr","value":"10.0.0.0/8","action":"deny"}],' +
+        '"searchDomains":["a\\"b,{\\"rules\\":[]}\\\\"],"steps":[{"id":"a","rules":[]},{"id":"b","rules":[]}]}',
+    ],
+    ['a value spelled like a key beside it', '{"rules":[{"type":"hostname","value":"type","action":"allow"}]}'],
+    ["the README's example", ''],
+  ])('accepts %s', async (_, body) => {
+    withFiles({ [CONFIG]: body || await readmeExample() })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).resolves.toMatchObject({ supported: true })
+  })
+
+  it.each([
+    ['an invalid CIDR', '::error::Invalid CIDR/IP value=10.0.0.0/33 error=invalid CIDR address: 10.0.0.0/33'],
+    ['an invalid pattern', '::error::Invalid hostname pattern value=api-*.example.com error=partial wildcard'],
+    ['an unknown type', '::error::Unknown Rule type type=Hostname'],
+  ])('fails the step when cargowall loaded the file without a rule, over %s', async (_, line) => {
+    // Every resolve logs it again: the step quotes it once.
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: `${LOADED}${line}\n${line}\n` })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    const said = line.slice('::error::'.length)
+    const error = String(await start().catch((e: unknown) => e))
+    expect(error).toContain(
+      `CargoWall loaded config-file ${CONFIG} but dropped rules from it, so they don't apply. Fix the file; cargowall said: ${said}`
+    )
+    expect(error).not.toContain(`${said}; ${said}`)
+  })
+
+  it("passes over a policy's own dropped rule, and over the error quoted in another line", async () => {
+    withFiles({
+      [CONFIG]: CONFIG_BODY,
+      [CARGOWALL_LOG]: '2026-11-12 00:00:01.000 Policy loaded from CodeCargo API mode=CARGO_WALL_MODE_ENFORCE\n' +
+        '::error::Invalid CIDR/IP value=10.0.0.0/33 error=invalid CIDR address: 10.0.0.0/33\n',
+    })
+    withInputs({ 'api-url': API, 'config-file': CONFIG })
+    await expect(start()).resolves.toMatchObject({ supported: true })
+
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: `${LOADED}::warning::quoted ::error::Invalid CIDR/IP value=10.0.0.0/33\n` })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).resolves.toMatchObject({ supported: true })
+  })
+
+  it.each([
+    ['the file', LOADED],
+    ['a policy', '2026-11-12 00:00:01.000 Policy loaded from CodeCargo API mode=CARGO_WALL_MODE_ENFORCE\n'],
+  ])('fails the step when the success line for %s is only quoted, with no warning either', async (_, line) => {
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: `::debug::quoted ${line}` })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`did not load config-file ${CONFIG}`)
   })
 
   it('fails the step on a failed load whose error quotes the success line', async () => {

@@ -38,6 +38,14 @@ const STEP_KEYS = ['id', 'rules']
 const SUDO_LOCKDOWN_KEYS = ['enabled', 'allowCommands']
 /** The protocols a port entry takes (cargowall's expandPorts), lowercase. */
 const PROTOCOLS = ['all', 'tcp', 'udp', 'icmp']
+/**
+ * The rule types and actions cargowall acts on, lowercase: it drops a rule of
+ * any other type, matches a job rule with any other action (or none) to
+ * nothing, and reads any other default action as deny. A step rule only
+ * allows, and cargowall refuses the load over any other action.
+ */
+const RULE_TYPES = ['hostname', 'cidr']
+const ACTIONS = ['allow', 'deny']
 
 /** The config file start() hands cargowall, as resolveConfigFile read it. */
 export interface ConfigFile {
@@ -61,10 +69,11 @@ export interface EnvConfigInputs {
 /**
  * The config file cargowall is given, or null without one. Throws, before DNS
  * is touched or cargowall starts, when the file can't serve: it is missing,
- * isn't a JSON object (cargowall reads JSON only), has a top-level or rule key
+ * isn't a JSON object (cargowall reads JSON only), repeats a key, has a key
  * cargowall doesn't know (which it would ignore: a misspelled "ports" makes a
- * port-scoped allow an all-ports one), has a port entry without one of
- * cargowall's protocols (which it would skip, leaving the rule on every port),
+ * port-scoped allow an all-ports one), has a rule cargowall would drop or
+ * never match (its type, value or action), an empty port list or a port entry
+ * without one of cargowall's protocols (either leaves the rule on every port),
  * or comes with inputs it would silently replace. The rest of what the keys
  * hold, cargowall checks; see requireConfigLoaded.
  */
@@ -97,6 +106,13 @@ export async function resolveConfigFile(configFile: string, inputs: EnvConfigInp
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error(`config-file ${configFile} isn't a JSON object`)
   }
+  const repeated = repeatedKey(raw)
+  if (repeated) {
+    throw new Error(
+      `config-file ${configFile}: ${repeated}; give each key once, since cargowall reads every occurrence ` +
+        'and these checks only the last'
+    )
+  }
   const file = parsed as Record<string, unknown>
   const unknown = Object.keys(file).filter(key => !CONFIG_KEYS.includes(key))
   if (unknown.length > 0) {
@@ -107,7 +123,10 @@ export async function resolveConfigFile(configFile: string, inputs: EnvConfigInp
   }
   const lockdown = file.sudoLockdown
   const problem =
-    rulesProblem(file.rules, 'rules') ??
+    (file.defaultAction === undefined || ACTIONS.includes(file.defaultAction as string)
+      ? null
+      : 'defaultAction must be "allow" or "deny", in lowercase, or left out for deny: cargowall reads any other value as deny') ??
+    rulesProblem(file.rules, 'rules', false) ??
     stepsProblem(file.steps) ??
     (lockdown === undefined ? null : keysProblem(lockdown, 'sudoLockdown', SUDO_LOCKDOWN_KEYS))
   if (problem) throw new Error(`config-file ${configFile}: ${problem}`)
@@ -129,16 +148,20 @@ function keysProblem(value: unknown, where: string, keys: string[]): string | nu
   return `${where} has keys cargowall doesn't read: ${unknown.join(', ')} (it reads ${keys.join(', ')}, exactly)`
 }
 
-/** What's wrong with a rule list at `where`, as cargowall would read it, or null. */
-function rulesProblem(rules: unknown, where: string): string | null {
+/**
+ * What's wrong with a rule list at `where`, as cargowall would read it, or
+ * null. A step's rules only allow.
+ */
+function rulesProblem(rules: unknown, where: string, step: boolean): string | null {
   if (rules === undefined) return null
   if (!Array.isArray(rules)) return `${where} isn't a list`
   for (const [i, rule] of rules.entries()) {
-    const ruleProblem = keysProblem(rule, `${where}[${i}]`, RULE_KEYS)
+    const ruleProblem = keysProblem(rule, `${where}[${i}]`, RULE_KEYS) ?? ruleValuesProblem(rule as Record<string, unknown>, `${where}[${i}]`, step)
     if (ruleProblem) return ruleProblem
     const ports = (rule as Record<string, unknown>).ports
     if (ports === undefined) continue
     if (!Array.isArray(ports)) return `${where}[${i}].ports isn't a list`
+    if (ports.length === 0) return `${where}[${i}].ports is empty, which cargowall reads as every port: leave ports out for every port`
     for (const [j, port] of ports.entries()) {
       const portProblem = isObject(port) ? keysProblem(port, `${where}[${i}].ports[${j}]`, PORT_KEYS) : null
       if (portProblem) return portProblem
@@ -153,31 +176,97 @@ function rulesProblem(rules: unknown, where: string): string | null {
   return null
 }
 
+/** What's wrong with a rule's type, value or action, or null. */
+function ruleValuesProblem(rule: Record<string, unknown>, where: string, step: boolean): string | null {
+  if (!RULE_TYPES.includes(rule.type as string)) {
+    return `${where}.type must be "hostname" or "cidr", in lowercase: cargowall drops a rule of any other type`
+  }
+  if (typeof rule.value !== 'string' || rule.value === '') return `${where}.value must be a non-empty string`
+  if (step) {
+    if (rule.action !== undefined && rule.action !== 'allow') {
+      return `${where}.action must be "allow", in lowercase, or left out: a step's rules only allow`
+    }
+  } else if (!ACTIONS.includes(rule.action as string)) {
+    return `${where}.action must be "allow" or "deny", in lowercase: cargowall matches a job rule with any other action, or none, to nothing`
+  }
+  return null
+}
+
 /** What's wrong with the steps' rules, or null. */
 function stepsProblem(steps: unknown): string | null {
   if (steps === undefined) return null
   if (!Array.isArray(steps)) return "steps isn't a list"
   for (const [i, step] of steps.entries()) {
-    const problem = keysProblem(step, `steps[${i}]`, STEP_KEYS) ?? rulesProblem((step as Record<string, unknown>).rules, `steps[${i}].rules`)
+    const problem = keysProblem(step, `steps[${i}]`, STEP_KEYS) ?? rulesProblem((step as Record<string, unknown>).rules, `steps[${i}].rules`, true)
     if (problem) return problem
   }
   return null
 }
 
 /**
- * A line cargowall logs once a load succeeds (cargowall's loadCIConfig and
+ * Where the first key an object in raw (valid JSON) repeats is, or null.
+ * JSON.parse keeps a repeated key's last value, while Go's decoder decodes
+ * every occurrence into the same field in turn, so cargowall would read what
+ * the earlier ones set and the later one leaves out.
+ */
+function repeatedKey(raw: string): string | null {
+  interface Frame { path: string; keys: Set<string> | null; key: string; index: number; expectKey: boolean }
+  const stack: Frame[] = []
+  const pathOf = (parent: Frame | undefined): string => {
+    if (!parent) return ''
+    if (!parent.keys) return `${parent.path}[${parent.index}]`
+    return parent.path ? `${parent.path}.${parent.key}` : parent.key
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i]
+    const top = stack.at(-1)
+    if (c === '"') {
+      let end = i + 1
+      while (raw[end] !== '"') end += raw[end] === '\\' ? 2 : 1
+      if (top?.keys && top.expectKey) {
+        const key = JSON.parse(raw.slice(i, end + 1)) as string
+        if (top.keys.has(key)) return `${top.path || 'the file'} repeats the key ${key}`
+        top.keys.add(key)
+        top.key = key
+        top.expectKey = false
+      }
+      i = end
+    } else if (c === '{' || c === '[') {
+      stack.push({ path: pathOf(top), keys: c === '{' ? new Set() : null, key: '', index: 0, expectKey: c === '{' })
+    } else if (c === '}' || c === ']') {
+      stack.pop()
+    } else if (c === ',' && top) {
+      if (top.keys) top.expectKey = true
+      else top.index++
+    }
+  }
+  return null
+}
+
+/**
+ * The lines cargowall logs once a load succeeds (cargowall's loadCIConfig and
  * pkg/config LoadConfig), in its GitHub Actions handler's form for an info
  * record: a timestamp, then the message, then its attributes. Anchored, so the
  * phrase quoted inside some other line, a load error among them, doesn't count.
  */
-const LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} (Config loaded successfully|Policy loaded from CodeCargo API)( |$)/
+const FILE_LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} Config loaded successfully( |$)/
+const POLICY_LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} Policy loaded from CodeCargo API( |$)/
+
+/**
+ * The errors cargowall logs for a rule it drops from a configuration that
+ * still loads (pkg/config resolveRulesLocked), in its handler's form for an
+ * error record, which keeps a record on one line. Anchored like the above.
+ */
+const DROPPED = /^::error::(Unknown Rule type|Invalid CIDR\/IP|Invalid hostname pattern)( |$)/
 
 /**
  * Throws unless cargowall's log, written since this step started it, shows a
  * configuration loaded, the CodeCargo policy or the config file, and no
- * "No config loaded" warning. A file cargowall can't load (a rule it rejects)
- * leaves it running deny-all with only that warning in its own log, and the
- * step must not pass on that.
+ * "No config loaded" warning; or shows the file loaded without a rule it
+ * dropped. A file cargowall can't load (a rule it rejects) leaves it running
+ * deny-all with only that warning in its own log, and one it loads without a
+ * rule (a value it can't parse) leaves only an error there, and the step must
+ * pass on neither. A policy's own dropped rules aren't the file's.
  */
 export async function requireConfigLoaded(logPath: string, configFile: string): Promise<void> {
   let log = ''
@@ -188,10 +277,19 @@ export async function requireConfigLoaded(logPath: string, configFile: string): 
   }
   const lines = log.split('\n')
   const why = lines.find(line => line.includes('No config loaded'))
-  if (!why && lines.some(line => LOADED.test(line))) return
+  const policy = lines.some(line => POLICY_LOADED.test(line))
+  if (!why && (policy || lines.some(line => FILE_LOADED.test(line)))) {
+    const dropped = policy ? [] : [...new Set(lines.filter(line => DROPPED.test(line)))]
+    if (dropped.length === 0) return
+    throw new Error(
+      `CargoWall loaded config-file ${configFile} but dropped rules from it, so they don't apply. ` +
+        `Fix the file; cargowall said: ${dropped.map(line => line.slice('::error::'.length)).join('; ')}`
+    )
+  }
   throw new Error(
-    `CargoWall did not load config-file ${configFile}, so it is running deny-all with only CI ` +
-      `infrastructure allowed. Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, 'No config loaded').trim()}` : ''}`
+    `CargoWall did not load config-file ${configFile}, so it is running deny-all, with only CI infrastructure ` +
+      'allowed (in audit, every other connection is reported as would-deny). ' +
+      `Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, 'No config loaded').trim()}` : ''}`
   )
 }
 

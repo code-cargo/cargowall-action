@@ -430,12 +430,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // Persist for the post step (also signals that cargowall was started).
   core.saveState('cargowall-pid', String(reportedPid))
-
-  // After that state: a file cargowall didn't load fails the step with
-  // cargowall still up, deny-all, and the post step summarises and stops it.
-  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
-
   core.endGroup()
+
+  // After that state: a file cargowall didn't load, or loaded without some of
+  // its rules, fails the step with cargowall still up, and the post step
+  // summarises the run.
+  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
 
   core.notice('CargoWall firewall is active. Network egress is being filtered.')
 

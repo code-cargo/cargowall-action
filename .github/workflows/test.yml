@@ -1131,6 +1131,37 @@ jobs:
           fi
           grep -F 'No config loaded' /tmp/cargowall.log
 
+  test-config-file-dropped-rule:
+    name: A rule cargowall drops from the file fails the step
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Write a config file with a rule cargowall drops
+        run: |
+          # Passes the action's checks, and cargowall loads the file, but it
+          # drops the rule over its value: /33 is no IPv4 prefix.
+          echo '{"rules":[{"type":"hostname","value":"example.com","action":"allow"},{"type":"cidr","value":"10.0.0.0/33","action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
+
+      - name: Setup CargoWall (expected to fail)
+        id: cargowall
+        continue-on-error: true
+        uses: ./
+        with:
+          offline: 'true'
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert the step failed on the dropped rule
+        run: |
+          if [ '${{ steps.cargowall.outcome }}' != 'failure' ]; then
+            echo "ERROR: expected the action to fail, got '${{ steps.cargowall.outcome }}'"
+            exit 1
+          fi
+          grep -F 'Config loaded successfully' /tmp/cargowall.log
+          grep -F '::error::Invalid CIDR/IP value=10.0.0.0/33' /tmp/cargowall.log
+
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)
     runs-on: ubuntu-latest
