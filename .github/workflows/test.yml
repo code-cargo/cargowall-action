@@ -917,6 +917,43 @@ jobs:
           fi
           echo "httpbin.org blocked, as the file requires"
 
+  # The README says the pinned cargowall loads a file's step rules but binds
+  # no step to them yet. This keeps that true: it runs where a release that
+  # binds steps keeps their rules (step attribution on, tls-sni observe), so
+  # a pin that binds steps fails here until this job and the README change.
+  test-config-file-step-rules:
+    name: Config file step rules bind no step on this pin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Write a config file whose fetch step has its own rule
+        run: |
+          cat > "$RUNNER_TEMP/cargowall.json" <<'JSON'
+          {
+            "defaultAction": "deny",
+            "rules": [{ "type": "hostname", "value": "github.com", "action": "allow" }],
+            "steps": [{ "id": "fetch", "rules": [{ "type": "hostname", "value": "registry.npmjs.org" }] }]
+          }
+          JSON
+
+      - name: Setup CargoWall
+        uses: ./
+        with:
+          offline: 'true'
+          config-file: ${{ runner.temp }}/cargowall.json
+          tls-sni: observe
+
+      - name: Assert cargowall kept the step rules
+        run: |
+          grep -F 'Config loaded successfully' /tmp/cargowall.log
+          if grep -E 'Step rules (are|stay) off' /tmp/cargowall.log; then
+            echo "ERROR: cargowall turned the step rules off, so this job can't tell whether the pin binds steps"
+            exit 1
+          fi
+
       - name: Assert a step without the rule doesn't get the fetch step's host
         run: |
           if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
@@ -925,17 +962,18 @@ jobs:
           fi
           echo "registry.npmjs.org blocked outside the fetch step"
 
-      # The pinned cargowall loads step rules but binds no step to them yet,
-      # so the fetch step gets the job's rules too. A pin that binds steps
-      # fails here: then flip this to expect the host, and update the README.
       - name: Assert the fetch step gets the job's rules on this pin
         id: fetch
         run: |
+          reached=false
           if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
-            echo "ERROR: the fetch step reached registry.npmjs.org: this pin binds steps, so update this check and the README"
+            reached=true
+          fi
+          if [ "$reached" = true ] || grep -F 'Step bound to its policy' /tmp/cargowall.log; then
+            echo "ERROR: this pin binds steps (fetch step reached registry.npmjs.org: $reached), so update this job and the README"
             exit 1
           fi
-          echo "registry.npmjs.org blocked in the fetch step too: no step is bound to its rules on this pin"
+          echo "registry.npmjs.org blocked in the fetch step too, and no step bound: this pin binds no step"
 
   test-config-file-not-onboarded:
     name: Config file is the configuration after an API 404

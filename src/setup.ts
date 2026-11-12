@@ -27,7 +27,7 @@ const BINARY_NAME = 'cargowall'
 // through the same path, a bad github-service-hosts pattern would fail a good
 // file's step). And, when the pin moves to a release that binds steps to
 // their rules, the README's "no step's connections use them yet" and the
-// offline config-file e2e that asserts it.
+// config-file step-rules e2e that asserts it.
 const CARGOWALL_VERSION = 'v2.0.0-rc.15'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
