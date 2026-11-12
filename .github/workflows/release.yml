@@ -38,11 +38,18 @@ jobs:
             exit 1
           fi
 
+      - name: Verify ACTION_VERSION matches the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: .github/scripts/check-action-version.sh "$TAG"
+
       - name: Create draft pre-release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TARGET="${{ inputs.ref || 'main' }}"
+          # The commit this job built and checked, not the branch: a draft's
+          # tag is made when it's published, on whatever the target is then.
+          TARGET="$(git rev-parse HEAD)"
           gh release create "${{ inputs.tag }}" \
             --repo "${{ github.repository }}" \
             --title "${{ inputs.tag }}" \
