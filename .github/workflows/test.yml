@@ -917,6 +917,28 @@ jobs:
           fi
           echo "httpbin.org blocked, as the file requires"
 
+      - name: Assert a step without the rule doesn't get the fetch step's host
+        run: |
+          if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
+            echo "ERROR: registry.npmjs.org reached from a step whose rules don't allow it"
+            exit 1
+          fi
+          echo "registry.npmjs.org blocked outside the fetch step"
+
+      - name: Assert the fetch step reaches its own rule's host
+        id: fetch
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -s --connect-timeout 5 --max-time 30 -o /dev/null https://registry.npmjs.org; then
+              echo "registry.npmjs.org reached from the fetch step (attempt $i)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "ERROR: the fetch step's own rule didn't reach registry.npmjs.org"
+          grep -E 'Step rules (are|stay) off' /tmp/cargowall.log || true
+          exit 1
+
   test-config-file-not-onboarded:
     name: Config file is the configuration after an API 404
     runs-on: ubuntu-latest

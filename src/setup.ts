@@ -25,9 +25,10 @@ const BINARY_NAME = 'cargowall'
 // keys on, the errors for a dropped rule among them, which must still come
 // only from the loaded config's own rules (were auto-allows ever resolved
 // through the same path, a bad github-service-hosts pattern would fail a good
-// file's step). And the README's "doesn't apply them to connections yet" for
-// steps, once cargowall binds them.
-const CARGOWALL_VERSION = 'v2.0.0-rc.14'
+// file's step). And the README's sentence on when cargowall applies step
+// rules, and the "Step rules are off:" and "Step rules stay off:" lines it
+// quotes.
+const CARGOWALL_VERSION = 'v2.0.0-rc.15'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
@@ -43,8 +44,8 @@ const CARGOWALL_REPO = 'code-cargo/cargowall'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: '43816650d374589960c9121977f38cda9d65dbd8b646eca8e36b1d5c49bc9c24',
-  arm64: '00b76eafb1882d6c12f6cdfd97e3066987a97d2178fdf11ea669d351689236d6'
+  amd64: '1bfedd80bf1b898c381b3ed26af50cdfe15f113196b0001f30924155ca2bfda8',
+  arm64: '79788ad2b1f22bc60b5f54b137b18c812a0b3f0190bd956c0f185cb512547440'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS
