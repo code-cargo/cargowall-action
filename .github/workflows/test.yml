@@ -1109,10 +1109,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Write a config file whose ports cargowall can't parse
+      - name: Write a config file the action accepts but cargowall rejects
         run: |
-          # Valid JSON, but cargowall takes ports as objects, not numbers.
-          echo '{"rules":[{"type":"cidr","value":"10.0.0.0/8","ports":[443],"action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
+          # Passes the action's checks, but cargowall refuses a step id the
+          # runner generates (ids starting with __), so the load fails.
+          echo '{"steps":[{"id":"__run_2","rules":[{"type":"hostname","value":"a.example"}]}]}' > "$RUNNER_TEMP/cargowall.json"
 
       - name: Setup CargoWall (expected to fail)
         id: cargowall
