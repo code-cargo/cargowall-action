@@ -9,7 +9,9 @@ want="${tag%-rc.*}"
 
 src=$(sed -n "s/^export const ACTION_VERSION = '\([^']*\)'.*/\1/p" src/version.ts)
 if [ "$src" != "$want" ]; then
-  echo "::error::src/version.ts has ACTION_VERSION '$src', but tag $tag needs '$want'. Bump ACTION_VERSION in the release PR."
+  why=""
+  [ -z "$src" ] && why=" (it's empty until this branch's first release)"
+  echo "::error::src/version.ts has ACTION_VERSION '$src'$why, but tag $tag needs '$want'. Bump ACTION_VERSION in the release PR."
   exit 1
 fi
 if ! grep -qF "ACTION_VERSION = \"$want\"" dist/main/index.js; then
