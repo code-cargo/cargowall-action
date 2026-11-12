@@ -38,6 +38,11 @@ jobs:
             exit 1
           fi
 
+      - name: Verify ACTION_VERSION matches the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: .github/scripts/check-action-version.sh "$TAG"
+
       - name: Create draft pre-release
         env:
           GH_TOKEN: ${{ github.token }}

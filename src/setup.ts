@@ -8,6 +8,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { pipeline } from 'stream/promises'
 import { setTimeout as sleep } from 'timers/promises'
+import { actionVersionLine } from './version'
 
 const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
@@ -27,6 +28,8 @@ const BINARY_NAME = 'cargowall'
 // through the same path, a bad github-service-hosts pattern would fail a good
 // file's step). And the README's "doesn't apply them to connections yet" for
 // steps, once cargowall binds them.
+// CARGOWALL_VERSION is the binary's; this action release's own version is
+// ACTION_VERSION in src/version.ts: bump it in the release PR.
 const CARGOWALL_VERSION = 'v2.0.0-rc.14'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
@@ -192,6 +195,7 @@ export async function setup(): Promise<boolean> {
   const sourceRef = core.getInput('source-ref')
 
   core.startGroup('CargoWall Setup')
+  core.info(actionVersionLine())
 
   try {
     if (binaryPath) {
@@ -307,7 +311,7 @@ async function downloadAndInstall(): Promise<void> {
 
   const repo = 'code-cargo/cargowall'
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`
-  core.info(`CargoWall version: ${CARGOWALL_VERSION}`)
+  core.info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action pins; the two are versioned separately)`)
 
   const binaryAsset = `cargowall-linux-${arch}`
   core.info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`)

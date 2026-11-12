@@ -21559,6 +21559,17 @@ var os6 = __toESM(require("os"));
 var path4 = __toESM(require("path"));
 var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
+
+// src/version.ts
+var ACTION_VERSION = "";
+function actionVersionLine(version = ACTION_VERSION, env = process.env) {
+  const repo = env.GITHUB_ACTION_REPOSITORY ?? "";
+  const ref = env.GITHUB_ACTION_REF ?? "";
+  const source = repo ? ref ? `${repo}@${ref}` : repo : "local";
+  return `cargowall-action: ${version ? `${version} (${source})` : source}`;
+}
+
+// src/setup.ts
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
 var CARGOWALL_VERSION = "v2.0.0-rc.14";
@@ -21652,6 +21663,7 @@ async function setup() {
   const binaryPath = getInput("binary-path");
   const sourceRef = getInput("source-ref");
   startGroup("CargoWall Setup");
+  info(actionVersionLine());
   try {
     if (binaryPath) {
       await installFromLocalPath(binaryPath);
@@ -21743,7 +21755,7 @@ async function downloadAndInstall() {
   }
   const repo = "code-cargo/cargowall";
   const releaseBase = `https://github.com/${repo}/releases/download/${CARGOWALL_VERSION}`;
-  info(`CargoWall version: ${CARGOWALL_VERSION}`);
+  info(`CargoWall version: ${CARGOWALL_VERSION} (the cargowall binary this action pins; the two are versioned separately)`);
   const binaryAsset = `cargowall-linux-${arch3}`;
   info(`Downloading ${binaryAsset} from ${repo} release ${CARGOWALL_VERSION}`);
   const tempDir = await import_fs2.promises.mkdtemp(path4.join(os6.tmpdir(), "cargowall-"));

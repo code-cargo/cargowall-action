@@ -37,6 +37,14 @@ push/PR and weekly. A forgotten update, a digest without provenance, or a
 tampered release asset is caught in this repo's CI rather than in a consumer's
 job.
 
+### Releasing
+
+The action and the cargowall binary it pins are versioned separately, and the
+setup log prints both. Bump `ACTION_VERSION` in `src/version.ts` to the release's
+version in the release PR, without an `-rc.N` suffix, and rebuild `dist/`.
+`release.yml` refuses to create a release whose tag doesn't match it, and
+`check-version.yml` checks a tag pushed by hand.
+
 ### Project Structure
 
 - `src/main.ts` — Action entry point

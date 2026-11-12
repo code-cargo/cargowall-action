@@ -1,0 +1,22 @@
+name: Check action version
+
+# A release tag's commit must carry its own version in src/version.ts and in
+# dist, since the setup log prints it as the action's version. release.yml runs
+# the same check before it creates a release; this catches a tag pushed by
+# hand.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    name: ACTION_VERSION matches the tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - run: .github/scripts/check-action-version.sh "$GITHUB_REF_NAME"
