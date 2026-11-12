@@ -14,7 +14,19 @@ const BINARY_NAME = 'cargowall'
 // The pinned cargowall must publish its posture record before ready, with a
 // `sudo-lockdown` line whenever the flag or the policy asked for the lockdown:
 // from the pinned download, sudoLockdownReport (src/effective.ts) reports a
-// record without that line as the lockdown off.
+// record without that line as the lockdown off. When moving the pin, also
+// recheck what src/configfile.ts mirrors of cargowall: ENV_CONFIG_VARS against
+// LoadFromEnv; CONFIG_KEYS, RULE_KEYS, PORT_KEYS, STEP_KEYS and
+// SUDO_LOCKDOWN_KEYS against the config file's JSON tags; PROTOCOLS against
+// expandPorts; RULE_TYPES and ACTIONS against the rule types and actions
+// cargowall acts on; LABEL against the hostname patterns it compiles;
+// COMMAND_PATH, which must stay stricter than pkg/lockdown's
+// sudoersUnsafeChars, and the allowlist's comma join and split; and the log lines requireConfigLoaded
+// keys on, the errors for a dropped rule among them, which must still come
+// only from the loaded config's own rules (were auto-allows ever resolved
+// through the same path, a bad github-service-hosts pattern would fail a good
+// file's step). And the README's "doesn't apply them to connections yet" for
+// steps, once cargowall binds them.
 const CARGOWALL_VERSION = 'v2.0.0-rc.14'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 

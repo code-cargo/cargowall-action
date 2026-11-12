@@ -5,7 +5,8 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
-import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho } from './effective'
+import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
+import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
@@ -88,7 +89,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const githubServiceHosts = requireNonEmptyHostList('github-service-hosts')
   const azureInfraHosts = requireNonEmptyHostList('azure-infra-hosts')
 
-  const configFile = core.getInput('config-file')
   const sudoLockdown = core.getInput('sudo-lockdown') === 'true'
   const debug = core.getInput('debug') === 'true'
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'
@@ -99,6 +99,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     containerEgress: core.getInput('container-egress'),
     tlsSni: core.getInput('tls-sni'),
   })
+  const config = await resolveConfigFile(core.getInput('config-file'), { allowedHosts, allowedCidrs, searchDomains })
+  const configFile = config?.path ?? null
 
   core.startGroup('Starting CargoWall Firewall')
 
@@ -214,10 +216,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (searchDomains) core.info(`  Search domains: ${searchDomains}`)
   if (githubServiceHosts) core.info(`  GitHub service hosts: ${githubServiceHosts}`)
   if (azureInfraHosts) core.info(`  Azure infra hosts: ${azureInfraHosts}`)
-  if (configFile) core.info(`  Config file: ${configFile}`)
+  // cargowall reads the file only when no CodeCargo policy loads.
+  if (configFile) core.info(`  Config file: ${configFile}${apiFailurePosture === null ? '' : ' (when no CodeCargo policy loads)'}`)
   const jobId = core.getInput('job-id')
   if (jobId) core.info(`  Job run ID: ${jobId}`)
-  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null)}`)
+  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, config?.sudoLockdown ?? null)}`)
   if (postureFlags.length > 0) core.info(`  v2 preview postures: ${postureFlags.join(' ')}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
@@ -238,11 +241,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // Set environment variables for cargowall
   const env = {
-    ...process.env,
-    CARGOWALL_DEFAULT_ACTION: 'deny',
-    ...(allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts }),
-    ...(allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs }),
-    ...(searchDomains && { CARGOWALL_SEARCH_DOMAINS: searchDomains }),
+    ...localConfigEnv(process.env, configFile, { allowedHosts, allowedCidrs, searchDomains }),
     // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
     // them would hand cargowall's narrower built-in defaults to the user unannounced.
     CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
@@ -397,7 +396,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // now that startup succeeded. Deliberately after the ready check: a lockdown
   // exits above, so anything recorded here belongs to a run that came up.
   await warnOnDowngrade(spawnedAtMs)
-  // With a policy in play, the posture to announce is the one cargowall applies.
+  // With a policy or a config file in play, the posture to announce is the one
+  // cargowall applies. setup installed the pinned download unless binary-path
+  // or source-ref was given.
+  const pinnedBinary = !core.getInput('binary-path') && !core.getInput('source-ref')
+  const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
   if (apiFailurePosture !== null) {
     const report = effectiveReport({
       inputMode: mode,
@@ -405,12 +408,15 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
       downgraded: (await readDowngradeFile(spawnedAtMs)) !== null,
       postureFlags,
-      // setup installed the pinned download unless one of these was given.
-      pinnedBinary: !core.getInput('binary-path') && !core.getInput('source-ref'),
-      postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs)),
+      pinnedBinary,
+      postures,
+      fileSetsLockdown: config?.sudoLockdown != null,
     })
     for (const line of report.info) core.info(line)
     for (const notice of report.notices) core.notice(notice)
+  } else if (config && config.sudoLockdown !== null) {
+    // The file replaced the input: report what cargowall applied.
+    core.info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, fileSetsLockdown: true }))
   }
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
@@ -424,8 +430,12 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // Persist for the post step (also signals that cargowall was started).
   core.saveState('cargowall-pid', String(reportedPid))
-
   core.endGroup()
+
+  // After that state: a file cargowall didn't load, or loaded without some of
+  // its rules, fails the step with cargowall still up, and the post step
+  // summarises the run.
+  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
 
   core.notice('CargoWall firewall is active. Network egress is being filtered.')
 

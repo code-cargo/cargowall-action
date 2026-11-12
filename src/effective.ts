@@ -45,11 +45,22 @@ export function modeEcho(mode: string, apiFailurePosture: string | null): string
 
 /**
  * The configuration echo's sudo lockdown value. A policy that sets sudo
- * lockdown replaces this step's input; one that doesn't leaves it standing.
+ * lockdown replaces this step's input, and so does a config file that sets
+ * `sudoLockdown` (fileSudoLockdown, its `enabled`) when no policy loads; one
+ * that doesn't leaves it standing.
  */
-export function sudoLockdownEcho(sudoLockdown: boolean, apiPolicy: boolean): string {
+export function sudoLockdownEcho(sudoLockdown: boolean, apiPolicy: boolean, fileSudoLockdown: boolean | null = null): string {
+  if (fileSudoLockdown !== null && !apiPolicy) {
+    return `${fileSudoLockdown} (set by the config file, which replaces this step's input: ${sudoLockdown})`
+  }
   if (!apiPolicy) return String(sudoLockdown)
-  return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`
+  if (fileSudoLockdown === null) {
+    return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`
+  }
+  return (
+    `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it, ` +
+    `and the config file's ${fileSudoLockdown} does when no policy loads)`
+  )
 }
 
 /**
@@ -119,19 +130,29 @@ export function sudoLockdownReport(args: {
   policyLoaded: boolean
   pinnedBinary: boolean
   postures: PostureLine[] | null
+  // The config file sets sudoLockdown: with no policy loaded, it replaces the
+  // input.
+  fileSetsLockdown?: boolean
 }): string {
+  const fromFile = args.fileSetsLockdown === true && !args.policyLoaded
   const line = args.postures?.find(l => l.posture === 'sudo-lockdown')
   if (line) {
     if (line.applied === 'true') return 'Sudo lockdown: on'
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ''}`
   }
   if (args.postures !== null && args.pinnedBinary) {
-    // The input asked for it and nothing did: a loaded policy turned it off.
-    return args.inputSudoLockdown && args.policyLoaded
-      ? "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)"
-      : 'Sudo lockdown: off'
+    // The input asked for it and nothing did: a loaded policy, or with none
+    // the config file, turned it off.
+    if (args.inputSudoLockdown && args.policyLoaded) {
+      return "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)"
+    }
+    if (args.inputSudoLockdown && fromFile) {
+      return "Sudo lockdown: off (set by the config file, which replaces this step's input: true)"
+    }
+    return 'Sudo lockdown: off'
   }
   const input = `this step's input: ${args.inputSudoLockdown}`
+  if (fromFile) return `Sudo lockdown: not reported by cargowall (${input}, which the config file's sudoLockdown replaces)`
   if (!args.policyLoaded) return `Sudo lockdown: not reported by cargowall (${input}; no policy was loaded)`
   return `Sudo lockdown: not reported by cargowall (${input}, which a CodeCargo policy that sets sudo lockdown replaces)`
 }
@@ -157,6 +178,7 @@ export function effectiveReport(args: {
   postureFlags: string[]
   pinnedBinary: boolean
   postures: PostureLine[] | null
+  fileSetsLockdown?: boolean
 }): EffectiveReport {
   const { inputMode, effective, downgraded, postureFlags } = args
   const sudo = sudoLockdownReport({
@@ -164,6 +186,7 @@ export function effectiveReport(args: {
     policyLoaded: effective !== null && !downgraded,
     pinnedBinary: args.pinnedBinary,
     postures: args.postures,
+    fileSetsLockdown: args.fileSetsLockdown,
   })
   if (downgraded) {
     return {

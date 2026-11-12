@@ -1,13 +1,17 @@
 name: 'Start policy API stub'
 description: >-
   Serve a fixed HTTP status on 127.0.0.1:8099 for the api-failure e2e jobs.
-  GETs (the policy fetch) return the given status; POSTs (the summary push)
-  always return 200.
+  GETs (the policy fetch) return the given status, with `policy` as the body
+  when given; POSTs (the summary push) always return 200.
 
 inputs:
   status:
     description: 'HTTP status returned for every GET'
     required: true
+  policy:
+    description: 'Body returned for every GET: a CargoWallPolicy in protojson, for a 200'
+    required: false
+    default: '{}'
 
 runs:
   using: 'composite'
@@ -18,6 +22,7 @@ runs:
       # malicious value in a reusable composite.
       env:
         STATUS: ${{ inputs.status }}
+        POLICY: ${{ inputs.policy }}
       run: |
         nohup python3 "${{ github.action_path }}/policy-stub.py" "$STATUS" \
           > /tmp/policy-stub.log 2>&1 &

@@ -216,9 +216,11 @@ See [Sudo Lockdown](#sudo-lockdown) for what an allowlist gives up, and for the 
 
 ### With Config File
 
-For complex configurations, use a JSON or YAML config file:
+For complex configurations, give the job's rules as a JSON file:
 
 ```yaml
+- uses: actions/checkout@v6   # the file comes from the repository
+
 - uses: code-cargo/cargowall-action@v1
   with:
     config-file: .github/cargowall.json
@@ -227,13 +229,25 @@ For complex configurations, use a JSON or YAML config file:
 **`.github/cargowall.json`**:
 ```json
 {
+  "defaultAction": "deny",
   "rules": [
     { "type": "hostname", "value": "github.com", "action": "allow" },
     { "type": "hostname", "value": "registry.npmjs.org", "action": "allow" },
-    { "type": "cidr", "value": "10.0.0.0/8", "ports": [443, 80], "action": "allow" }
+    { "type": "cidr", "value": "10.0.0.0/8", "action": "allow",
+      "ports": [{ "port": 443, "protocol": "tcp" }, { "port": 80, "protocol": "tcp" }] }
+  ],
+  "steps": [
+    { "id": "publish", "rules": [{ "type": "hostname", "value": "npm.pkg.github.com" }] }
   ]
 }
 ```
+
+- **The file is this step's whole configuration.** It holds `rules`, `defaultAction` (deny when omitted), `searchDomains`, `sudoLockdown` (which replaces `sudo-lockdown` and `sudo-allow-commands`, as a policy's does) and `steps`, each step's own allow rules by its workflow `id:`. The pinned cargowall loads and validates `steps` but doesn't apply them to connections yet: until it binds steps to their rules, every step's connections get the job's rules alone. Their names do resolve, for every process in the job, and their addresses take room in the rule maps. So it can't be combined with `allowed-hosts`, `allowed-cidrs` or `search-domains`: give those in the file. `mode`, `github-service-hosts` and `azure-infra-hosts` apply as they do without a file, and so do `sudo-lockdown` and `sudo-allow-commands` unless the file sets `sudoLockdown`.
+- **Every port entry needs a `protocol`:** `tcp`, `udp`, `icmp` or `all`, in lowercase, as in `{ "port": 443, "protocol": "tcp" }`. cargowall skips an entry without one, which leaves the rule on every port, so the step refuses such a file, and an empty `ports` list, which cargowall also reads as every port: leave `ports` out for that. Keys are matched exactly, in camelCase as shown, at every level, and given once; a key cargowall doesn't read, a different case of one it does, or a repeated key is refused, since cargowall would read any of them loosely.
+- **A CodeCargo policy replaces it.** When a policy is fetched and loads, the file is neither read nor merged. The file applies when no policy loads: `offline: true`, `skip-policy-fetch: true`, no `api-url`, no OIDC token, or a fetch the API answers with no policy (not onboarded, a rejected token, an inactive repository).
+- **A failed fetch keeps its [`api-failure-mode`](#when-the-codecargo-policy-cant-be-fetched)**, a policy cargowall can't load included. Under `audit` the run is downgraded to audit and under `enforce` it keeps this step's mode, each on the file; under `fail` it locks down and reads no local configuration.
+- **When the file sets `sudoLockdown`:** with no API in play, the start step announces the file's lockdown, not the input; with one, it notes the file's value as the fallback. Either way, once cargowall is ready and no policy loaded, it reports the lockdown cargowall applied.
+- **A file that can't serve fails the step.** Before DNS is touched or cargowall starts, the step refuses a file that's missing, isn't a JSON object, breaks the key or port rules above, or has a rule cargowall would drop or never match: a `type` other than `hostname` or `cidr`, an empty `value`, a job rule whose `action` isn't `allow` or `deny` (a job rule needs one), a step rule whose `action` is anything but `allow` (or left out), or a `defaultAction` other than `allow` or `deny`. These values are lowercase. A hostname rule's `value` must be a name a DNS query can carry: ASCII labels of letters, digits, hyphens and underscores (punycode for an international name), or a whole-label `*` or `**`, separated by single dots, with no leading or trailing dot and one host per rule. An IP address goes in a `cidr` rule, and ports in `ports`. A `sudoLockdown.allowCommands` entry must be a bare absolute path of letters, digits and `._+@/-`, since cargowall drops any arguments and splits entries on commas, and sudoers reads other characters as its own syntax. Once cargowall is ready, the step fails too when cargowall's log shows it didn't load the file, which leaves it running deny-all with only CI infrastructure allowed (under audit, every other connection is reported as would-deny instead), or loaded the file without a rule whose value it couldn't parse, such as an invalid CIDR.
 
 ### Experimental: L7 Destination Identity (v2 Preview)
 
@@ -328,7 +342,7 @@ Worth knowing before you enable it:
 | `search-domains`             | Extra DNS search-domain suffixes, one per line — stripped before hostname-rule matching and bypassed for unmatched DNS queries. The detected cloud provider's suffixes are added [automatically](#with-dns-search-domains). Each suffix needs ≥2 labels and cannot be a public suffix. |                                                |
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line). Replaces the default list rather than adding to it; an empty value is an error                                                                                                                                      | See [defaults](#automatically-allowed-traffic) |
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line), applied only on Azure. Replaces the default list rather than adding to it; an empty value is an error                                                                                                         | See [defaults](#automatically-allowed-traffic) |
-| `config-file`                | Path to YAML/JSON config file for advanced rules                                                                                                                                                                                                                                       |                                                |
+| `config-file`                | A JSON file that is this step's whole configuration, used when no CodeCargo policy loads. Not combinable with `allowed-hosts`, `allowed-cidrs` or `search-domains`; see [With Config File](#with-config-file)                                                                          |                                                |
 | `fail-on-unsupported`        | Fail if CargoWall can't run here (eBPF unsupported, or startup failed) rather than warn and continue. Enforcement the runner can't apply [always fails the step](#cargowall-refused-to-start)                                                                                          | `false`                                        |
 | `sudo-lockdown`              | Restrict sudo for the job's user to the allowlist. Allowlisted commands and docker access are outside it — see [Sudo Lockdown](#sudo-lockdown)                                                                                                                                         | `false`                                        |
 | `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                                                                                                                                                                                                              |                                                |
@@ -550,7 +564,8 @@ the layer:
     out a link, or it is the DNS upstream. This counts only where Docker could
     be present: a Docker socket or a bridge.
 - **`--sudo-lockdown=true`, when the policy enforces:** the sudo lockdown,
-  asked for by the `sudo-lockdown` input or by the CodeCargo policy, didn't
+  asked for by the `sudo-lockdown` input, the CodeCargo policy or the config
+  file, didn't
   come up, so the job would run with the runner's sudo unchanged. Either it
   couldn't be applied, a check once it was in place saw sudo still run a
   command the allowlist doesn't name as root, or the job's steps run as root,
