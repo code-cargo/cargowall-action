@@ -5,8 +5,8 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
-import { localConfigEnv, resolveConfigFile } from './configfile'
-import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho } from './effective'
+import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
+import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
@@ -219,7 +219,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (configFile) core.info(`  Config file: ${configFile}${apiFailurePosture === null ? '' : ' (when no CodeCargo policy loads)'}`)
   const jobId = core.getInput('job-id')
   if (jobId) core.info(`  Job run ID: ${jobId}`)
-  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null)}`)
+  core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, configFile !== null)}`)
   if (postureFlags.length > 0) core.info(`  v2 preview postures: ${postureFlags.join(' ')}`)
   core.info(`  DNS upstream: ${dnsUpstream}`)
   if (apiFailureLabel) core.info(`  Policy-fetch failure posture: ${apiFailureLabel}`)
@@ -395,7 +395,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // now that startup succeeded. Deliberately after the ready check: a lockdown
   // exits above, so anything recorded here belongs to a run that came up.
   await warnOnDowngrade(spawnedAtMs)
-  // With a policy in play, the posture to announce is the one cargowall applies.
+  // With a policy or a config file in play, the posture to announce is the one
+  // cargowall applies. setup installed the pinned download unless binary-path
+  // or source-ref was given.
+  const pinnedBinary = !core.getInput('binary-path') && !core.getInput('source-ref')
+  const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
   if (apiFailurePosture !== null) {
     const report = effectiveReport({
       inputMode: mode,
@@ -403,13 +407,16 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
       downgraded: (await readDowngradeFile(spawnedAtMs)) !== null,
       postureFlags,
-      // setup installed the pinned download unless one of these was given.
-      pinnedBinary: !core.getInput('binary-path') && !core.getInput('source-ref'),
-      postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs)),
+      pinnedBinary,
+      postures,
+      configFile: configFile !== null,
     })
     for (const line of report.info) core.info(line)
     for (const notice of report.notices) core.notice(notice)
+  } else if (configFile) {
+    core.info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, configFile: true }))
   }
+  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher

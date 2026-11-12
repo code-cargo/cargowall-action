@@ -25781,6 +25781,7 @@ var ENV_CONFIG_VARS = [
   "CARGOWALL_BLOCKED_CIDRS",
   "CARGOWALL_SEARCH_DOMAINS"
 ];
+var CONFIG_KEYS = ["rules", "defaultAction", "searchDomains", "sudoLockdown", "steps"];
 async function resolveConfigFile(configFile, inputs) {
   if (!configFile) return null;
   const conflicting = [
@@ -25800,12 +25801,34 @@ async function resolveConfigFile(configFile, inputs) {
   } catch (error2) {
     throw new Error(`config-file ${configFile} can't be read: ${error2 instanceof Error ? error2.message : error2}`);
   }
+  let parsed;
   try {
-    JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (error2) {
     throw new Error(`config-file ${configFile} isn't JSON: ${error2 instanceof Error ? error2.message : error2}`);
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`config-file ${configFile} isn't a JSON object`);
+  }
+  const unknown = Object.keys(parsed).filter((key) => !CONFIG_KEYS.includes(key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `config-file ${configFile} has keys cargowall doesn't read: ${unknown.join(", ")} (it reads ${CONFIG_KEYS.join(", ")})`
+    );
+  }
   return resolved;
+}
+async function requireConfigLoaded(logPath, configFile) {
+  let log = "";
+  try {
+    log = await import_fs5.promises.readFile(logPath, "utf8");
+  } catch {
+  }
+  if (log.includes("Policy loaded from CodeCargo API") || log.includes("Config loaded successfully")) return;
+  const why = log.split("\n").find((line) => line.includes("No config loaded"));
+  throw new Error(
+    `CargoWall did not load config-file ${configFile}, so it is running deny-all with only CI infrastructure allowed. Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, "No config loaded").trim()}` : ""}`
+  );
 }
 function localConfigEnv(base, configFile, inputs) {
   if (configFile) {
@@ -25838,9 +25861,11 @@ function modeEcho(mode, apiFailurePosture) {
   const fallback = apiFailurePosture === "local" ? mode : `${mode}; a failed fetch uses the policy-fetch failure posture`;
   return `from the CodeCargo policy if one loads (fallback: ${fallback})`;
 }
-function sudoLockdownEcho(sudoLockdown, apiPolicy) {
-  if (!apiPolicy) return String(sudoLockdown);
-  return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`;
+function sudoLockdownEcho(sudoLockdown, apiPolicy, configFile = false) {
+  if (!apiPolicy && !configFile) return String(sudoLockdown);
+  if (!apiPolicy) return `${sudoLockdown} (this step's input; the config file's sudoLockdown replaces it)`;
+  if (!configFile) return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it)`;
+  return `${sudoLockdown} (this step's input; a CodeCargo policy that sets sudo lockdown replaces it, and the config file's does when no policy loads)`;
 }
 function parseModeFile(raw) {
   const value = raw?.trim();
@@ -25868,15 +25893,23 @@ function parsePostures(raw) {
   return lines;
 }
 function sudoLockdownReport(args) {
+  const fromFile = args.configFile === true && !args.policyLoaded;
   const line = args.postures?.find((l) => l.posture === "sudo-lockdown");
   if (line) {
     if (line.applied === "true") return "Sudo lockdown: on";
     return `Sudo lockdown: not applied${line.reason ? ` (${line.reason})` : ""}`;
   }
   if (args.postures !== null && args.pinnedBinary) {
-    return args.inputSudoLockdown && args.policyLoaded ? "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)" : "Sudo lockdown: off";
+    if (args.inputSudoLockdown && args.policyLoaded) {
+      return "Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)";
+    }
+    if (args.inputSudoLockdown && fromFile) {
+      return "Sudo lockdown: off (set by the config file, which replaces this step's input: true)";
+    }
+    return "Sudo lockdown: off";
   }
   const input = `this step's input: ${args.inputSudoLockdown}`;
+  if (fromFile) return `Sudo lockdown: not reported by cargowall (${input}, which the config file's sudoLockdown replaces)`;
   if (!args.policyLoaded) return `Sudo lockdown: not reported by cargowall (${input}; no policy was loaded)`;
   return `Sudo lockdown: not reported by cargowall (${input}, which a CodeCargo policy that sets sudo lockdown replaces)`;
 }
@@ -25886,7 +25919,8 @@ function effectiveReport(args) {
     inputSudoLockdown: args.inputSudoLockdown,
     policyLoaded: effective !== null && !downgraded,
     pinnedBinary: args.pinnedBinary,
-    postures: args.postures
+    postures: args.postures,
+    configFile: args.configFile
   });
   if (downgraded) {
     return {
@@ -26119,7 +26153,7 @@ async function start() {
   if (configFile) info(`  Config file: ${configFile}${apiFailurePosture === null ? "" : " (when no CodeCargo policy loads)"}`);
   const jobId = getInput("job-id");
   if (jobId) info(`  Job run ID: ${jobId}`);
-  info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null)}`);
+  info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null, configFile !== null)}`);
   if (postureFlags.length > 0) info(`  v2 preview postures: ${postureFlags.join(" ")}`);
   info(`  DNS upstream: ${dnsUpstream}`);
   if (apiFailureLabel) info(`  Policy-fetch failure posture: ${apiFailureLabel}`);
@@ -26229,6 +26263,8 @@ async function start() {
   }
   info("CargoWall is ready");
   await warnOnDowngrade(spawnedAtMs);
+  const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
+  const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs));
   if (apiFailurePosture !== null) {
     const report = effectiveReport({
       inputMode: mode,
@@ -26236,13 +26272,16 @@ async function start() {
       effective: parseModeFile(await readFreshStateFile(MODE_FILE, spawnedAtMs)),
       downgraded: await readDowngradeFile(spawnedAtMs) !== null,
       postureFlags,
-      // setup installed the pinned download unless one of these was given.
-      pinnedBinary: !getInput("binary-path") && !getInput("source-ref"),
-      postures: parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
+      pinnedBinary,
+      postures,
+      configFile: configFile !== null
     });
     for (const line of report.info) info(line);
     for (const notice2 of report.notices) notice(notice2);
+  } else if (configFile) {
+    info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, configFile: true }));
   }
+  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile);
   cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
   const reportedPid = cargowallPid ?? spawnedPid;
   setOutput("supported", "true");

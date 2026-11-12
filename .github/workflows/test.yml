@@ -979,7 +979,7 @@ jobs:
           status: '200'
           policy: >-
             {"mode": "CARGO_WALL_MODE_ENFORCE", "defaultAction": "CARGO_WALL_ACTION_TYPE_DENY",
-            "rules": [{"type": "CARGO_WALL_RULE_TYPE_HOSTNAME", "value": "github.com", "action": "CARGO_WALL_ACTION_TYPE_ALLOW"}]}
+            "rules": [{"type": "CARGO_WALL_RULE_TYPE_HOSTNAME", "value": "example.org", "action": "CARGO_WALL_ACTION_TYPE_ALLOW"}]}
 
       - name: Write a config file that allows what the policy doesn't
         run: |
@@ -1003,9 +1003,11 @@ jobs:
           fi
 
       - name: Assert the policy's allow reaches the datapath
+        # example.org: allowed by the policy alone, unlike github.com, which
+        # github-service-hosts allows whatever the policy says.
         uses: ./.github/actions/assert-egress-allowed
         with:
-          url: https://github.com
+          url: https://example.org
 
       - name: Assert the file's allow does not
         run: |
@@ -1014,6 +1016,116 @@ jobs:
             exit 1
           fi
           echo "example.com blocked: the policy, not the file, is the configuration"
+
+  test-config-file-audit-downgrade:
+    name: Config file is the fallback under the audit downgrade
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that always 503s
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '503'
+
+      - name: Write a config file that denies by default
+        run: |
+          echo '{"defaultAction":"deny","rules":[{"type":"hostname","value":"example.com","action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          # mode and api-failure-mode unset: a failed fetch downgrades to audit.
+          api-url: http://127.0.0.1:8099
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert the run was downgraded, on the file
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          test "$(cat /tmp/cargowall-mode)" = audit
+          grep -q 'CARGO_WALL_DOWNGRADE_TYPE_AUDIT_FALLBACK' /tmp/cargowall-downgrade
+          grep -F 'Config loaded successfully' /tmp/cargowall.log
+
+      - name: Assert the file can't undo the downgrade
+        # The file denies by default and doesn't allow httpbin.org, but audit
+        # blocks nothing.
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://httpbin.org
+
+  test-config-file-lockdown:
+    name: Config file is not read in policy lockdown
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that always 503s
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '503'
+
+      - name: Write a config file that allows everything
+        run: |
+          echo '{"defaultAction":"allow","rules":[]}' > "$RUNNER_TEMP/cargowall.json"
+
+      - name: Setup CargoWall (expected to fail)
+        id: cargowall
+        continue-on-error: true
+        uses: ./
+        with:
+          api-failure-mode: fail
+          api-url: http://127.0.0.1:8099
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert lockdown, with the file never read
+        run: |
+          if [ '${{ steps.cargowall.outcome }}' != 'failure' ]; then
+            echo "ERROR: expected the action to fail, got '${{ steps.cargowall.outcome }}'"
+            exit 1
+          fi
+          grep -q 'policy lockdown' /tmp/cargowall-failed
+          if grep -F 'Config loaded successfully' /tmp/cargowall.log; then
+            echo "ERROR: policy lockdown must read no local configuration, yet the file loaded"
+            exit 1
+          fi
+
+  test-config-file-unloadable:
+    name: A config file cargowall can't load fails the step
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Write a config file whose ports cargowall can't parse
+        run: |
+          # Valid JSON, but cargowall takes ports as objects, not numbers.
+          echo '{"rules":[{"type":"cidr","value":"10.0.0.0/8","ports":[443],"action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
+
+      - name: Setup CargoWall (expected to fail)
+        id: cargowall
+        continue-on-error: true
+        uses: ./
+        with:
+          offline: 'true'
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert the step failed on the unloaded file
+        run: |
+          if [ '${{ steps.cargowall.outcome }}' != 'failure' ]; then
+            echo "ERROR: expected the action to fail, got '${{ steps.cargowall.outcome }}'"
+            exit 1
+          fi
+          grep -F 'No config loaded' /tmp/cargowall.log
 
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)

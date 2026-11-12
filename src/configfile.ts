@@ -21,6 +21,9 @@ export const ENV_CONFIG_VARS = [
   'CARGOWALL_SEARCH_DOMAINS',
 ] as const
 
+/** The top-level keys of cargowall's config file (FirewallConfig). */
+const CONFIG_KEYS = ['rules', 'defaultAction', 'searchDomains', 'sudoLockdown', 'steps']
+
 /** The inputs that set the environment configuration. */
 export interface EnvConfigInputs {
   allowedHosts: string
@@ -31,8 +34,10 @@ export interface EnvConfigInputs {
 /**
  * The config file cargowall is given, as an absolute path, or null without
  * one. Throws, before anything on the runner changes, when the file can't
- * serve: it is missing, isn't JSON (cargowall reads JSON only), or comes with
- * inputs it would silently replace.
+ * serve: it is missing, isn't a JSON object (cargowall reads JSON only), has a
+ * top-level key cargowall doesn't know (which it would ignore, loading a
+ * configuration with nothing in it), or comes with inputs it would silently
+ * replace. What the keys hold, cargowall checks; see requireConfigLoaded.
  */
 export async function resolveConfigFile(configFile: string, inputs: EnvConfigInputs): Promise<string | null> {
   if (!configFile) return null
@@ -54,12 +59,47 @@ export async function resolveConfigFile(configFile: string, inputs: EnvConfigInp
   } catch (error) {
     throw new Error(`config-file ${configFile} can't be read: ${error instanceof Error ? error.message : error}`)
   }
+  let parsed: unknown
   try {
-    JSON.parse(raw)
+    parsed = JSON.parse(raw)
   } catch (error) {
     throw new Error(`config-file ${configFile} isn't JSON: ${error instanceof Error ? error.message : error}`)
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`config-file ${configFile} isn't a JSON object`)
+  }
+  const unknown = Object.keys(parsed).filter(key => !CONFIG_KEYS.includes(key))
+  if (unknown.length > 0) {
+    throw new Error(
+      `config-file ${configFile} has keys cargowall doesn't read: ${unknown.join(', ')} ` +
+        `(it reads ${CONFIG_KEYS.join(', ')})`
+    )
+  }
   return resolved
+}
+
+/**
+ * Throws unless cargowall's log, written since this step started it, shows a
+ * configuration loaded: the CodeCargo policy, or the config file. A file
+ * cargowall can't load (a rule it rejects) leaves it running deny-all with
+ * only a warning in its own log, and the step must not pass on that. Keyed on
+ * the two lines cargowall logs once a load succeeds (cargowall's loadCIConfig
+ * and pkg/config LoadConfig), so a load that failed for any reason shows as
+ * neither.
+ */
+export async function requireConfigLoaded(logPath: string, configFile: string): Promise<void> {
+  let log = ''
+  try {
+    log = await fs.readFile(logPath, 'utf8')
+  } catch {
+    // No log to read is no evidence either way: the check below fails.
+  }
+  if (log.includes('Policy loaded from CodeCargo API') || log.includes('Config loaded successfully')) return
+  const why = log.split('\n').find(line => line.includes('No config loaded'))
+  throw new Error(
+    `CargoWall did not load config-file ${configFile}, so it is running deny-all with only CI ` +
+      `infrastructure allowed. Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, 'No config loaded').trim()}` : ''}`
+  )
 }
 
 /**

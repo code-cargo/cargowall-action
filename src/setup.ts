@@ -14,7 +14,9 @@ const BINARY_NAME = 'cargowall'
 // The pinned cargowall must publish its posture record before ready, with a
 // `sudo-lockdown` line whenever the flag or the policy asked for the lockdown:
 // from the pinned download, sudoLockdownReport (src/effective.ts) reports a
-// record without that line as the lockdown off.
+// record without that line as the lockdown off. When moving the pin, also
+// recheck ENV_CONFIG_VARS (src/configfile.ts) against the new cargowall's
+// LoadFromEnv, and the log lines requireConfigLoaded keys on.
 const CARGOWALL_VERSION = 'v2.0.0-rc.14'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 

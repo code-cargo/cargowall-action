@@ -245,3 +245,27 @@ describe('effectiveReport (a policy was to come from the API)', () => {
     expect(r.notices).toEqual([AUDIT_NOTICE])
   })
 })
+
+describe('a config file in the sudo lockdown report', () => {
+  it('names the file in the echo, with a policy in play and without', () => {
+    expect(sudoLockdownEcho(true, false, true)).toBe("true (this step's input; the config file's sudoLockdown replaces it)")
+    expect(sudoLockdownEcho(true, true, true)).toBe(
+      "true (this step's input; a CodeCargo policy that sets sudo lockdown replaces it, and the config file's does when no policy loads)"
+    )
+    expect(sudoLockdownEcho(true, false)).toBe('true')
+  })
+
+  it('attributes an off the input asked against to the file when no policy loaded', () => {
+    const record = parsePostures(`[${REDIRECT_LINE}]`)
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, pinnedBinary: true, postures: record, configFile: true }))
+      .toBe("Sudo lockdown: off (set by the config file, which replaces this step's input: true)")
+    // A loaded policy replaced the file, so it, not the file, turned it off.
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, pinnedBinary: true, postures: record, configFile: true }))
+      .toBe("Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)")
+  })
+
+  it('names the file when cargowall reported nothing it can trust', () => {
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, pinnedBinary: true, postures: null, configFile: true }))
+      .toBe("Sudo lockdown: not reported by cargowall (this step's input: true, which the config file's sudoLockdown replaces)")
+  })
+})

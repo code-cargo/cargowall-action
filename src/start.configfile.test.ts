@@ -55,6 +55,9 @@ import { ENV_CONFIG_VARS } from './configfile'
 import { start } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
+const POSTURES_FILE = '/tmp/cargowall-postures'
+const CARGOWALL_LOG = '/tmp/cargowall.log'
+const LOADED = '2026-11-12 00:00:01.000 Config loaded successfully rules=1 defaultAction=deny searchDomains=0\n'
 const CONFIG = '/work/.github/cargowall.json'
 const CONFIG_BODY = JSON.stringify({
   rules: [{ type: 'hostname', value: 'example.com', action: 'allow' }],
@@ -63,28 +66,36 @@ const CONFIG_BODY = JSON.stringify({
 const API = 'https://app.codecargo.com'
 
 /**
- * A root-owned ready sentinel, there from the first look, and the files
- * readFile serves: the config file among them.
+ * The files readFile serves (the config file and cargowall's log among them,
+ * the log saying the file loaded unless a test says otherwise), and the
+ * root-owned, fresh state files cargowall writes: the ready sentinel, there
+ * from the first look, and any others given.
  */
-function withFiles(files: Record<string, string>): void {
+function withFiles(files: Record<string, string>, state: Record<string, string> = {}): void {
+  const all: Record<string, string> = { [CARGOWALL_LOG]: LOADED, ...files }
+  const states: Record<string, string> = { [READY_FILE]: '', ...state }
   vi.mocked(fsp.readFile).mockImplementation(async (p: unknown) => {
-    const body = files[String(p)]
+    const body = all[String(p)]
     if (body === undefined) throw new Error(`ENOENT: ${String(p)}`)
     return body
   })
   vi.mocked(fsp.stat).mockImplementation(async (p: unknown) => {
-    if (String(p) !== READY_FILE) throw new Error(`ENOENT: ${String(p)}`)
+    if (!(String(p) in states)) throw new Error(`ENOENT: ${String(p)}`)
     return { mtimeMs: Date.now() + 5000, size: 1 } as Awaited<ReturnType<typeof fsp.stat>>
   })
   vi.mocked(fsp.lstat).mockImplementation(async (p: unknown) => {
-    if (String(p) !== READY_FILE) throw new Error(`ENOENT: ${String(p)}`)
+    if (!(String(p) in states)) throw new Error(`ENOENT: ${String(p)}`)
     return { isFile: () => true, isSymbolicLink: () => false } as Awaited<ReturnType<typeof fsp.lstat>>
   })
   vi.mocked(fsp.open).mockImplementation(async (p: unknown) => {
-    if (String(p) !== READY_FILE) throw new Error(`ENOENT: ${String(p)}`)
+    const body = states[String(p)]
+    if (body === undefined) throw new Error(`ENOENT: ${String(p)}`)
     return {
       stat: async () => ({ isFile: () => true, uid: 0 }),
-      read: async (buf: Buffer) => ({ bytesRead: 0, buffer: buf }),
+      read: async (buf: Buffer, offset: number, length: number) => {
+        const src = Buffer.from(body, 'utf8')
+        return { bytesRead: src.copy(buf, offset, 0, Math.min(src.length, length)), buffer: buf }
+      },
       close: async () => undefined,
     } as unknown as Awaited<ReturnType<typeof fsp.open>>
   })
@@ -216,5 +227,55 @@ describe('start() and config-file', () => {
     withInputs({ offline: 'true', 'config-file': CONFIG })
     await expect(start()).rejects.toThrow(`config-file ${CONFIG} isn't JSON`)
     expectNothingChanged()
+  })
+
+  it.each([
+    ['an array', '[]'],
+    ['null', 'null'],
+    ['a key cargowall does not read', '{"rule": [{"type": "hostname", "value": "example.com", "action": "allow"}]}'],
+  ])('refuses %s, before touching the runner', async (_, body) => {
+    withFiles({ [CONFIG]: body })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}`)
+    expectNothingChanged()
+  })
+
+  it("fails the step when cargowall's log shows the file didn't load", async () => {
+    withFiles({
+      [CONFIG]: CONFIG_BODY,
+      [CARGOWALL_LOG]: '::warning::No config loaded — defaulting to deny-all. Infrastructure hosts will be auto-allowed. ' +
+        'error="parse config: json: cannot unmarshal number into Go struct field Rule.rules.ports of type config.Port"\n',
+    })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(
+      /did not load config-file .*running deny-all.*cargowall said: No config loaded .*cannot unmarshal number/
+    )
+  })
+
+  it('fails the step when the log shows no load at all', async () => {
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: 'Starting\n' })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`did not load config-file ${CONFIG}`)
+  })
+
+  it('passes when a CodeCargo policy loaded instead of the file', async () => {
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: 'Policy loaded from CodeCargo API mode=CARGO_WALL_MODE_ENFORCE\n' })
+    withInputs({ 'api-url': API, 'config-file': CONFIG })
+    await expect(start()).resolves.toMatchObject({ supported: true })
+  })
+
+  it("reports the lockdown the file set, offline, over this step's input", async () => {
+    // The file turned the lockdown off: cargowall's record has no line for it.
+    withFiles(
+      { [CONFIG]: JSON.stringify({ rules: [], sudoLockdown: { enabled: false } }) },
+      { [POSTURES_FILE]: '[]' },
+    )
+    withInputs({ offline: 'true', 'sudo-lockdown': 'true', 'config-file': CONFIG })
+    await start()
+
+    const info = vi.mocked(core.info).mock.calls.map(([line]) => String(line))
+    expect(info).toContain("  Sudo lockdown: true (this step's input; the config file's sudoLockdown replaces it)")
+    expect(info).toContain("Sudo lockdown: off (set by the config file, which replaces this step's input: true)")
+    expect(info).not.toContain('Sudo lockdown: on')
   })
 })
