@@ -6,6 +6,9 @@
  */
 export const ACTION_VERSION = 'v1.3.10'
 
+/** This action's repository: only its own tags name a release exactly. */
+const ACTION_REPOSITORY = 'code-cargo/cargowall-action'
+
 /** The repository and ref the job's `uses:` named. */
 interface ActionSource {
   repo: string
@@ -35,9 +38,11 @@ function releaseAt(version: string, ref: string): string {
 
 /**
  * The setup log's line naming this action: its version, then the repository
- * and ref the job's `uses:` named. The runner doesn't always report those (an
- * action nested in a composite, a local `uses: ./`), so the action's own path
- * stands in.
+ * and ref the job's `uses:` named. The action's own path says where this code
+ * came from, so it wins when it parses; the runner's report stands in only
+ * then, since it can name a wrapper action, or nothing at all (an action
+ * nested in a composite, a local `uses: ./`). A ref names a release exactly
+ * only in this action's repository: a fork's tags are its own.
  */
 export function actionVersionLine(
   version: string = ACTION_VERSION,
@@ -45,7 +50,8 @@ export function actionVersionLine(
   dir: string = __dirname
 ): string {
   const repo = env.GITHUB_ACTION_REPOSITORY ?? ''
-  const found = repo ? { repo, ref: env.GITHUB_ACTION_REF ?? '' } : sourceFromPath(dir)
+  const found = sourceFromPath(dir) ?? (repo ? { repo, ref: env.GITHUB_ACTION_REF ?? '' } : null)
   const source = found ? (found.ref ? `${found.repo}@${found.ref}` : found.repo) : 'source not reported by the runner'
-  return `cargowall-action: ${version ? `${releaseAt(version, found?.ref ?? '')} (${source})` : source}`
+  const ref = found?.repo.toLowerCase() === ACTION_REPOSITORY ? found.ref : ''
+  return `cargowall-action: ${version ? `${releaseAt(version, ref)} (${source})` : source}`
 }

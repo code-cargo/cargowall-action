@@ -28,6 +28,25 @@ describe('actionVersionLine', () => {
     )
   })
 
+  it("prefers the action's own path to the runner's report", () => {
+    const dir = `/home/runner/work/_actions/code-cargo/cargowall-action/${SHA}/dist/main`
+    expect(actionVersionLine('v1.3.10', { GITHUB_ACTION_REPOSITORY: 'org/wrapper', GITHUB_ACTION_REF: 'v1' }, dir)).toBe(
+      `cargowall-action: v1.3.10 or a later commit (${REPO}@${SHA})`
+    )
+  })
+
+  it("names a release exactly only at this action's own repository", () => {
+    expect(actionVersionLine('v1.3.10', { GITHUB_ACTION_REPOSITORY: 'org/wrapper', GITHUB_ACTION_REF: 'v1' }, LOCAL)).toBe(
+      'cargowall-action: v1.3.10 or a later commit (org/wrapper@v1)'
+    )
+    expect(actionVersionLine('v1.3.10', {}, '/home/runner/work/_actions/someone/cargowall-action/v1.3.10/dist/main')).toBe(
+      'cargowall-action: v1.3.10 or a later commit (someone/cargowall-action@v1.3.10)'
+    )
+    expect(actionVersionLine('v1.3.10', {}, '/home/runner/work/_actions/Code-Cargo/cargowall-action/v1/dist/main')).toBe(
+      'cargowall-action: v1.3.10 (Code-Cargo/cargowall-action@v1)'
+    )
+  })
+
   it('leaves out an empty version', () => {
     expect(actionVersionLine('', env(SHA), LOCAL)).toBe(`cargowall-action: ${REPO}@${SHA}`)
     expect(actionVersionLine('', {}, LOCAL)).toBe('cargowall-action: source not reported by the runner')
