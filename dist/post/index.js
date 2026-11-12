@@ -25266,6 +25266,8 @@ var import_net = require("net");
 var loopback = new import_net.BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
+loopback.addAddress("0.0.0.0", "ipv4");
+loopback.addAddress("::", "ipv6");
 
 // src/diag.ts
 var import_fs5 = require("fs");

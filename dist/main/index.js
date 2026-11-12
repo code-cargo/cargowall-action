@@ -21561,10 +21561,10 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.3.7";
+var CARGOWALL_VERSION = "v1.3.8";
 var CARGOWALL_DIGESTS = {
-  amd64: "31c92933e21b4d329cb795c26e82a7d2d2f347a9e039b3016c186b2872dd42fe",
-  arm64: "f7ef2573298bcfc2b50a6c96f59c18ca01b006f84ba867fdc26a5cb85fb8575b"
+  amd64: "0d8b873b95b30827ba43b2460d9d4131ec4002a82c7c593fd01e0a4c35f0e37d",
+  arm64: "0b7901ee1ff91f685367bcd5345173a17cc3c9c922c7ef67dfa2a34348d7097a"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -25570,6 +25570,8 @@ function isValidIPv6(ip) {
 var loopback = new import_net.BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
+loopback.addAddress("0.0.0.0", "ipv4");
+loopback.addAddress("::", "ipv6");
 function isLoopback(ip) {
   const addr = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
   if ((0, import_net.isIPv4)(addr)) return loopback.check(addr, "ipv4");
