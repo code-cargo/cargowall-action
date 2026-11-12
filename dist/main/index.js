@@ -25618,6 +25618,8 @@ function isValidIPv6(ip) {
 var loopback = new import_net.BlockList();
 loopback.addSubnet("127.0.0.0", 8, "ipv4");
 loopback.addAddress("::1", "ipv6");
+loopback.addAddress("0.0.0.0", "ipv4");
+loopback.addAddress("::", "ipv6");
 function isLoopback(ip) {
   const addr = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
   if ((0, import_net.isIPv4)(addr)) return loopback.check(addr, "ipv4");

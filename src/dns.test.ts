@@ -19,9 +19,19 @@ describe('parseResolvConf', () => {
     }
   })
 
+  it('treats the unspecified address, in every spelling, as the local host', () => {
+    for (const ns of ['0.0.0.0', '::', '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0', '::ffff:0:0']) {
+      expect(parseResolvConf(`nameserver ${ns}\n`), ns).toEqual({ nameservers: [], hasStubResolver: true })
+    }
+    expect(parseResolvConf('nameserver 0.0.0.0\nnameserver ::\nnameserver 168.63.129.16\n')).toEqual({
+      nameservers: ['168.63.129.16'],
+      hasStubResolver: true
+    })
+  })
+
   it('keeps real resolvers, including ones that merely look close to loopback', () => {
-    expect(parseResolvConf('nameserver 128.0.0.1\nnameserver 10.127.0.1\nnameserver 2001:db8::1\n')).toEqual({
-      nameservers: ['128.0.0.1', '10.127.0.1', '2001:db8::1'],
+    expect(parseResolvConf('nameserver 128.0.0.1\nnameserver 10.127.0.1\nnameserver 2001:db8::1\nnameserver 0.0.0.1\nnameserver ::2\n')).toEqual({
+      nameservers: ['128.0.0.1', '10.127.0.1', '2001:db8::1', '0.0.0.1', '::2'],
       hasStubResolver: false
     })
   })

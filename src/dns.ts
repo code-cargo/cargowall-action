@@ -47,8 +47,10 @@ function isValidIPv6(ip: string): boolean {
 }
 
 /**
- * Any loopback resolver: all of 127.0.0.0/8, ::1, and IPv4-mapped loopback.
- * None of them can be cargowall's upstream. Whatever listens there (the
+ * Any loopback resolver: all of 127.0.0.0/8, ::1, and IPv4-mapped loopback,
+ * plus the unspecified address in every spelling (0.0.0.0, ::,
+ * ::ffff:0.0.0.0), which the kernel routes to the local host. None of them can
+ * be cargowall's upstream. Whatever listens there (the
  * systemd-resolved stub, or a caching forwarder such as the 127.0.0.100 some
  * runners list first) forwards from a socket cargowall's DNS redirect sends
  * straight back into the proxy, and the query loops; cargowall refuses such an
@@ -57,6 +59,8 @@ function isValidIPv6(ip: string): boolean {
 const loopback = new BlockList()
 loopback.addSubnet('127.0.0.0', 8, 'ipv4')
 loopback.addAddress('::1', 'ipv6')
+loopback.addAddress('0.0.0.0', 'ipv4')
+loopback.addAddress('::', 'ipv6')
 
 function isLoopback(ip: string): boolean {
   const addr = ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip
