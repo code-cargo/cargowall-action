@@ -21562,6 +21562,7 @@ var import_promises2 = require("timers/promises");
 
 // src/version.ts
 var ACTION_VERSION = "";
+var ACTION_REPOSITORY = "code-cargo/cargowall-action";
 function sourceFromPath(dir) {
   const m = dir.match(/\/_actions\/([^/]+)\/([^/]+)\/([^/]+)(\/|$)/);
   return m ? { repo: `${m[1]}/${m[2]}`, ref: m[3] } : null;
@@ -21573,9 +21574,10 @@ function releaseAt(version, ref) {
 }
 function actionVersionLine(version = ACTION_VERSION, env = process.env, dir = __dirname) {
   const repo = env.GITHUB_ACTION_REPOSITORY ?? "";
-  const found = repo ? { repo, ref: env.GITHUB_ACTION_REF ?? "" } : sourceFromPath(dir);
+  const found = sourceFromPath(dir) ?? (repo ? { repo, ref: env.GITHUB_ACTION_REF ?? "" } : null);
   const source = found ? found.ref ? `${found.repo}@${found.ref}` : found.repo : "source not reported by the runner";
-  return `cargowall-action: ${version ? `${releaseAt(version, found?.ref ?? "")} (${source})` : source}`;
+  const ref = found?.repo.toLowerCase() === ACTION_REPOSITORY ? found.ref : "";
+  return `cargowall-action: ${version ? `${releaseAt(version, ref)} (${source})` : source}`;
 }
 
 // src/setup.ts
