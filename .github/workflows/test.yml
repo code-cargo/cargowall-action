@@ -891,6 +891,9 @@ jobs:
         with:
           offline: 'true'
           config-file: ${{ runner.temp }}/cargowall.json
+          # Debug logging adds ::debug:: lines; the load check must still find
+          # the plain success line among them.
+          debug: 'true'
 
       - name: Assert cargowall loaded the file, not the environment
         run: |
