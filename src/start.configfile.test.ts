@@ -14,6 +14,7 @@ vi.mock('@actions/core', () => ({
   getInput: vi.fn(() => ''),
   getMultilineInput: vi.fn(() => []),
   getIDToken: vi.fn(),
+  getState: vi.fn(() => ''),
   startGroup: vi.fn(),
   endGroup: vi.fn(),
   info: vi.fn(),
@@ -24,6 +25,9 @@ vi.mock('@actions/core', () => ({
   setOutput: vi.fn(),
 }))
 vi.mock('@actions/exec', () => ({ exec: vi.fn(async () => 0) }))
+// For the post step, which the FIX-A case runs after start().
+vi.mock('./summary', () => ({ generateSummary: vi.fn(async () => undefined) }))
+vi.mock('./cleanup', () => ({ cleanup: vi.fn(async () => undefined) }))
 vi.mock('@actions/github', () => ({ context: { job: 'build' } }))
 vi.mock('./dns', async importOriginal => ({
   ...(await importOriginal<typeof import('./dns')>()),
@@ -52,6 +56,7 @@ import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
 import * as path from 'path'
 import { ENV_CONFIG_VARS } from './configfile'
+import { generateSummary } from './summary'
 import { start } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
@@ -259,7 +264,7 @@ describe('start() and config-file', () => {
   })
 
   it('passes when a CodeCargo policy loaded instead of the file', async () => {
-    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: 'Policy loaded from CodeCargo API mode=CARGO_WALL_MODE_ENFORCE\n' })
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: '2026-11-12 00:00:01.000 Policy loaded from CodeCargo API mode=CARGO_WALL_MODE_ENFORCE\n' })
     withInputs({ 'api-url': API, 'config-file': CONFIG })
     await expect(start()).resolves.toMatchObject({ supported: true })
   })
@@ -298,5 +303,64 @@ describe('start() and config-file', () => {
     withInputs({ offline: 'true', 'config-file': CONFIG })
     await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${message}`)
     expectNothingChanged()
+  })
+
+  it.each([
+    ['a case variant beside a port key', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":[{"port":443,"protocol":"tcp","Protocol":"TCP"}]}]}', "rules[0].ports[0] has keys cargowall doesn't read: Protocol"],
+    ['a misspelled sudoLockdown key', '{"sudoLockdown":{"enable":true}}', "sudoLockdown has keys cargowall doesn't read: enable"],
+    ['a case variant of a step key', '{"steps":[{"id":"build","rules":[],"Rules":[]}]}', "steps[0] has keys cargowall doesn't read: Rules"],
+    ['ports that are not a list', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":{"port":443,"protocol":"tcp"}}]}', "rules[0].ports isn't a list"],
+    ['rules as null', '{"rules":null}', "rules isn't a list"],
+    ['steps as null', '{"steps":null}', "steps isn't a list"],
+    ['ports as null', '{"rules":[{"type":"hostname","value":"example.com","action":"allow","ports":null}]}', "rules[0].ports isn't a list"],
+  ])('refuses %s, before touching the runner', async (_, body, message) => {
+    withFiles({ [CONFIG]: body })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`config-file ${CONFIG}: ${message}`)
+    expectNothingChanged()
+  })
+
+  it('fails the step on a failed load whose error quotes the success line', async () => {
+    withFiles({
+      [CONFIG]: CONFIG_BODY,
+      [CARGOWALL_LOG]: '::warning::No config loaded — defaulting to deny-all. ' +
+        'error=steps[0]: step id "Config loaded successfully": must start with a letter or _\n',
+    })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`did not load config-file ${CONFIG}`)
+  })
+
+  it('fails the step on a "No config loaded" warning, whatever else the log holds', async () => {
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: LOADED + '::warning::No config loaded — defaulting to deny-all.\n' })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow(`did not load config-file ${CONFIG}`)
+  })
+
+  it('credits the file after a 404, with the API in play, when it sets sudoLockdown', async () => {
+    // No mode file and no downgrade: the API answered with no policy.
+    withFiles({ [CONFIG]: '{"sudoLockdown":{"enabled":false}}' }, { [POSTURES_FILE]: '[]' })
+    withInputs({ 'api-url': API, 'sudo-lockdown': 'true', 'config-file': CONFIG })
+    await start()
+
+    const info = vi.mocked(core.info).mock.calls.map(([line]) => String(line))
+    expect(info).toContain(
+      "  Sudo lockdown: true (this step's input; a CodeCargo policy that sets sudo lockdown replaces it, and the config file's false does when no policy loads)"
+    )
+    expect(info).toContain("Sudo lockdown: off (set by the config file, which replaces this step's input: true)")
+  })
+
+  it('leaves the post step to summarise a run whose file cargowall did not load', async () => {
+    withFiles({ [CONFIG]: CONFIG_BODY, [CARGOWALL_LOG]: '::warning::No config loaded — defaulting to deny-all.\n' })
+    withInputs({ offline: 'true', 'config-file': CONFIG })
+    await expect(start()).rejects.toThrow('did not load config-file')
+
+    // What start() saved is what the post step reads.
+    const state = Object.fromEntries(vi.mocked(core.saveState).mock.calls.map(([k, v]) => [k, String(v)]))
+    expect(state['cargowall-pid']).toBeTruthy()
+    vi.mocked(core.getState).mockImplementation((name: string) => state[name] ?? '')
+    vi.resetModules()
+    await import('./post')
+    await vi.waitFor(() => expect(generateSummary).toHaveBeenCalledWith({ render: true }))
+    expect(core.info).not.toHaveBeenCalledWith('CargoWall never ran in this job, skipping summary')
   })
 })

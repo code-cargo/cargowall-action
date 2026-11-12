@@ -418,7 +418,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     // The file replaced the input: report what cargowall applied.
     core.info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, fileSetsLockdown: true }))
   }
-  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
 
   // Resolve cargowall's real PID (written via --pidfile, just before the ready
   // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
@@ -431,6 +430,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // Persist for the post step (also signals that cargowall was started).
   core.saveState('cargowall-pid', String(reportedPid))
+
+  // After that state: a file cargowall didn't load fails the step with
+  // cargowall still up, deny-all, and the post step summarises and stops it.
+  if (configFile) await requireConfigLoaded(CARGOWALL_LOG, configFile)
 
   core.endGroup()
 

@@ -269,6 +269,11 @@ describe('a config file in the sudo lockdown report', () => {
       .toBe("Sudo lockdown: off (set by the CodeCargo policy, which replaces this step's input: true)")
   })
 
+  it('credits a loaded policy, not the file, when cargowall reported nothing it can trust', () => {
+    expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: true, pinnedBinary: true, postures: null, fileSetsLockdown: true }))
+      .toBe("Sudo lockdown: not reported by cargowall (this step's input: true, which a CodeCargo policy that sets sudo lockdown replaces)")
+  })
+
   it('names the file when cargowall reported nothing it can trust', () => {
     expect(sudoLockdownReport({ inputSudoLockdown: true, policyLoaded: false, pinnedBinary: true, postures: null, fileSetsLockdown: true }))
       .toBe("Sudo lockdown: not reported by cargowall (this step's input: true, which the config file's sudoLockdown replaces)")

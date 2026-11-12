@@ -24,8 +24,19 @@ export const ENV_CONFIG_VARS = [
 /** The top-level keys of cargowall's config file (FirewallConfig). */
 const CONFIG_KEYS = ['rules', 'defaultAction', 'searchDomains', 'sudoLockdown', 'steps']
 
-/** A rule's keys (cargowall's Rule), and the protocols a port entry takes. */
+/**
+ * The keys cargowall reads at each level, matched exactly: Go's decoder
+ * matches a key to a field whatever its case, the last match winning, so a
+ * case variant ("Protocol" beside "protocol") would reach cargowall unchecked.
+ * A rule's leave out cargowall's autoAddedType on purpose: cargowall marks the
+ * rules it adds itself, a policy never sets it, and a step rule that does is
+ * refused by cargowall too.
+ */
 const RULE_KEYS = ['type', 'value', 'ports', 'action']
+const PORT_KEYS = ['port', 'protocol']
+const STEP_KEYS = ['id', 'rules']
+const SUDO_LOCKDOWN_KEYS = ['enabled', 'allowCommands']
+/** The protocols a port entry takes (cargowall's expandPorts), lowercase. */
 const PROTOCOLS = ['all', 'tcp', 'udp', 'icmp']
 
 /** The config file start() hands cargowall, as resolveConfigFile read it. */
@@ -94,9 +105,12 @@ export async function resolveConfigFile(configFile: string, inputs: EnvConfigInp
         `(it reads ${CONFIG_KEYS.join(', ')})`
     )
   }
-  const problem = rulesProblem(file.rules, 'rules') ?? stepsProblem(file.steps)
-  if (problem) throw new Error(`config-file ${configFile}: ${problem}`)
   const lockdown = file.sudoLockdown
+  const problem =
+    rulesProblem(file.rules, 'rules') ??
+    stepsProblem(file.steps) ??
+    (lockdown === undefined ? null : keysProblem(lockdown, 'sudoLockdown', SUDO_LOCKDOWN_KEYS))
+  if (problem) throw new Error(`config-file ${configFile}: ${problem}`)
   return {
     path: resolved,
     sudoLockdown: isObject(lockdown) ? lockdown.enabled === true : null,
@@ -107,19 +121,27 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** What's wrong with the object at `where`, given the keys it may have, or null. */
+function keysProblem(value: unknown, where: string, keys: string[]): string | null {
+  if (!isObject(value)) return `${where} isn't an object`
+  const unknown = Object.keys(value).filter(key => !keys.includes(key))
+  if (unknown.length === 0) return null
+  return `${where} has keys cargowall doesn't read: ${unknown.join(', ')} (it reads ${keys.join(', ')}, exactly)`
+}
+
 /** What's wrong with a rule list at `where`, as cargowall would read it, or null. */
 function rulesProblem(rules: unknown, where: string): string | null {
   if (rules === undefined) return null
   if (!Array.isArray(rules)) return `${where} isn't a list`
   for (const [i, rule] of rules.entries()) {
-    if (!isObject(rule)) return `${where}[${i}] isn't an object`
-    const unknown = Object.keys(rule).filter(key => !RULE_KEYS.includes(key))
-    if (unknown.length > 0) {
-      return `${where}[${i}] has keys cargowall doesn't read: ${unknown.join(', ')} (a rule has ${RULE_KEYS.join(', ')})`
-    }
-    if (rule.ports === undefined) continue
-    if (!Array.isArray(rule.ports)) return `${where}[${i}].ports isn't a list`
-    for (const [j, port] of rule.ports.entries()) {
+    const ruleProblem = keysProblem(rule, `${where}[${i}]`, RULE_KEYS)
+    if (ruleProblem) return ruleProblem
+    const ports = (rule as Record<string, unknown>).ports
+    if (ports === undefined) continue
+    if (!Array.isArray(ports)) return `${where}[${i}].ports isn't a list`
+    for (const [j, port] of ports.entries()) {
+      const portProblem = isObject(port) ? keysProblem(port, `${where}[${i}].ports[${j}]`, PORT_KEYS) : null
+      if (portProblem) return portProblem
       if (!isObject(port) || !PROTOCOLS.includes(port.protocol as string)) {
         return (
           `${where}[${i}].ports[${j}] needs a protocol, one of ${PROTOCOLS.join(', ')} in lowercase, as in ` +
@@ -136,21 +158,26 @@ function stepsProblem(steps: unknown): string | null {
   if (steps === undefined) return null
   if (!Array.isArray(steps)) return "steps isn't a list"
   for (const [i, step] of steps.entries()) {
-    if (!isObject(step)) return `steps[${i}] isn't an object`
-    const problem = rulesProblem(step.rules, `steps[${i}].rules`)
+    const problem = keysProblem(step, `steps[${i}]`, STEP_KEYS) ?? rulesProblem((step as Record<string, unknown>).rules, `steps[${i}].rules`)
     if (problem) return problem
   }
   return null
 }
 
 /**
+ * A line cargowall logs once a load succeeds (cargowall's loadCIConfig and
+ * pkg/config LoadConfig), in its GitHub Actions handler's form for an info
+ * record: a timestamp, then the message, then its attributes. Anchored, so the
+ * phrase quoted inside some other line, a load error among them, doesn't count.
+ */
+const LOADED = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} (Config loaded successfully|Policy loaded from CodeCargo API)( |$)/
+
+/**
  * Throws unless cargowall's log, written since this step started it, shows a
- * configuration loaded: the CodeCargo policy, or the config file. A file
- * cargowall can't load (a rule it rejects) leaves it running deny-all with
- * only a warning in its own log, and the step must not pass on that. Keyed on
- * the two lines cargowall logs once a load succeeds (cargowall's loadCIConfig
- * and pkg/config LoadConfig), so a load that failed for any reason shows as
- * neither.
+ * configuration loaded, the CodeCargo policy or the config file, and no
+ * "No config loaded" warning. A file cargowall can't load (a rule it rejects)
+ * leaves it running deny-all with only that warning in its own log, and the
+ * step must not pass on that.
  */
 export async function requireConfigLoaded(logPath: string, configFile: string): Promise<void> {
   let log = ''
@@ -159,8 +186,9 @@ export async function requireConfigLoaded(logPath: string, configFile: string): 
   } catch {
     // No log to read is no evidence either way: the check below fails.
   }
-  if (log.includes('Policy loaded from CodeCargo API') || log.includes('Config loaded successfully')) return
-  const why = log.split('\n').find(line => line.includes('No config loaded'))
+  const lines = log.split('\n')
+  const why = lines.find(line => line.includes('No config loaded'))
+  if (!why && lines.some(line => LOADED.test(line))) return
   throw new Error(
     `CargoWall did not load config-file ${configFile}, so it is running deny-all with only CI ` +
       `infrastructure allowed. Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, 'No config loaded').trim()}` : ''}`

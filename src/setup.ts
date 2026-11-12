@@ -15,8 +15,11 @@ const BINARY_NAME = 'cargowall'
 // `sudo-lockdown` line whenever the flag or the policy asked for the lockdown:
 // from the pinned download, sudoLockdownReport (src/effective.ts) reports a
 // record without that line as the lockdown off. When moving the pin, also
-// recheck ENV_CONFIG_VARS (src/configfile.ts) against the new cargowall's
-// LoadFromEnv, and the log lines requireConfigLoaded keys on.
+// recheck what src/configfile.ts mirrors of cargowall: ENV_CONFIG_VARS against
+// LoadFromEnv; CONFIG_KEYS, RULE_KEYS, PORT_KEYS, STEP_KEYS and
+// SUDO_LOCKDOWN_KEYS against the config file's JSON tags; PROTOCOLS against
+// expandPorts; and the log lines requireConfigLoaded keys on. And the README's
+// "doesn't apply them to connections yet" for steps, once cargowall binds them.
 const CARGOWALL_VERSION = 'v2.0.0-rc.14'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
