@@ -21561,10 +21561,10 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.3.8-rc.1";
+var CARGOWALL_VERSION = "v1.3.8";
 var CARGOWALL_DIGESTS = {
-  amd64: "371c8ce06a299421329968c8f3251dedbb078ef8f0494a048dafcc11afd1e3e4",
-  arm64: "7ddd90a707399d542f6358ea431d234c68bc0fc00c4c087e7c90ef4a7320c006"
+  amd64: "0d8b873b95b30827ba43b2460d9d4131ec4002a82c7c593fd01e0a4c35f0e37d",
+  arm64: "0b7901ee1ff91f685367bcd5345173a17cc3c9c922c7ef67dfa2a34348d7097a"
 };
 function linuxArch() {
   const archRaw = os6.arch();
