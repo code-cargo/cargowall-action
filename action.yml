@@ -60,7 +60,7 @@ inputs:
       trafficmanager.net
       blob.core.windows.net
   config-file:
-    description: 'Path to YAML/JSON config file for advanced rules'
+    description: 'Path to a JSON config file: this step''s whole configuration (rules, defaultAction, searchDomains, sudoLockdown, steps), used when no CodeCargo policy loads. Not combinable with allowed-hosts, allowed-cidrs or search-domains'
     required: false
   fail-on-unsupported:
     description: 'Fail the workflow if CargoWall cannot run on this runner (vs warn and continue). Enforcement the runner cannot apply always fails the step'

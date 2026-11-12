@@ -216,9 +216,11 @@ See [Sudo Lockdown](#sudo-lockdown) for what an allowlist gives up, and for the 
 
 ### With Config File
 
-For complex configurations, use a JSON or YAML config file:
+For complex configurations, or per-step allow rules, give the step's configuration as a JSON file:
 
 ```yaml
+- uses: actions/checkout@v6   # the file comes from the repository
+
 - uses: code-cargo/cargowall-action@v1
   with:
     config-file: .github/cargowall.json
@@ -227,13 +229,23 @@ For complex configurations, use a JSON or YAML config file:
 **`.github/cargowall.json`**:
 ```json
 {
+  "defaultAction": "deny",
   "rules": [
     { "type": "hostname", "value": "github.com", "action": "allow" },
     { "type": "hostname", "value": "registry.npmjs.org", "action": "allow" },
-    { "type": "cidr", "value": "10.0.0.0/8", "ports": [443, 80], "action": "allow" }
+    { "type": "cidr", "value": "10.0.0.0/8", "action": "allow",
+      "ports": [{ "port": 443, "protocol": "tcp" }, { "port": 80, "protocol": "tcp" }] }
+  ],
+  "steps": [
+    { "id": "publish", "rules": [{ "type": "hostname", "value": "npm.pkg.github.com" }] }
   ]
 }
 ```
+
+- **The file is this step's whole configuration.** It holds `rules`, `defaultAction` (deny when omitted), `searchDomains`, `sudoLockdown` (which replaces `sudo-lockdown` and `sudo-allow-commands`, as a policy's does) and `steps`, each step's own allow rules by its workflow `id:`. The pinned cargowall loads and validates `steps` but doesn't apply them yet: until it binds steps to their rules, every step gets the job's rules alone. So it can't be combined with `allowed-hosts`, `allowed-cidrs` or `search-domains`: give those in the file. `mode`, `sudo-lockdown`, `github-service-hosts` and `azure-infra-hosts` apply as they do without a file.
+- **A CodeCargo policy replaces it.** When a policy is fetched and loads, the file is neither read nor merged. The file applies when no policy loads: `offline: true`, `skip-policy-fetch: true`, no `api-url`, no OIDC token, or a fetch the API answers with no policy (not onboarded, a rejected token, an inactive repository).
+- **A failed fetch keeps its [`api-failure-mode`](#when-the-codecargo-policy-cant-be-fetched).** Under `audit` the run is downgraded to audit and under `enforce` it keeps enforcing, each on the file; under `fail` it locks down and reads no local configuration.
+- **A missing file, or one that isn't JSON, fails the step** before anything on the runner changes.
 
 ### Experimental: L7 Destination Identity (v2 Preview)
 
@@ -328,7 +340,7 @@ Worth knowing before you enable it:
 | `search-domains`             | Extra DNS search-domain suffixes, one per line — stripped before hostname-rule matching and bypassed for unmatched DNS queries. The detected cloud provider's suffixes are added [automatically](#with-dns-search-domains). Each suffix needs ≥2 labels and cannot be a public suffix. |                                                |
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line). Replaces the default list rather than adding to it; an empty value is an error                                                                                                                                      | See [defaults](#automatically-allowed-traffic) |
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line), applied only on Azure. Replaces the default list rather than adding to it; an empty value is an error                                                                                                         | See [defaults](#automatically-allowed-traffic) |
-| `config-file`                | Path to YAML/JSON config file for advanced rules                                                                                                                                                                                                                                       |                                                |
+| `config-file`                | A JSON file that is this step's whole configuration, used when no CodeCargo policy loads. Not combinable with `allowed-hosts`, `allowed-cidrs` or `search-domains`; see [With Config File](#with-config-file)                                                                          |                                                |
 | `fail-on-unsupported`        | Fail if CargoWall can't run here (eBPF unsupported, or startup failed) rather than warn and continue. Enforcement the runner can't apply [always fails the step](#cargowall-refused-to-start)                                                                                          | `false`                                        |
 | `sudo-lockdown`              | Restrict sudo for the job's user to the allowlist. Allowlisted commands and docker access are outside it — see [Sudo Lockdown](#sudo-lockdown)                                                                                                                                         | `false`                                        |
 | `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                                                                                                                                                                                                              |                                                |

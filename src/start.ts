@@ -5,6 +5,7 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
+import { localConfigEnv, resolveConfigFile } from './configfile'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -88,7 +89,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   const githubServiceHosts = requireNonEmptyHostList('github-service-hosts')
   const azureInfraHosts = requireNonEmptyHostList('azure-infra-hosts')
 
-  const configFile = core.getInput('config-file')
   const sudoLockdown = core.getInput('sudo-lockdown') === 'true'
   const debug = core.getInput('debug') === 'true'
   const failOnUnsupported = core.getInput('fail-on-unsupported') === 'true'
@@ -99,6 +99,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     containerEgress: core.getInput('container-egress'),
     tlsSni: core.getInput('tls-sni'),
   })
+  const configFile = await resolveConfigFile(core.getInput('config-file'), { allowedHosts, allowedCidrs, searchDomains })
 
   core.startGroup('Starting CargoWall Firewall')
 
@@ -214,7 +215,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   if (searchDomains) core.info(`  Search domains: ${searchDomains}`)
   if (githubServiceHosts) core.info(`  GitHub service hosts: ${githubServiceHosts}`)
   if (azureInfraHosts) core.info(`  Azure infra hosts: ${azureInfraHosts}`)
-  if (configFile) core.info(`  Config file: ${configFile}`)
+  // cargowall reads the file only when no CodeCargo policy loads.
+  if (configFile) core.info(`  Config file: ${configFile}${apiFailurePosture === null ? '' : ' (when no CodeCargo policy loads)'}`)
   const jobId = core.getInput('job-id')
   if (jobId) core.info(`  Job run ID: ${jobId}`)
   core.info(`  Sudo lockdown: ${sudoLockdownEcho(sudoLockdown, apiFailurePosture !== null)}`)
@@ -238,11 +240,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // Set environment variables for cargowall
   const env = {
-    ...process.env,
-    CARGOWALL_DEFAULT_ACTION: 'deny',
-    ...(allowedHosts && { CARGOWALL_ALLOWED_HOSTS: allowedHosts }),
-    ...(allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: allowedCidrs }),
-    ...(searchDomains && { CARGOWALL_SEARCH_DOMAINS: searchDomains }),
+    ...localConfigEnv(process.env, configFile, { allowedHosts, allowedCidrs, searchDomains }),
     // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
     // them would hand cargowall's narrower built-in defaults to the user unannounced.
     CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,

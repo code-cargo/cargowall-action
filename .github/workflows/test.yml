@@ -857,6 +857,164 @@ jobs:
           sudo kill -0 "$(cat /tmp/cargowall.pid)"
           grep -qxF 'nameserver 127.0.0.1' /etc/resolv.conf
 
+  # --- config-file (#109) ----------------------------------------------------
+  # The real binary reads the file only when no CodeCargo policy loads. These
+  # cover both sides: the file is the configuration offline and after a 404,
+  # and a policy that loads replaces it.
+
+  test-config-file-offline:
+    name: Config file is the configuration offline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Write a config file with job and step rules
+        run: |
+          cat > "$RUNNER_TEMP/cargowall.json" <<'JSON'
+          {
+            "defaultAction": "deny",
+            "rules": [
+              { "type": "hostname", "value": "github.com", "action": "allow" },
+              { "type": "hostname", "value": "example.com", "ports": [{ "port": 443, "protocol": "tcp" }], "action": "allow" }
+            ],
+            "steps": [
+              { "id": "fetch", "rules": [{ "type": "hostname", "value": "registry.npmjs.org" }] }
+            ]
+          }
+          JSON
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          offline: 'true'
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert cargowall loaded the file, not the environment
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          grep -F 'Config loaded successfully' /tmp/cargowall.log
+          if grep -F 'Loaded config from environment variables' /tmp/cargowall.log; then
+            echo "ERROR: cargowall loaded the environment configuration, not the file"
+            exit 1
+          fi
+
+      - name: Assert the file's allow reaches the datapath
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://example.com
+
+      - name: Assert a host the file doesn't allow is blocked
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked: the file allows only github.com and example.com"
+            exit 1
+          fi
+          echo "httpbin.org blocked, as the file requires"
+
+  test-config-file-not-onboarded:
+    name: Config file is the configuration after an API 404
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that always 404s
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '404'
+
+      - name: Write a config file with no defaultAction
+        run: |
+          echo '{"rules":[{"type":"hostname","value":"example.com","action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          api-url: http://127.0.0.1:8099
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert the file loaded and no policy did
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          grep -F 'Config loaded successfully' /tmp/cargowall.log
+          if [ -f /tmp/cargowall-mode ]; then
+            echo "ERROR: a 404 must load no policy, yet a mode file was written"
+            cat /tmp/cargowall-mode
+            exit 1
+          fi
+
+      - name: Assert the file's allow reaches the datapath
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://example.com
+
+      - name: Assert an omitted defaultAction denies
+        run: |
+          if curl -sf --max-time 5 https://httpbin.org > /dev/null 2>&1; then
+            echo "ERROR: httpbin.org should be blocked: a file without defaultAction denies"
+            exit 1
+          fi
+          echo "httpbin.org blocked, as an omitted defaultAction requires"
+
+  test-config-file-policy-wins:
+    name: A CodeCargo policy replaces the config file
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start a policy API stub that serves an enforcing policy
+        uses: ./.github/actions/policy-stub
+        with:
+          status: '200'
+          policy: >-
+            {"mode": "CARGO_WALL_MODE_ENFORCE", "defaultAction": "CARGO_WALL_ACTION_TYPE_DENY",
+            "rules": [{"type": "CARGO_WALL_RULE_TYPE_HOSTNAME", "value": "github.com", "action": "CARGO_WALL_ACTION_TYPE_ALLOW"}]}
+
+      - name: Write a config file that allows what the policy doesn't
+        run: |
+          echo '{"defaultAction":"deny","rules":[{"type":"hostname","value":"example.com","action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          api-url: http://127.0.0.1:8099
+          config-file: ${{ runner.temp }}/cargowall.json
+
+      - name: Assert the policy loaded and the file didn't
+        run: |
+          test '${{ steps.cargowall.outputs.supported }}' = 'true'
+          grep -F 'Policy loaded from CodeCargo API' /tmp/cargowall.log
+          test "$(cat /tmp/cargowall-mode)" = enforce
+          if grep -F 'Config loaded successfully' /tmp/cargowall.log; then
+            echo "ERROR: cargowall loaded the config file over the CodeCargo policy"
+            exit 1
+          fi
+
+      - name: Assert the policy's allow reaches the datapath
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://github.com
+
+      - name: Assert the file's allow does not
+        run: |
+          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
+            echo "ERROR: example.com should be blocked: only the file allows it, and the policy replaces the file"
+            exit 1
+          fi
+          echo "example.com blocked: the policy, not the file, is the configuration"
+
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)
     runs-on: ubuntu-latest

@@ -5,9 +5,13 @@ summary push) always gets 200 so push noise never pollutes the job log — the
 stub exists to drive the FETCH failure classes, not to assert pushes.
 """
 import http.server
+import os
 import sys
 
 status = int(sys.argv[1])
+# The policy body, from the POLICY environment variable: '{}' unless a job
+# serves a real policy with a 200.
+policy = os.environ.get('POLICY', '{}').encode()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -15,7 +19,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(b'{}')
+        self.wfile.write(policy)
 
     def do_POST(self):
         length = int(self.headers.get('Content-Length', 0))
