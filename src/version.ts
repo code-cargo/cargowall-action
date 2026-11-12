@@ -4,7 +4,7 @@
  * separately, so the setup log prints both. check-action-version.sh fails a
  * release whose tag this doesn't match.
  */
-export const ACTION_VERSION = 'v1.3.10'
+export const ACTION_VERSION = 'v1.3.11'
 
 /** This action's repository: only its own tags name a release exactly. */
 const ACTION_REPOSITORY = 'code-cargo/cargowall-action'

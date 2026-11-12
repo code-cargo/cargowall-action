@@ -22076,7 +22076,7 @@ var import_promises = require("stream/promises");
 var import_promises2 = require("timers/promises");
 
 // src/version.ts
-var ACTION_VERSION = "v1.3.10";
+var ACTION_VERSION = "v1.3.11";
 var ACTION_REPOSITORY = "code-cargo/cargowall-action";
 function sourceFromPath(dir) {
   const m = dir.match(/\/_actions\/([^/]+)\/([^/]+)\/([^/]+)(\/|$)/);
