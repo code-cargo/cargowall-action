@@ -20,8 +20,8 @@ const BINARY_NAME = 'cargowall'
 // SUDO_LOCKDOWN_KEYS against the config file's JSON tags; PROTOCOLS against
 // expandPorts; RULE_TYPES and ACTIONS against the rule types and actions
 // cargowall acts on; LABEL against the hostname patterns it compiles;
-// SUDOERS_UNSAFE_CHARS against pkg/lockdown's sudoersUnsafeChars, and the
-// allowlist's comma join and split; and the log lines requireConfigLoaded
+// COMMAND_PATH, which must stay stricter than pkg/lockdown's
+// sudoersUnsafeChars, and the allowlist's comma join and split; and the log lines requireConfigLoaded
 // keys on, the errors for a dropped rule among them, which must still come
 // only from the loaded config's own rules (were auto-allows ever resolved
 // through the same path, a bad github-service-hosts pattern would fail a good

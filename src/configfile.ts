@@ -217,6 +217,8 @@ const LABEL = /^(\*\*?|[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?)$/
  */
 function hostnameProblem(value: string): string | null {
   if (isIP(value)) return 'is an IP address: give it as type cidr'
+  const [address, bits, ...rest] = value.split('/')
+  if (rest.length === 0 && isIP(address) && /^\d+$/.test(bits ?? '')) return 'is a CIDR: give it as type cidr'
   if (value.includes('/')) return 'is a URL or a path, not a hostname: give the host alone'
   if (value.includes(':')) return 'has a port: give the host alone and its ports in ports'
   if (value.includes(',')) return 'lists more than one host: give one host per rule'
@@ -225,7 +227,8 @@ function hostnameProblem(value: string): string | null {
   if (value.endsWith('.')) return 'ends with a dot: leave it out'
   if (/[^\x20-\x7e]/.test(value)) return 'has a non-ASCII character: give the punycode (xn--) form'
   if (value.length > 253) return 'is longer than 253 characters'
-  for (const label of value.split('.')) {
+  const labels = value.split('.')
+  for (const [i, label] of labels.entries()) {
     if (label.length > 63) return 'has a label longer than 63 characters'
     if (!LABEL.test(label)) {
       return (
@@ -233,17 +236,20 @@ function hostnameProblem(value: string): string | null {
         'separated by single dots'
       )
     }
+    if (label === '**' && labels[i - 1] === '**') return 'repeats **: one ** label already matches any depth'
   }
   return null
 }
 
 /**
- * The characters cargowall refuses in a sudoers command path (sudoersUnsafeChars
- * in cargowall's pkg/lockdown). A comma among them matters before that check
- * runs: cargowall joins the entries with commas and splits them again, so an
- * entry holding one would reach it as two commands.
+ * A sudo allowlist entry: an absolute path of letters, digits and `._+@/-`,
+ * stricter than the characters cargowall refuses (sudoersUnsafeChars in its
+ * pkg/lockdown), which leave sudoers syntax such as `:` and `=` through. A
+ * comma matters before that check runs: cargowall joins the entries with
+ * commas and splits them again, so an entry holding one would reach it as two
+ * commands.
  */
-const SUDOERS_UNSAFE_CHARS = ' ,#\n\r\t`;&!()\\|*?[]'
+const COMMAND_PATH = /^\/[A-Za-z0-9._+@/-]+$/
 
 /**
  * What's wrong with sudoLockdown.allowCommands, or null. cargowall keeps only
@@ -260,11 +266,10 @@ function allowCommandsProblem(commands: unknown): string | null {
         'drops any arguments, which would allow the command with every argument'
       )
     }
-    if ([...SUDOERS_UNSAFE_CHARS].some(c => command.includes(c))) {
+    if (!COMMAND_PATH.test(command)) {
       return (
-        `sudoLockdown.allowCommands[${i}] has a character a sudoers command path can't hold ` +
-        `(any of ${JSON.stringify(SUDOERS_UNSAFE_CHARS)}): a comma would split it into two commands, ` +
-        'and cargowall refuses the rest'
+        `sudoLockdown.allowCommands[${i}] may hold only letters, digits and ._+@/- after its leading /: ` +
+        'a comma would split it into two commands, and sudoers reads others as its own syntax'
       )
     }
   }

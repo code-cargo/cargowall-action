@@ -373,6 +373,10 @@ describe('start() and config-file', () => {
     ['a trailing dot', 'example.com.', 'ends with a dot'],
     ['an IPv4 address', '1.2.3.4', 'is an IP address: give it as type cidr'],
     ['an IPv6 address', '2001:db8::1', 'is an IP address: give it as type cidr'],
+    ['an IPv4 CIDR', '10.0.0.0/8', 'is a CIDR: give it as type cidr'],
+    ['an IPv6 CIDR', '2001:db8::/32', 'is a CIDR: give it as type cidr'],
+    ['an address with a path', '1.2.3.4/index.html', 'is a URL or a path, not a hostname'],
+    ['a repeated **', '**.**.example.com', 'repeats **: one ** label already matches any depth'],
     ['a leading dot', '.example.com', 'starts with a dot: leave it out, since a name already covers its subdomains'],
     ['a comma-joined list', 'example.com,api.example.com', 'lists more than one host: give one host per rule'],
     ['an empty label', 'example..com', 'is not a hostname'],
@@ -414,11 +418,14 @@ describe('start() and config-file', () => {
     ['a glob', '/usr/bin/*'],
     ['a semicolon', '/usr/bin/true;id'],
     ['a backslash', '/usr/bin/a\\b'],
+    ['a colon', '/usr/bin/a:b'],
+    ['an equals sign', '/usr/bin/a=b'],
   ])('refuses a sudo allowlist entry with %s, before touching the runner', async (_, entry) => {
     withFiles({ [CONFIG]: JSON.stringify({ sudoLockdown: { enabled: true, allowCommands: ['/usr/bin/true', entry] } }) })
     withInputs({ offline: 'true', 'config-file': CONFIG })
     await expect(start()).rejects.toThrow(
-      `config-file ${CONFIG}: sudoLockdown.allowCommands[1] has a character a sudoers command path can't hold`
+      `config-file ${CONFIG}: sudoLockdown.allowCommands[1] may hold only letters, digits and ._+@/- after its leading /: ` +
+        'a comma would split it into two commands'
     )
     expectNothingChanged()
   })
@@ -454,7 +461,8 @@ describe('start() and config-file', () => {
       }),
     ],
     ['a CIDR given as an address', '{"rules":[{"type":"cidr","value":"1.2.3.4","action":"allow"},{"type":"cidr","value":"2001:db8::1","action":"allow"}]}'],
-    ['a sudo allowlist of bare absolute paths', '{"sudoLockdown":{"enabled":true,"allowCommands":["/usr/bin/apt-get","/usr/bin/true"]}}'],
+    ['a sudo allowlist of bare absolute paths', '{"sudoLockdown":{"enabled":true,"allowCommands":["/usr/bin/apt-get","/usr/bin/true","/opt/tool_1.2/bin/g++-12@x"]}}'],
+    ['a single ** beside a *', '{"rules":[{"type":"hostname","value":"**.*.example.com","action":"allow"}]}'],
     ["the README's example", ''],
   ])('accepts %s', async (_, body) => {
     withFiles({ [CONFIG]: body || await readmeExample() })

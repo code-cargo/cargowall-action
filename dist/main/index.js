@@ -25889,6 +25889,8 @@ function ruleValuesProblem(rule, where, step) {
 var LABEL = /^(\*\*?|[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?)$/;
 function hostnameProblem(value) {
   if ((0, import_net2.isIP)(value)) return "is an IP address: give it as type cidr";
+  const [address, bits, ...rest] = value.split("/");
+  if (rest.length === 0 && (0, import_net2.isIP)(address) && /^\d+$/.test(bits ?? "")) return "is a CIDR: give it as type cidr";
   if (value.includes("/")) return "is a URL or a path, not a hostname: give the host alone";
   if (value.includes(":")) return "has a port: give the host alone and its ports in ports";
   if (value.includes(",")) return "lists more than one host: give one host per rule";
@@ -25897,15 +25899,17 @@ function hostnameProblem(value) {
   if (value.endsWith(".")) return "ends with a dot: leave it out";
   if (/[^\x20-\x7e]/.test(value)) return "has a non-ASCII character: give the punycode (xn--) form";
   if (value.length > 253) return "is longer than 253 characters";
-  for (const label of value.split(".")) {
+  const labels = value.split(".");
+  for (const [i, label] of labels.entries()) {
     if (label.length > 63) return "has a label longer than 63 characters";
     if (!LABEL.test(label)) {
       return "is not a hostname: give labels of letters, digits, hyphens and underscores, or a whole-label * or **, separated by single dots";
     }
+    if (label === "**" && labels[i - 1] === "**") return "repeats **: one ** label already matches any depth";
   }
   return null;
 }
-var SUDOERS_UNSAFE_CHARS = " ,#\n\r	`;&!()\\|*?[]";
+var COMMAND_PATH = /^\/[A-Za-z0-9._+@/-]+$/;
 function allowCommandsProblem(commands) {
   if (commands === void 0) return null;
   if (!Array.isArray(commands)) return "sudoLockdown.allowCommands isn't a list";
@@ -25913,8 +25917,8 @@ function allowCommandsProblem(commands) {
     if (typeof command !== "string" || !/^\/\S+$/.test(command)) {
       return `sudoLockdown.allowCommands[${i}] must be a bare absolute path, such as /usr/bin/apt-get: cargowall drops any arguments, which would allow the command with every argument`;
     }
-    if ([...SUDOERS_UNSAFE_CHARS].some((c) => command.includes(c))) {
-      return `sudoLockdown.allowCommands[${i}] has a character a sudoers command path can't hold (any of ${JSON.stringify(SUDOERS_UNSAFE_CHARS)}): a comma would split it into two commands, and cargowall refuses the rest`;
+    if (!COMMAND_PATH.test(command)) {
+      return `sudoLockdown.allowCommands[${i}] may hold only letters, digits and ._+@/- after its leading /: a comma would split it into two commands, and sudoers reads others as its own syntax`;
     }
   }
   return null;
