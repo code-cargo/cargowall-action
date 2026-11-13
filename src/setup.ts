@@ -26,12 +26,11 @@ const BINARY_NAME = 'cargowall'
 // keys on, the errors for a dropped rule among them, which must still come
 // only from the loaded config's own rules (were auto-allows ever resolved
 // through the same path, a bad github-service-hosts pattern would fail a good
-// file's step). And, when the pin moves to a release that binds steps to
-// their rules, the README's "no step's connections use them yet" and the
-// config-file step-rules e2e that asserts it.
+// file's step). And the README's account of when a file's step rules apply,
+// which the config-file step-rules e2e asserts.
 // CARGOWALL_VERSION is the binary's; this action release's own version is
 // ACTION_VERSION in src/version.ts: bump it in the release PR.
-const CARGOWALL_VERSION = 'v2.0.0-rc.15'
+const CARGOWALL_VERSION = 'v2.0.0-rc.16'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
@@ -47,8 +46,8 @@ const CARGOWALL_REPO = 'code-cargo/cargowall'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: '1bfedd80bf1b898c381b3ed26af50cdfe15f113196b0001f30924155ca2bfda8',
-  arm64: '79788ad2b1f22bc60b5f54b137b18c812a0b3f0190bd956c0f185cb512547440'
+  amd64: '5529271dbfaf920ba43081d996e1f168e70f468f812a1cef1f514605ca7678d1',
+  arm64: '35c552a91f43a55b08cb34e92570884989107cffe2b3f87bbe5e98e8dafc7fb1'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS

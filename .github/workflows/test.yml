@@ -917,15 +917,21 @@ jobs:
           fi
           echo "httpbin.org blocked, as the file requires"
 
-  # The README says the pinned cargowall loads a file's step rules but binds
-  # no step to them yet. This keeps that true: it runs where a release that
-  # binds steps keeps their rules (step attribution on, tls-sni observe), so
-  # a pin that binds steps fails here until this job and the README change.
+  # The README says a file's step rules apply to their own step's
+  # connections while L7 runs (tls-sni observe or above), and that with
+  # tls-sni off cargowall drops them and every step gets the job's rules.
+  # This keeps both true.
   test-config-file-step-rules:
-    name: Config file step rules bind no step on this pin
+    name: Config file step rules (tls-sni ${{ matrix.tls-sni }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        tls-sni: [observe, 'off']
+    env:
+      TLS_SNI: ${{ matrix.tls-sni }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -944,14 +950,25 @@ jobs:
         with:
           offline: 'true'
           config-file: ${{ runner.temp }}/cargowall.json
-          tls-sni: observe
+          tls-sni: ${{ matrix.tls-sni }}
 
-      - name: Assert cargowall kept the step rules
+      - name: Assert cargowall keeps the step rules only under L7
         run: |
           grep -F 'Config loaded successfully' /tmp/cargowall.log
-          if grep -E 'Step rules (are|stay) off' /tmp/cargowall.log; then
-            echo "ERROR: cargowall turned the step rules off, so this job can't tell whether the pin binds steps"
-            exit 1
+          applied=$(sudo jq -r '.[] | select(.posture == "step-rules") | .applied' /tmp/cargowall-postures)
+          if [ "$TLS_SNI" = off ]; then
+            if [ "$applied" != off ] || ! grep -F 'Step rules stay off: --tls-sni is off' /tmp/cargowall.log; then
+              echo "ERROR: with tls-sni off, cargowall should drop the step rules (step-rules posture: ${applied:-none})"
+              exit 1
+            fi
+            echo "tls-sni off: step rules dropped"
+          else
+            if [ "$applied" != on ] || grep -E 'Step rules (are|stay) off' /tmp/cargowall.log; then
+              echo "ERROR: cargowall turned the step rules off under tls-sni $TLS_SNI (step-rules posture: ${applied:-none})"
+              sudo cat /tmp/cargowall-postures || true
+              exit 1
+            fi
+            echo "tls-sni $TLS_SNI: step rules on"
           fi
 
       - name: Assert a step without the rule doesn't get the fetch step's host
@@ -962,18 +979,47 @@ jobs:
           fi
           echo "registry.npmjs.org blocked outside the fetch step"
 
-      - name: Assert the fetch step gets the job's rules on this pin
+      # A step is bound when cargowall reads its first exec, which can trail
+      # its first connection, so the fetch step retries as any client would.
+      - name: Assert the fetch step gets its own rule only under L7
         id: fetch
         run: |
-          reached=false
-          if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
-            reached=true
+          if [ "$TLS_SNI" = off ]; then
+            if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
+              echo "ERROR: the fetch step reached registry.npmjs.org with tls-sni off, where its rules are dropped"
+              exit 1
+            fi
+            echo "tls-sni off: registry.npmjs.org blocked in the fetch step too"
+          else
+            if ! curl -s --connect-timeout 5 --max-time 15 --retry 10 --retry-all-errors --retry-delay 1 \
+              -o /dev/null https://registry.npmjs.org; then
+              echo "ERROR: the fetch step couldn't reach registry.npmjs.org, which its own rule allows"
+              exit 1
+            fi
+            echo "tls-sni $TLS_SNI: the fetch step reached registry.npmjs.org through its own rule"
           fi
-          if [ "$reached" = true ] || grep -F 'Step bound to its policy' /tmp/cargowall.log; then
-            echo "ERROR: this pin binds steps (fetch step reached registry.npmjs.org: $reached), so update this job and the README"
+
+      - name: Assert only the fetch step was bound, and only under L7
+        run: |
+          bound=$(grep -F 'Step bound to its policy' /tmp/cargowall.log || true)
+          echo "${bound:-no step bound}"
+          if [ "$TLS_SNI" = off ]; then
+            if [ -n "$bound" ]; then
+              echo "ERROR: a step was bound with tls-sni off"
+              exit 1
+            fi
+          elif ! grep -q 'step=fetch ' <<< "$bound" || grep -v 'step=fetch ' <<< "$bound" | grep -q .; then
+            echo "ERROR: the fetch step, and only it, should be bound"
             exit 1
           fi
-          echo "registry.npmjs.org blocked in the fetch step too, and no step bound: this pin binds no step"
+
+      - name: Assert a later step without the rule is blocked again
+        run: |
+          if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
+            echo "ERROR: registry.npmjs.org reached after the fetch step, from a step whose rules don't allow it"
+            exit 1
+          fi
+          echo "registry.npmjs.org blocked after the fetch step"
 
   test-config-file-not-onboarded:
     name: Config file is the configuration after an API 404
