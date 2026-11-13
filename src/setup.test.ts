@@ -37,7 +37,7 @@ import * as core from '@actions/core'
 import { setTimeout as sleep } from 'timers/promises'
 import { downloadAsset, sha256File } from './setup'
 
-const URL = 'https://github.com/code-cargo/cargowall/releases/download/v1.3.9-rc.1/cargowall-linux-amd64'
+const URL = 'https://github.com/code-cargo/cargowall/releases/download/v1.3.9/cargowall-linux-amd64'
 
 /** A 2xx whose body streams cleanly. */
 function respondOk(body = 'binary-bytes'): unknown {
