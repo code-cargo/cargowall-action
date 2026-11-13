@@ -26593,6 +26593,13 @@ function parsePostures(raw) {
   }
   return lines;
 }
+function stepRulesWarning(postures) {
+  const line = postures?.find((l) => l.posture === "step-rules");
+  if (!line || line.applied !== "off") return null;
+  const why = line.reason ? ` (${line.reason})` : "";
+  const hint = /tls-sni/.test(line.reason ?? "") ? " Step rules need `tls-sni: observe` or above." : "";
+  return `CargoWall dropped the policy's per-step allow rules${why}, so every step gets the job's rules alone.${hint}`;
+}
 function sudoLockdownReport(args) {
   const fromFile = args.fileSetsLockdown === true && !args.policyLoaded;
   const line = args.postures?.find((l) => l.posture === "sudo-lockdown");
@@ -26967,6 +26974,8 @@ async function start() {
   await warnOnDowngrade(spawnedAtMs);
   const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs));
+  const stepRules = stepRulesWarning(postures);
+  if (stepRules) warning(stepRules);
   if (apiFailurePosture !== null) {
     const report = effectiveReport({
       inputMode: mode,

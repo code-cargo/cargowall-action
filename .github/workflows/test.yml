@@ -919,19 +919,27 @@ jobs:
 
   # The README says a file's step rules apply to their own step's
   # connections while L7 runs (tls-sni observe or above), and that with
-  # tls-sni off cargowall drops them and every step gets the job's rules.
-  # This keeps both true.
+  # tls-sni off, the default, cargowall drops them and every step gets the
+  # job's rules. This keeps both true, the default included: the unset leg
+  # trips if the preset ever raises tls-sni.
   test-config-file-step-rules:
-    name: Config file step rules (tls-sni ${{ matrix.tls-sni }})
+    name: Config file step rules (tls-sni ${{ matrix.tls-sni || 'unset' }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        tls-sni: [observe, 'off']
+        include:
+          - tls-sni: observe
+            steps-on: true
+          - tls-sni: 'off'
+            steps-on: false
+          - tls-sni: ''
+            steps-on: false
     env:
-      TLS_SNI: ${{ matrix.tls-sni }}
+      TLS_SNI: ${{ matrix.tls-sni || 'unset' }}
+      STEPS_ON: ${{ matrix.steps-on }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -956,12 +964,12 @@ jobs:
         run: |
           grep -F 'Config loaded successfully' /tmp/cargowall.log
           applied=$(sudo jq -r '.[] | select(.posture == "step-rules") | .applied' /tmp/cargowall-postures)
-          if [ "$TLS_SNI" = off ]; then
+          if [ "$STEPS_ON" != true ]; then
             if [ "$applied" != off ] || ! grep -F 'Step rules stay off: --tls-sni is off' /tmp/cargowall.log; then
-              echo "ERROR: with tls-sni off, cargowall should drop the step rules (step-rules posture: ${applied:-none})"
+              echo "ERROR: with tls-sni $TLS_SNI, cargowall should drop the step rules (step-rules posture: ${applied:-none})"
               exit 1
             fi
-            echo "tls-sni off: step rules dropped"
+            echo "tls-sni $TLS_SNI: step rules dropped"
           else
             if [ "$applied" != on ] || grep -E 'Step rules (are|stay) off' /tmp/cargowall.log; then
               echo "ERROR: cargowall turned the step rules off under tls-sni $TLS_SNI (step-rules posture: ${applied:-none})"
@@ -984,12 +992,12 @@ jobs:
       - name: Assert the fetch step gets its own rule only under L7
         id: fetch
         run: |
-          if [ "$TLS_SNI" = off ]; then
+          if [ "$STEPS_ON" != true ]; then
             if curl -s --connect-timeout 5 --max-time 10 -o /dev/null https://registry.npmjs.org; then
-              echo "ERROR: the fetch step reached registry.npmjs.org with tls-sni off, where its rules are dropped"
+              echo "ERROR: the fetch step reached registry.npmjs.org with tls-sni $TLS_SNI, where its rules are dropped"
               exit 1
             fi
-            echo "tls-sni off: registry.npmjs.org blocked in the fetch step too"
+            echo "tls-sni $TLS_SNI: registry.npmjs.org blocked in the fetch step too"
           else
             if ! curl -s --connect-timeout 5 --max-time 15 --retry 10 --retry-all-errors --retry-delay 1 \
               -o /dev/null https://registry.npmjs.org; then
@@ -1003,9 +1011,9 @@ jobs:
         run: |
           bound=$(grep -F 'Step bound to its policy' /tmp/cargowall.log || true)
           echo "${bound:-no step bound}"
-          if [ "$TLS_SNI" = off ]; then
+          if [ "$STEPS_ON" != true ]; then
             if [ -n "$bound" ]; then
-              echo "ERROR: a step was bound with tls-sni off"
+              echo "ERROR: a step was bound with tls-sni $TLS_SNI"
               exit 1
             fi
           elif ! grep -q 'step=fetch ' <<< "$bound" || grep -v 'step=fetch ' <<< "$bound" | grep -q .; then
@@ -1020,6 +1028,16 @@ jobs:
             exit 1
           fi
           echo "registry.npmjs.org blocked after the fetch step"
+
+      # Without L7 every curl above fails, so show it was cargowall that
+      # refused the name, not registry.npmjs.org that was unreachable.
+      - name: Assert cargowall refused the fetch step's host without L7
+        if: ${{ !matrix.steps-on }}
+        run: |
+          if ! grep -E 'DNS query blocked \(domain not allowed\).* domain=registry\.npmjs\.org( |$)' /tmp/cargowall.log; then
+            echo "ERROR: no DNS block for registry.npmjs.org in cargowall's log, so the blocks above may not be cargowall's"
+            exit 1
+          fi
 
   test-config-file-not-onboarded:
     name: Config file is the configuration after an API 404

@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
 import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
-import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, sudoLockdownEcho, sudoLockdownReport } from './effective'
+import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
@@ -401,6 +401,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // or source-ref was given.
   const pinnedBinary = !core.getInput('binary-path') && !core.getInput('source-ref')
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
+  const stepRules = stepRulesWarning(postures)
+  if (stepRules) core.warning(stepRules)
   if (apiFailurePosture !== null) {
     const report = effectiveReport({
       inputMode: mode,

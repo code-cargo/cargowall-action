@@ -114,6 +114,22 @@ export function parsePostures(raw: string | null): PostureLine[] | null {
 }
 
 /**
+ * A warning when the policy's step rules came up off. cargowall records a
+ * `step-rules` line only when the policy (or the config file) had steps with
+ * rules, and drops them, with no more than an info line in its own log, when
+ * nothing could judge a step by them, `tls-sni` off among the reasons. Every
+ * step then gets the job's rules alone, which fails closed but would
+ * otherwise go unnoticed.
+ */
+export function stepRulesWarning(postures: PostureLine[] | null): string | null {
+  const line = postures?.find(l => l.posture === 'step-rules')
+  if (!line || line.applied !== 'off') return null
+  const why = line.reason ? ` (${line.reason})` : ''
+  const hint = /tls-sni/.test(line.reason ?? '') ? ' Step rules need `tls-sni: observe` or above.' : ''
+  return `CargoWall dropped the policy's per-step allow rules${why}, so every step gets the job's rules alone.${hint}`
+}
+
+/**
  * The sudo lockdown cargowall applies, as the step reports it. The pinned
  * cargowall publishes its posture record before ready, and the record carries
  * a `sudo-lockdown` line whenever the flag or the policy asked for the

@@ -7,6 +7,7 @@ import {
   parseModeFile,
   parsePostures,
   previewNotice,
+  stepRulesWarning,
   sudoLockdownEcho,
   sudoLockdownReport,
 } from './effective'
@@ -116,6 +117,35 @@ describe('parsePostures', () => {
     expect(parsePostures(planted)).toEqual([
       { posture: 'sudo-lockdown', requested: 'true', applied: 'false', reason: 'bad [31m line' },
     ])
+  })
+})
+
+const stepRulesLine = (applied: string, reason?: string): string =>
+  `{"posture":"step-rules","requested":"on","applied":"${applied}"${reason ? `,"reason":"${reason}"` : ''}}`
+
+describe('stepRulesWarning', () => {
+  it('warns when cargowall dropped the step rules for tls-sni off, and says what they need', () => {
+    const postures = parsePostures(`[${stepRulesLine('off', "--tls-sni is off, so a step's DNS installs can't be name-scoped")}]`)
+    expect(stepRulesWarning(postures)).toBe(
+      "CargoWall dropped the policy's per-step allow rules (--tls-sni is off, so a step's DNS installs can't be name-scoped), " +
+        "so every step gets the job's rules alone. Step rules need `tls-sni: observe` or above."
+    )
+  })
+
+  it('names the tls-sni requirement when L7 did not start either', () => {
+    const reason = "L7 is not running (see the tls-sni posture), so a step's DNS installs can't be name-scoped"
+    expect(stepRulesWarning(parsePostures(`[${stepRulesLine('off', reason)}]`))).toContain('need `tls-sni: observe` or above')
+  })
+
+  it('warns without the tls-sni hint for a drop tls-sni does not cause', () => {
+    const warning = stepRulesWarning(parsePostures(`[${stepRulesLine('off', 'step attribution did not start')}]`))
+    expect(warning).toBe("CargoWall dropped the policy's per-step allow rules (step attribution did not start), so every step gets the job's rules alone.")
+  })
+
+  it('says nothing when the step rules are on, the policy had none, or there is no record', () => {
+    expect(stepRulesWarning(parsePostures(`[${REDIRECT_LINE},${stepRulesLine('on')}]`))).toBeNull()
+    expect(stepRulesWarning(parsePostures(`[${REDIRECT_LINE}]`))).toBeNull()
+    expect(stepRulesWarning(null)).toBeNull()
   })
 })
 
