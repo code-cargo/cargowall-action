@@ -118,15 +118,18 @@ export function parsePostures(raw: string | null): PostureLine[] | null {
  * `step-rules` line only when the policy (or the config file) had steps with
  * rules, and drops them, with no more than an info line in its own log, when
  * nothing could judge a step by them. Every step then gets the job's rules
- * alone, which fails closed but would otherwise go unnoticed. Only a
- * `tls-sni` left off earns the hint: when L7 was asked for and didn't start,
- * cargowall's reason already points at the tls-sni posture.
+ * alone, which fails closed but would otherwise go unnoticed. The hint that
+ * step rules need L7 goes with a `tls-sni` this step left off (no
+ * `--tls-sni` flag, or `off`), read from postureFlags rather than from
+ * cargowall's wording: with L7 asked for and not started, the user already
+ * has the setting, and cargowall's reason points at the tls-sni posture.
  */
-export function stepRulesWarning(postures: PostureLine[] | null): string | null {
+export function stepRulesWarning(postures: PostureLine[] | null, postureFlags: string[]): string | null {
   const line = postures?.find(l => l.posture === 'step-rules')
   if (!line || line.applied !== 'off') return null
   const why = line.reason ? `: ${line.reason}` : ''
-  const hint = /^--tls-sni is off\b/.test(line.reason ?? '') ? ' Step rules need `tls-sni: observe` or above.' : ''
+  const l7Asked = postureFlags.some(f => f.startsWith('--tls-sni=') && f !== '--tls-sni=off')
+  const hint = l7Asked ? '' : ' Step rules need `tls-sni: observe` or above.'
   return `CargoWall dropped the per-step allow rules (\`steps\`), so every step gets the job's rules alone${why}.${hint}`
 }
 

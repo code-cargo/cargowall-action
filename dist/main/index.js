@@ -26593,11 +26593,12 @@ function parsePostures(raw) {
   }
   return lines;
 }
-function stepRulesWarning(postures) {
+function stepRulesWarning(postures, postureFlags) {
   const line = postures?.find((l) => l.posture === "step-rules");
   if (!line || line.applied !== "off") return null;
   const why = line.reason ? `: ${line.reason}` : "";
-  const hint = /^--tls-sni is off\b/.test(line.reason ?? "") ? " Step rules need `tls-sni: observe` or above." : "";
+  const l7Asked = postureFlags.some((f) => f.startsWith("--tls-sni=") && f !== "--tls-sni=off");
+  const hint = l7Asked ? "" : " Step rules need `tls-sni: observe` or above.";
   return `CargoWall dropped the per-step allow rules (\`steps\`), so every step gets the job's rules alone${why}.${hint}`;
 }
 function sudoLockdownReport(args) {
@@ -26974,7 +26975,7 @@ async function start() {
   await warnOnDowngrade(spawnedAtMs);
   const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs));
-  const stepRules = stepRulesWarning(postures);
+  const stepRules = stepRulesWarning(postures, postureFlags);
   if (stepRules) warning(stepRules);
   if (apiFailurePosture !== null) {
     const report = effectiveReport({

@@ -401,7 +401,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // or source-ref was given.
   const pinnedBinary = !core.getInput('binary-path') && !core.getInput('source-ref')
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
-  const stepRules = stepRulesWarning(postures)
+  const stepRules = stepRulesWarning(postures, postureFlags)
   if (stepRules) core.warning(stepRules)
   if (apiFailurePosture !== null) {
     const report = effectiveReport({
