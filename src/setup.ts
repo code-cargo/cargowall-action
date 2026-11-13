@@ -14,7 +14,7 @@ const INSTALL_DIR = '/usr/local/bin'
 const BINARY_NAME = 'cargowall'
 // The cargowall binary's version. This action release's own version is
 // ACTION_VERSION in src/version.ts: bump it in the release PR.
-const CARGOWALL_VERSION = 'v1.3.8'
+const CARGOWALL_VERSION = 'v1.3.9-rc.1'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
 // checksums.txt: a digest served by the same CDN as the binary was never a
@@ -29,8 +29,8 @@ const CARGOWALL_VERSION = 'v1.3.8'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: '0d8b873b95b30827ba43b2460d9d4131ec4002a82c7c593fd01e0a4c35f0e37d',
-  arm64: '0b7901ee1ff91f685367bcd5345173a17cc3c9c922c7ef67dfa2a34348d7097a'
+  amd64: '79a00c8a5972f710f6bd4e32abd32a192603d0baa5d000ecf61175d777f12bab',
+  arm64: '0c26844e8ec49dd1b967eccbf4bc40ceff01a53c48f366dfa0754cd53b166da1'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS
