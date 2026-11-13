@@ -127,19 +127,21 @@ describe('stepRulesWarning', () => {
   it('warns when cargowall dropped the step rules for tls-sni off, and says what they need', () => {
     const postures = parsePostures(`[${stepRulesLine('off', "--tls-sni is off, so a step's DNS installs can't be name-scoped")}]`)
     expect(stepRulesWarning(postures)).toBe(
-      "CargoWall dropped the policy's per-step allow rules (--tls-sni is off, so a step's DNS installs can't be name-scoped), " +
-        "so every step gets the job's rules alone. Step rules need `tls-sni: observe` or above."
+      "CargoWall dropped the per-step allow rules (`steps`), so every step gets the job's rules alone: " +
+        "--tls-sni is off, so a step's DNS installs can't be name-scoped. Step rules need `tls-sni: observe` or above."
     )
   })
 
-  it('names the tls-sni requirement when L7 did not start either', () => {
+  it('gives no tls-sni hint when L7 was asked for and did not start, whose reason points at the posture', () => {
     const reason = "L7 is not running (see the tls-sni posture), so a step's DNS installs can't be name-scoped"
-    expect(stepRulesWarning(parsePostures(`[${stepRulesLine('off', reason)}]`))).toContain('need `tls-sni: observe` or above')
+    expect(stepRulesWarning(parsePostures(`[${stepRulesLine('off', reason)}]`))).toBe(
+      `CargoWall dropped the per-step allow rules (\`steps\`), so every step gets the job's rules alone: ${reason}.`
+    )
   })
 
   it('warns without the tls-sni hint for a drop tls-sni does not cause', () => {
     const warning = stepRulesWarning(parsePostures(`[${stepRulesLine('off', 'step attribution did not start')}]`))
-    expect(warning).toBe("CargoWall dropped the policy's per-step allow rules (step attribution did not start), so every step gets the job's rules alone.")
+    expect(warning).toBe("CargoWall dropped the per-step allow rules (`steps`), so every step gets the job's rules alone: step attribution did not start.")
   })
 
   it('says nothing when the step rules are on, the policy had none, or there is no record', () => {

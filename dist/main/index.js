@@ -26596,9 +26596,9 @@ function parsePostures(raw) {
 function stepRulesWarning(postures) {
   const line = postures?.find((l) => l.posture === "step-rules");
   if (!line || line.applied !== "off") return null;
-  const why = line.reason ? ` (${line.reason})` : "";
-  const hint = /tls-sni/.test(line.reason ?? "") ? " Step rules need `tls-sni: observe` or above." : "";
-  return `CargoWall dropped the policy's per-step allow rules${why}, so every step gets the job's rules alone.${hint}`;
+  const why = line.reason ? `: ${line.reason}` : "";
+  const hint = /^--tls-sni is off\b/.test(line.reason ?? "") ? " Step rules need `tls-sni: observe` or above." : "";
+  return `CargoWall dropped the per-step allow rules (\`steps\`), so every step gets the job's rules alone${why}.${hint}`;
 }
 function sudoLockdownReport(args) {
   const fromFile = args.fileSetsLockdown === true && !args.policyLoaded;
