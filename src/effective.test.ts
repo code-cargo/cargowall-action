@@ -7,6 +7,7 @@ import {
   parseModeFile,
   parsePostures,
   previewNotice,
+  stepRulesWarning,
   sudoLockdownEcho,
   sudoLockdownReport,
 } from './effective'
@@ -116,6 +117,44 @@ describe('parsePostures', () => {
     expect(parsePostures(planted)).toEqual([
       { posture: 'sudo-lockdown', requested: 'true', applied: 'false', reason: 'bad [31m line' },
     ])
+  })
+})
+
+const stepRulesLine = (applied: string, reason?: string): string =>
+  `{"posture":"step-rules","requested":"on","applied":"${applied}"${reason ? `,"reason":"${reason}"` : ''}}`
+
+describe('stepRulesWarning', () => {
+  const OFF_REASON = "--tls-sni is off, so a step's DNS installs can't be name-scoped"
+  const L7_DOWN = "L7 is not running (see the tls-sni posture), so a step's DNS installs can't be name-scoped"
+
+  it('warns when cargowall dropped the step rules with tls-sni left off, and says what they need', () => {
+    const expected =
+      "CargoWall dropped the per-step allow rules (`steps`), so every step gets the job's rules alone: " +
+      `${OFF_REASON}. Step rules need \`tls-sni: observe\` or above.`
+    const postures = parsePostures(`[${stepRulesLine('off', OFF_REASON)}]`)
+    expect(stepRulesWarning(postures, [])).toBe(expected)
+    expect(stepRulesWarning(postures, ['--container-egress=observe'])).toBe(expected)
+    expect(stepRulesWarning(postures, ['--tls-sni=off'])).toBe(expected)
+  })
+
+  it('gives no tls-sni hint when this step asked for L7, whatever cargowall says', () => {
+    for (const flag of ['--tls-sni=observe', '--tls-sni=enforce', '--tls-sni=enforce-pinned']) {
+      expect(stepRulesWarning(parsePostures(`[${stepRulesLine('off', L7_DOWN)}]`), ['--container-egress=enforce', flag])).toBe(
+        `CargoWall dropped the per-step allow rules (\`steps\`), so every step gets the job's rules alone: ${L7_DOWN}.`
+      )
+    }
+  })
+
+  it('warns without a reason when cargowall gave none', () => {
+    expect(stepRulesWarning(parsePostures(`[${stepRulesLine('off')}]`), ['--tls-sni=observe'])).toBe(
+      "CargoWall dropped the per-step allow rules (`steps`), so every step gets the job's rules alone."
+    )
+  })
+
+  it('says nothing when the step rules are on, the policy had none, or there is no record', () => {
+    expect(stepRulesWarning(parsePostures(`[${REDIRECT_LINE},${stepRulesLine('on')}]`), ['--tls-sni=observe'])).toBeNull()
+    expect(stepRulesWarning(parsePostures(`[${REDIRECT_LINE}]`), [])).toBeNull()
+    expect(stepRulesWarning(null, [])).toBeNull()
   })
 })
 
