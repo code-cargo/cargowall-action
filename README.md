@@ -456,7 +456,7 @@ download entirely with `binary-path`:
 ```yaml
 - name: Fetch cargowall
   run: |
-    gh release download v1.3.9 \
+    gh release download v1.3.10 \
       --repo code-cargo/cargowall \
       --pattern "cargowall-linux-${ARCH}" \
       --output "$RUNNER_TEMP/cargowall"
@@ -477,10 +477,10 @@ Pair it with `actions/cache` to make the download a cold-start-only cost:
   uses: actions/cache@v4
   with:
     path: ${{ runner.temp }}/cargowall
-    key: cargowall-v1.3.9-${{ runner.arch }}
+    key: cargowall-v1.3.10-${{ runner.arch }}
 
 - if: steps.cache.outputs.cache-hit != 'true'
-  run: gh release download v1.3.9 --repo code-cargo/cargowall --pattern "cargowall-linux-${ARCH}" --output "$RUNNER_TEMP/cargowall"
+  run: gh release download v1.3.10 --repo code-cargo/cargowall --pattern "cargowall-linux-${ARCH}" --output "$RUNNER_TEMP/cargowall"
   env:
     GH_TOKEN: ${{ github.token }}
     ARCH: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
