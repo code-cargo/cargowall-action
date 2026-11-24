@@ -824,7 +824,7 @@ describe('start() failure-sentinel handling', () => {
 
     expect(result).toEqual({ supported: false, pid: null })
     expect(core.setOutput).toHaveBeenCalledWith('supported', 'false')
-    // Pins this to the sentinel branch: the 30s-timeout path returns the same
+    // Pins this to the sentinel branch: the startup-timeout path returns the same
     // shape, but carries a generic message instead of the binary's reason.
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('failed to attach TC program')
@@ -978,7 +978,7 @@ describe('start() failure-sentinel handling', () => {
     // Coarse filesystem timestamps or write ordering can put a genuinely
     // fresh sentinel's mtime a hair below spawnedAtMs. Within the slack it
     // must still be trusted — otherwise a fast fatal error loses its precise
-    // reason to the generic 30s timeout.
+    // reason to the generic startup timeout.
     withFiles(
       { [FAILURE_FILE]: sentinel('cargowall startup failed: eBPF verifier rejected program') },
       { [FAILURE_FILE]: Date.now() - 500 },

@@ -252,7 +252,7 @@ describe('resolveEgressPostures', () => {
 
   it('rejects an unknown posture rather than letting the binary refuse to start', () => {
     // A flag the binary rejects never writes a sentinel, so the caller sees a
-    // 30-second wait-ready timeout instead of the typo they made.
+    // startup timeout instead of the typo they made.
     expect(() => resolveEgressPostures({ containerEgress: 'enforcing', tlsSni: '' })).toThrow(
       /Invalid "container-egress" value "enforcing"/
     )

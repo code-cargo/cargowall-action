@@ -37,6 +37,11 @@ push/PR and weekly. A forgotten update, a digest without provenance, or a
 tampered release asset is caught in this repo's CI rather than in a consumer's
 job.
 
+Recheck `STARTUP_TIMEOUT` in `src/startup.ts` against the new cargowall's
+bounded waits on its way to ready; its comment lists them and their sum. It
+must stay above that sum, or the action gives up on a cargowall still
+starting within its own limits.
+
 ### Releasing
 
 The action and the cargowall binary it pins are versioned separately, and the

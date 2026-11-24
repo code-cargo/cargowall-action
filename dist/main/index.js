@@ -26732,6 +26732,9 @@ async function restartResolved() {
   }
 }
 
+// src/startup.ts
+var STARTUP_TIMEOUT = 120;
+
 // src/start.ts
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
@@ -26741,7 +26744,6 @@ var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var MODE_FILE = "/tmp/cargowall-mode";
 var POSTURES_FILE = "/tmp/cargowall-postures";
-var STARTUP_TIMEOUT = 30;
 var EXIT_REFUSED = 3;
 var VALID_MODES = ["enforce", "audit"];
 var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
@@ -26963,7 +26965,7 @@ async function start() {
     if (exitCode === EXIT_REFUSED) {
       return failRefusedByExit();
     }
-    error("Timeout waiting for cargowall to be ready");
+    error(`Timeout waiting for cargowall to be ready: not ready after ${STARTUP_TIMEOUT}s, past every bound cargowall sets on its own startup`);
     await showLastLog();
     await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid]);
     return handleStartupFailure(

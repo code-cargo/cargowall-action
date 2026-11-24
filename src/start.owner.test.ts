@@ -146,11 +146,27 @@ describe('start() and the cargowall pidfile', () => {
     expect(signalledPids()).toEqual([])
   })
 
+  // cargowall's own bound on a Docker restart is 60s, after which it carries
+  // on to ready: a wait shorter than its worst case gave up on a cargowall
+  // still starting within its limits (src/startup.ts).
+  it('waits as long as cargowall may take, two minutes, then gives up', async () => {
+    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '4243\n', owner: 0 } }, 119)
+    expect(await startToTheEnd()).toEqual({ supported: true, pid: 4243 })
+
+    vi.clearAllMocks()
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
+    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '4243\n', owner: 0 } }, 120)
+    expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
+    expect(core.error).toHaveBeenCalledWith(expect.stringContaining('not ready after 120s'))
+    const readyLooks = vi.mocked(fsp.stat).mock.calls.filter(([p]) => String(p) === READY_FILE).length
+    expect(readyLooks).toBe(120)
+  })
+
   it('stops cargowall through its launcher on a timeout with no trusted pidfile', async () => {
     withStateFiles({ [PID_FILE]: { body: '31337\n', owner: 0, stale: true } })
 
     expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
-    expect(core.error).toHaveBeenCalledWith('Timeout waiting for cargowall to be ready')
+    expect(core.error).toHaveBeenCalledWith(expect.stringContaining('Timeout waiting for cargowall to be ready: not ready after 120s'))
     expect(signalledPids()).toEqual([String(LAUNCHER_PID)])
     expect(exec.exec).toHaveBeenCalledWith('sudo', ['kill', String(LAUNCHER_PID)], expect.anything())
   })

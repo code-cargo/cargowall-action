@@ -8,6 +8,7 @@ import { detectDnsUpstream } from './dns'
 import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
+import { STARTUP_TIMEOUT } from './startup'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -26,7 +27,6 @@ const MODE_FILE = '/tmp/cargowall-mode'
 // posturesFile). The pinned cargowall's names the sudo lockdown whenever it was
 // asked for.
 const POSTURES_FILE = '/tmp/cargowall-postures'
-const STARTUP_TIMEOUT = 30
 // `cargowall start`'s exit status for a refused posture (cmd/postures.go
 // exitRefused) — keep in sync. See sentinelRefusal.
 const EXIT_REFUSED = 3
@@ -380,7 +380,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     if (exitCode === EXIT_REFUSED) {
       return failRefusedByExit()
     }
-    core.error('Timeout waiting for cargowall to be ready')
+    core.error(`Timeout waiting for cargowall to be ready: not ready after ${STARTUP_TIMEOUT}s, past every bound cargowall sets on its own startup`)
     await showLastLog()
     await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid])
     return handleStartupFailure(
