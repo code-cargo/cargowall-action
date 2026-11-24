@@ -248,7 +248,7 @@ For complex configurations, give the job's rules as a JSON file:
 - **A CodeCargo policy replaces it.** When a policy is fetched and loads, the file is neither read nor merged. The file applies when no policy loads: `offline: true`, `skip-policy-fetch: true`, no `api-url`, no OIDC token, or a fetch the API answers with no policy (not onboarded, a rejected token, an inactive repository).
 - **A failed fetch keeps its [`api-failure-mode`](#when-the-codecargo-policy-cant-be-fetched)**, a policy cargowall can't load included. Under `audit` the run is downgraded to audit and under `enforce` it keeps this step's mode, each on the file; under `fail` it locks down and reads no local configuration.
 - **When the file sets `sudoLockdown`:** with no API in play, the start step announces the file's lockdown, not the input; with one, it notes the file's value as the fallback. Either way, once cargowall is ready and no policy loaded, it reports the lockdown cargowall applied.
-- **A file that can't serve fails the step.** Before DNS is touched or cargowall starts, the step refuses a file that's missing, isn't a JSON object, breaks the key or port rules above, or has a rule cargowall would drop or never match: a `type` other than `hostname` or `cidr`, an empty `value`, a job rule whose `action` isn't `allow` or `deny` (a job rule needs one), a step rule whose `action` is anything but `allow` (or left out), or a `defaultAction` other than `allow` or `deny`. These values are lowercase. A hostname rule's `value` must be a name a DNS query can carry: ASCII labels of letters, digits, hyphens and underscores (punycode for an international name), or a whole-label `*` or `**`, separated by single dots, with no leading or trailing dot and one host per rule. An IP address goes in a `cidr` rule, and ports in `ports`. A `sudoLockdown.allowCommands` entry must be a bare absolute path of letters, digits and `._+@/-`, since cargowall drops any arguments and splits entries on commas, and sudoers reads other characters as its own syntax. Once cargowall is ready, the step fails too when cargowall's log shows it didn't load the file, which leaves it running deny-all with only CI infrastructure allowed (under audit, every other connection is reported as would-deny instead), or loaded the file without a rule whose value it couldn't parse, such as an invalid CIDR.
+- **A file that can't serve fails the step.** Before DNS is touched or cargowall starts, the step refuses a file that's missing, isn't a JSON object, breaks the key or port rules above, or has a rule cargowall would drop or never match: a `type` other than `hostname` or `cidr`, an empty `value`, a job rule whose `action` isn't `allow` or `deny` (a job rule needs one), a step rule whose `action` is anything but `allow` (or left out), or a `defaultAction` other than `allow` or `deny`. These values are lowercase. A hostname rule's `value` must be a name a DNS query can carry: ASCII labels of letters, digits, hyphens and underscores (punycode for an international name), or a whole-label `*` or `**`, separated by single dots, with no leading or trailing dot and one host per rule. An IP address goes in a `cidr` rule, and ports in `ports`. A `sudoLockdown.allowCommands` entry must be a bare absolute path of letters, digits and `._+@/-`, since cargowall drops any arguments and splits entries on commas, and sudoers reads other characters as its own syntax. A file that passes these checks but that cargowall can't load, such as one with a rule whose value it can't parse (an invalid CIDR), fails the step too: [cargowall refuses to start](#cargowall-refused-to-start) on a configuration that doesn't load, whatever `fail-on-unsupported` says.
 
 ### Experimental: L7 Destination Identity (v2 Preview)
 
@@ -539,9 +539,17 @@ If you see warnings about eBPF not being supported:
 ### CargoWall refused to start
 
 The step fails with "CargoWall refused to start" when the job asked for
-enforcement this runner can't give. It fails whatever `fail-on-unsupported`
-says: carrying on would run the job with no firewall at all. The reason names
-the layer:
+enforcement this runner can't give, or when the configuration this step gave
+CargoWall doesn't load. It fails whatever `fail-on-unsupported` says: carrying
+on would run the job with no firewall at all. The reason names the layer, or
+the configuration:
+
+- **A configuration that did not load:** CargoWall can't read the
+  [`config-file`](#with-config-file), or, without one, an `allowed-hosts`,
+  `allowed-cidrs` or `search-domains` entry, such as `https://github.com` or
+  `github.com:443/tcp`. The reason names the file or the entry and what is
+  wrong with it. Fix it; this fails under `mode: audit` too, since no mode
+  can apply a configuration that isn't there.
 
 - **`--container-egress=enforce`, or a `--tls-sni` enforce rung, when the
   policy enforces:** the cgroup hook couldn't attach, or couldn't be limited

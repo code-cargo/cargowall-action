@@ -1234,7 +1234,8 @@ jobs:
       - name: Write a config file the action accepts but cargowall rejects
         run: |
           # Passes the action's checks, but cargowall refuses a step id the
-          # runner generates (ids starting with __), so the load fails.
+          # runner generates (ids starting with __), so the load fails, and
+          # cargowall refuses to start on a config file that doesn't load.
           echo '{"steps":[{"id":"__run_2","rules":[{"type":"hostname","value":"a.example"}]}]}' > "$RUNNER_TEMP/cargowall.json"
 
       - name: Setup CargoWall (expected to fail)
@@ -1245,26 +1246,28 @@ jobs:
           offline: 'true'
           config-file: ${{ runner.temp }}/cargowall.json
 
-      - name: Assert the step failed on the unloaded file
+      - name: Assert the step failed on cargowall refusing the file
         run: |
           if [ '${{ steps.cargowall.outcome }}' != 'failure' ]; then
             echo "ERROR: expected the action to fail, got '${{ steps.cargowall.outcome }}'"
             exit 1
           fi
-          grep -F 'No config loaded' /tmp/cargowall.log
+          echo "failure sentinel:"; cat /tmp/cargowall-failed
+          test "$(sed -n 2p /tmp/cargowall-failed)" = 'refused=config'
+          grep -F 'did not load' /tmp/cargowall-failed
 
   test-config-file-dropped-rule:
-    name: A rule cargowall drops from the file fails the step
+    name: A rule cargowall can't read in the file fails the step
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Write a config file with a rule cargowall drops
+      - name: Write a config file with a rule cargowall can't read
         run: |
-          # Passes the action's checks, and cargowall loads the file, but it
-          # drops the rule over its value: /33 is no IPv4 prefix.
+          # Passes the action's checks, but /33 is no IPv4 prefix. cargowall
+          # refuses to start on the file rather than load it without the rule.
           echo '{"rules":[{"type":"hostname","value":"example.com","action":"allow"},{"type":"cidr","value":"10.0.0.0/33","action":"allow"}]}' > "$RUNNER_TEMP/cargowall.json"
 
       - name: Setup CargoWall (expected to fail)
@@ -1275,14 +1278,19 @@ jobs:
           offline: 'true'
           config-file: ${{ runner.temp }}/cargowall.json
 
-      - name: Assert the step failed on the dropped rule
+      - name: Assert the step failed on cargowall refusing the file
         run: |
           if [ '${{ steps.cargowall.outcome }}' != 'failure' ]; then
             echo "ERROR: expected the action to fail, got '${{ steps.cargowall.outcome }}'"
             exit 1
           fi
-          grep -F 'Config loaded successfully' /tmp/cargowall.log
-          grep -F '::error::Invalid CIDR/IP value=10.0.0.0/33' /tmp/cargowall.log
+          echo "failure sentinel:"; cat /tmp/cargowall-failed
+          test "$(sed -n 2p /tmp/cargowall-failed)" = 'refused=config'
+          grep -F 'did not load' /tmp/cargowall-failed
+          if grep -F 'Config loaded successfully' /tmp/cargowall.log; then
+            echo "ERROR: cargowall loaded the file without the rule it can't read"
+            exit 1
+          fi
 
   test-audit-summary-false-still-collects:
     name: audit-summary false still collects events (#71)

@@ -381,16 +381,19 @@ export async function requireConfigLoaded(logPath: string, configFile: string): 
  * The environment cargowall starts with, as far as its local configuration
  * goes. With a config file, no configuration variable reaches it, the job's
  * own included, so it reads the file; without one, the inputs set the
- * configuration, with deny as the default action.
+ * configuration, with deny as the default action. CARGOWALL_CONFIG never
+ * reaches it: --config carries this step's file, and cargowall refuses to
+ * start with a file that variable names beside the inputs' configuration.
  */
 export function localConfigEnv(base: NodeJS.ProcessEnv, configFile: string | null, inputs: EnvConfigInputs): NodeJS.ProcessEnv {
+  const env = { ...base }
+  delete env.CARGOWALL_CONFIG
   if (configFile) {
-    const env = { ...base }
     for (const name of ENV_CONFIG_VARS) delete env[name]
     return env
   }
   return {
-    ...base,
+    ...env,
     CARGOWALL_DEFAULT_ACTION: 'deny',
     ...(inputs.allowedHosts && { CARGOWALL_ALLOWED_HOSTS: inputs.allowedHosts }),
     ...(inputs.allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: inputs.allowedCidrs }),

@@ -312,7 +312,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     const refused = failure.refused !== null || exitCode === EXIT_REFUSED
     return handleStartupFailure(
       `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
-      refused ? refusedMessage(failureReason) : `CargoWall failed to start: ${failureReason}`,
+      refused ? refusedMessage(failureReason, failure.refused) : `CargoWall failed to start: ${failureReason}`,
       failOnUnsupported || refused,
     )
   }
@@ -573,7 +573,8 @@ export function sentinelReason(raw: string): string {
  * cargowall writes that line, between the pid stamp and the reason (cmd/
  * wait_ready.go writeFailureSentinel), when a layer the job asked to enforce
  * could not be applied, so it would not start: container-egress or a tls-sni
- * enforce rung, or the DNS redirect under an enforcing policy. That fails the
+ * enforce rung, or the DNS redirect under an enforcing policy; and, as
+ * `config`, when its local configuration didn't load. That fails the
  * step even with `fail-on-unsupported: false`. The input is for a runner that
  * cannot run cargowall at all; this one can, just not with the enforcement
  * asked for, and carrying on would run the job with no firewall in place of a
@@ -588,12 +589,19 @@ export function sentinelRefusal(raw: string): string | null {
   return m ? m[1] : null
 }
 
-/** The step's error for a refused posture: see sentinelRefusal. */
-function refusedMessage(reason: string): string {
+/**
+ * The step's error for a refusal: see sentinelRefusal. `config` is a local
+ * configuration that didn't load, a config file's or this step's inputs': the
+ * runner can enforce, so the step says to fix the configuration instead.
+ */
+function refusedMessage(reason: string, refused: string | null = null): string {
+  const why =
+    refused === 'config'
+      ? "The configuration this step gave it doesn't load. Fix it: carrying on"
+      : 'This runner cannot give the job the enforcement it asked for, and carrying on'
   return (
-    `CargoWall refused to start: ${reason}. This runner cannot give the job the enforcement ` +
-    'it asked for, and carrying on would run it with no firewall at all, so the step fails ' +
-    'even with fail-on-unsupported: false.'
+    `CargoWall refused to start: ${reason}. ${why} would run it with no firewall at all, ` +
+    'so the step fails even with fail-on-unsupported: false.'
   )
 }
 

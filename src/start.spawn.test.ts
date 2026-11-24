@@ -903,6 +903,24 @@ describe('start() failure-sentinel handling', () => {
     expect(core.setOutput).not.toHaveBeenCalledWith('supported', 'false')
   })
 
+  // A configuration that doesn't load is refused like a posture, but the
+  // runner isn't what falls short: the step says to fix the configuration.
+  it('says to fix the configuration when the refusal is a configuration that did not load', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({
+      [FAILURE_FILE]:
+        'pid=4242\nrefused=config\ncargowall startup failed: config file /work/cargowall.json did not load: ' +
+        'rule 2: invalid CIDR 10.0.0.0/33\n',
+    })
+
+    const failed = start()
+    await expect(failed).rejects.toThrow(
+      /refused to start: cargowall startup failed: config file \/work\/cargowall.json did not load.*doesn't load\. Fix it.*no firewall/
+    )
+    await expect(failed).rejects.not.toThrow(/This runner cannot give the job/)
+    expect(core.setOutput).not.toHaveBeenCalledWith('supported', 'false')
+  })
+
   // The exit status is the refusal channel that needs no state file: a
   // sentinel cargowall could not write (a full /tmp, a directory planted at
   // its path) must not let the job run unfiltered.
