@@ -22098,11 +22098,11 @@ function actionVersionLine(version = ACTION_VERSION, env = process.env, dir = __
 // src/setup.ts
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v2.0.0-rc.16";
+var CARGOWALL_VERSION = "v2.0.0-rc.17";
 var CARGOWALL_REPO = "code-cargo/cargowall";
 var CARGOWALL_DIGESTS = {
-  amd64: "5529271dbfaf920ba43081d996e1f168e70f468f812a1cef1f514605ca7678d1",
-  arm64: "35c552a91f43a55b08cb34e92570884989107cffe2b3f87bbe5e98e8dafc7fb1"
+  amd64: "0691688b5049fe4f633eced5ff0e71bbea0d6a29f826f0b203e1dd1ad0900cdb",
+  arm64: "97b2c17841e4b1c5d61561c903a357cd7b78dfa62b81cbbf6871b71296d21465"
 };
 function linuxArch() {
   const archRaw = os6.arch();
@@ -26528,13 +26528,14 @@ async function requireConfigLoaded(logPath, configFile) {
   );
 }
 function localConfigEnv(base, configFile, inputs) {
+  const env = { ...base };
+  delete env.CARGOWALL_CONFIG;
   if (configFile) {
-    const env = { ...base };
     for (const name of ENV_CONFIG_VARS) delete env[name];
     return env;
   }
   return {
-    ...base,
+    ...env,
     CARGOWALL_DEFAULT_ACTION: "deny",
     ...inputs.allowedHosts && { CARGOWALL_ALLOWED_HOSTS: inputs.allowedHosts },
     ...inputs.allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: inputs.allowedCidrs },
@@ -26910,7 +26911,7 @@ async function start() {
     const refused = failure.refused !== null || exitCode === EXIT_REFUSED;
     return handleStartupFailure(
       `CargoWall failed to start. Network filtering is not active. ${failureReason}`,
-      refused ? refusedMessage(failureReason) : `CargoWall failed to start: ${failureReason}`,
+      refused ? refusedMessage(failureReason, failure.refused) : `CargoWall failed to start: ${failureReason}`,
       failOnUnsupported || refused
     );
   };
@@ -27066,8 +27067,9 @@ function sentinelRefusal(raw) {
   const m = /^refused=([a-z][a-z-]{0,63})$/.exec(lines[1]);
   return m ? m[1] : null;
 }
-function refusedMessage(reason) {
-  return `CargoWall refused to start: ${reason}. This runner cannot give the job the enforcement it asked for, and carrying on would run it with no firewall at all, so the step fails even with fail-on-unsupported: false.`;
+function refusedMessage(reason, refused = null) {
+  const why = refused === "config" ? "The configuration this step gave it doesn't load. Fix it: carrying on" : "This runner cannot give the job the enforcement it asked for, and carrying on";
+  return `CargoWall refused to start: ${reason}. ${why} would run it with no firewall at all, so the step fails even with fail-on-unsupported: false.`;
 }
 async function readFailureFile(spawnedAtMs) {
   try {

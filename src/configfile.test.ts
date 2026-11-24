@@ -38,4 +38,17 @@ describe('localConfigEnv', () => {
       CARGOWALL_SEARCH_DOMAINS: '.internal',
     })
   })
+
+  // cargowall refuses to start with a file CARGOWALL_CONFIG names beside the
+  // environment configuration, which the inputs always set without a
+  // config file: a runner that carries the variable would fail every job.
+  it("never lets the job's CARGOWALL_CONFIG through, with a config file or without", () => {
+    const base = { CARGOWALL_CONFIG: '/etc/cargowall/runner.json', PATH: '/usr/bin' }
+    for (const configFile of [null, '/work/cargowall.json']) {
+      const env = localConfigEnv(base, configFile, NONE)
+      expect(env.CARGOWALL_CONFIG, String(configFile)).toBeUndefined()
+      expect(env.PATH).toBe('/usr/bin')
+    }
+    expect(base.CARGOWALL_CONFIG).toBe('/etc/cargowall/runner.json')
+  })
 })

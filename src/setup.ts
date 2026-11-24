@@ -30,7 +30,7 @@ const BINARY_NAME = 'cargowall'
 // which the config-file step-rules e2e asserts.
 // CARGOWALL_VERSION is the binary's; this action release's own version is
 // ACTION_VERSION in src/version.ts: bump it in the release PR.
-const CARGOWALL_VERSION = 'v2.0.0-rc.16'
+const CARGOWALL_VERSION = 'v2.0.0-rc.17'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
 // SHA-256 of each published binary, pinned here instead of fetched from
@@ -46,8 +46,8 @@ const CARGOWALL_REPO = 'code-cargo/cargowall'
 // Bump these with CARGOWALL_VERSION; check-digests.yml fails the build if
 // they drift.
 const CARGOWALL_DIGESTS = {
-  amd64: '5529271dbfaf920ba43081d996e1f168e70f468f812a1cef1f514605ca7678d1',
-  arm64: '35c552a91f43a55b08cb34e92570884989107cffe2b3f87bbe5e98e8dafc7fb1'
+  amd64: '0691688b5049fe4f633eced5ff0e71bbea0d6a29f826f0b203e1dd1ad0900cdb',
+  arm64: '97b2c17841e4b1c5d61561c903a357cd7b78dfa62b81cbbf6871b71296d21465'
 } as const
 
 type LinuxArch = keyof typeof CARGOWALL_DIGESTS
