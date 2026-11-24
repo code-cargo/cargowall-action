@@ -22098,10 +22098,10 @@ function actionVersionLine(version = ACTION_VERSION, env = process.env, dir = __
 // src/setup.ts
 var INSTALL_DIR = "/usr/local/bin";
 var BINARY_NAME = "cargowall";
-var CARGOWALL_VERSION = "v1.3.10";
+var CARGOWALL_VERSION = "v1.3.11-rc.0";
 var CARGOWALL_DIGESTS = {
-  amd64: "2098aae2ebc31c0d1b77b1604d139ce9a5d293e9aabfb8783b02f4f9650c9a21",
-  arm64: "181f7ea460e518ce24f20f47960f32a9b98ffd1ec936bed0ebb820add2544c0f"
+  amd64: "b88f0ba7c2cd1863a6e675356fbff272e7bed68a98260f3a323c760b13510cad",
+  arm64: "894a5c6523ae55d1d26528f3ff02b7c3877e0b886cae57ac4a3c4b691dd2f176"
 };
 function linuxArch() {
   const archRaw = os6.arch();
