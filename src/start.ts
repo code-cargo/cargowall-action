@@ -5,7 +5,8 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
-import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
+import { requireConfigLoaded, resolveConfigFile } from './configfile'
+import { cargowallEnv, ignoredVarsWarning } from './env'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -239,14 +240,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // check as a false "exited unexpectedly". Best-effort and root-owned, so sudo.
   await clearStartupFiles()
 
-  // Set environment variables for cargowall
-  const env = {
-    ...localConfigEnv(process.env, configFile, { allowedHosts, allowedCidrs, searchDomains }),
-    // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
-    // them would hand cargowall's narrower built-in defaults to the user unannounced.
-    CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
-    CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts,
-  }
+  // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
+  const { env, ignored } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
+  const ignoredWarning = ignoredVarsWarning(ignored)
+  if (ignoredWarning) core.warning(ignoredWarning)
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
   // Anchor for sentinel freshness: a failure sentinel older than this spawn is

@@ -26314,14 +26314,6 @@ async function detectDnsUpstream(userInput) {
 var import_fs5 = require("fs");
 var import_net2 = require("net");
 var path5 = __toESM(require("path"));
-var ENV_CONFIG_VARS = [
-  "CARGOWALL_DEFAULT_ACTION",
-  "CARGOWALL_ALLOWED_HOSTS",
-  "CARGOWALL_ALLOWED_CIDRS",
-  "CARGOWALL_BLOCKED_HOSTS",
-  "CARGOWALL_BLOCKED_CIDRS",
-  "CARGOWALL_SEARCH_DOMAINS"
-];
 var CONFIG_KEYS = ["rules", "defaultAction", "searchDomains", "sudoLockdown", "steps"];
 var RULE_KEYS = ["type", "value", "ports", "action"];
 var PORT_KEYS = ["port", "protocol"];
@@ -26527,20 +26519,63 @@ async function requireConfigLoaded(logPath, configFile) {
     `CargoWall did not load config-file ${configFile}, so it is running deny-all, with only CI infrastructure allowed (in audit, every other connection is reported as would-deny). Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, "No config loaded").trim()}` : ""}`
   );
 }
-function localConfigEnv(base, configFile, inputs) {
-  const env = { ...base };
-  delete env.CARGOWALL_CONFIG;
-  if (configFile) {
-    for (const name of ENV_CONFIG_VARS) delete env[name];
-    return env;
+
+// src/env.ts
+var JOB_VARS = [
+  // Go's HTTP transport, for the policy fetch and OTLP export.
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+  // OTLP log export (pkg/otlp); OTEL_EXPORTER_OTLP_* by prefix below.
+  "OTEL_RESOURCE_ATTRIBUTES",
+  "OTEL_SERVICE_NAME",
+  // The runner's endpoints, which the GitHub auto-allow opens.
+  "ACTIONS_RUNTIME_URL",
+  "ACTIONS_RESULTS_URL",
+  "ACTIONS_CACHE_URL",
+  "ACTIONS_ID_TOKEN_REQUEST_URL",
+  // How the job reaches Docker. cargowall identifies the daemon the job's
+  // docker CLI uses from these, as the CLI resolves it (pkg/podenv), reading
+  // them from the environment the sudo that started it was given. They
+  // describe the job's Docker; no cargowall setting is bound to them.
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "HOME",
+  // The commands cargowall runs (systemctl, docker, gpasswd, visudo,
+  // resolvectl) are found on it.
+  "PATH"
+];
+var JOB_PREFIXES = ["OTEL_EXPORTER_OTLP_"];
+var CONFIG_NAME = /^(CARGOWALL|CODECARGO)_/;
+function cargowallEnv(job, settings) {
+  const env = {};
+  for (const [name, value] of Object.entries(job)) {
+    if (value === void 0) continue;
+    if (JOB_VARS.includes(name) || JOB_PREFIXES.some((p) => name.startsWith(p))) {
+      env[name] = value;
+    }
   }
-  return {
-    ...env,
-    CARGOWALL_DEFAULT_ACTION: "deny",
-    ...inputs.allowedHosts && { CARGOWALL_ALLOWED_HOSTS: inputs.allowedHosts },
-    ...inputs.allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: inputs.allowedCidrs },
-    ...inputs.searchDomains && { CARGOWALL_SEARCH_DOMAINS: inputs.searchDomains }
-  };
+  env.CARGOWALL_GITHUB_SERVICE_HOSTS = settings.githubServiceHosts;
+  env.CARGOWALL_AZURE_INFRA_HOSTS = settings.azureInfraHosts;
+  Object.assign(env, localConfigEnv(settings));
+  const ignored = Object.keys(job).filter((name) => job[name] !== void 0 && CONFIG_NAME.test(name)).sort();
+  return { env, ignored };
+}
+function localConfigEnv(settings) {
+  if (settings.configFile) return {};
+  const env = { CARGOWALL_DEFAULT_ACTION: "deny" };
+  if (settings.allowedHosts) env.CARGOWALL_ALLOWED_HOSTS = settings.allowedHosts;
+  if (settings.allowedCidrs) env.CARGOWALL_ALLOWED_CIDRS = settings.allowedCidrs;
+  if (settings.searchDomains) env.CARGOWALL_SEARCH_DOMAINS = settings.searchDomains;
+  return env;
+}
+function ignoredVarsWarning(ignored) {
+  if (ignored.length === 0) return null;
+  return `CargoWall ignores ${ignored.join(", ")} from the job's environment: only this step's inputs and the CodeCargo policy configure it. Set what you need through the action's inputs.`;
 }
 
 // src/effective.ts
@@ -26874,13 +26909,9 @@ async function start() {
   await repointResolvConf();
   info("Starting cargowall...");
   await clearStartupFiles();
-  const env = {
-    ...localConfigEnv(process.env, configFile, { allowedHosts, allowedCidrs, searchDomains }),
-    // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
-    // them would hand cargowall's narrower built-in defaults to the user unannounced.
-    CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
-    CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
-  };
+  const { env, ignored } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts });
+  const ignoredWarning = ignoredVarsWarning(ignored);
+  if (ignoredWarning) warning(ignoredWarning);
   const logFd = (0, import_fs8.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));

@@ -210,7 +210,7 @@ describe('start() and config-file', () => {
     expect(flag(spawned().args, '--config')).toBe(resolved)
   })
 
-  it('without a file, sets the environment configuration from the inputs, as before', async () => {
+  it("without a file, sets the environment configuration from the inputs, and never the job's", async () => {
     withInputs({ offline: 'true' }, { 'allowed-hosts': ['github.com'] })
     await start()
     const { args, env } = spawned()
@@ -218,7 +218,7 @@ describe('start() and config-file', () => {
     expect(flag(args, '--config')).toBeUndefined()
     expect(env.CARGOWALL_DEFAULT_ACTION).toBe('deny')
     expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('github.com')
-    expect(env.CARGOWALL_BLOCKED_HOSTS).toBe('from-the-job.example')
+    expect(env.CARGOWALL_BLOCKED_HOSTS).toBeUndefined()
   })
 
   it.each(['allowed-hosts', 'allowed-cidrs', 'search-domains'])(

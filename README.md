@@ -479,6 +479,22 @@ Both lists follow the [subdomain rule](#how-hostnames-match), so `blob.core.wind
 
 Setting `github-service-hosts` or `azure-infra-hosts` **replaces** the corresponding list rather than adding to it; whatever you list is the whole list. Neither can be disabled by setting it to an empty value — that is rejected with an error, because it would silently hand you a different set of defaults rather than turning the feature off.
 
+### The Job's Environment
+
+The job's environment never configures cargowall. cargowall binds most of its settings to `CARGOWALL_*` variables, so the action starts it with a named set of variables only, never the job's whole environment: a variable from the workflow's or job's `env:`, from `$GITHUB_ENV`, or from the runner can't turn audit mode on, point the policy fetch elsewhere, add rules, or change any setting this step's inputs leave at cargowall's default. Every setting comes from an input, the CodeCargo policy, or cargowall's own default.
+
+What reaches cargowall from the job:
+
+- the proxy variables, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, upper and lower case, which the policy fetch and OTLP export honour;
+- the OTLP export variables, `OTEL_EXPORTER_OTLP_*`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME`;
+- the runner's endpoints, `ACTIONS_RUNTIME_URL`, `ACTIONS_RESULTS_URL`, `ACTIONS_CACHE_URL` and `ACTIONS_ID_TOKEN_REQUEST_URL`, which it allows;
+- `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `HOME`, from which it works out which Docker daemon the job's `docker` uses;
+- `PATH`.
+
+Beside those, cargowall gets only what the action sets from this step's inputs. When the job carries a `CARGOWALL_*` or `CODECARGO_*` variable, the step warns once, naming the variables it ignored (never their values).
+
+`SSL_CERT_FILE` and `SSL_CERT_DIR` don't reach cargowall. A runner that needs a private CA to reach the CodeCargo API or an OTLP collector should install it in the system trust store, which cargowall reads by default.
+
 ### Sudo Lockdown
 
 When `sudo-lockdown: true`, sudo for the job's user runs only the allowlist: the commands `sudo-allow-commands` lists, or the CodeCargo policy's when the policy sets the sudo lockdown. Anything else, such as `sudo iptables -F`, `sudo pkill cargowall` or `sudo vim /etc/resolv.conf`, is refused:

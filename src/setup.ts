@@ -27,7 +27,8 @@ const BINARY_NAME = 'cargowall'
 // only from the loaded config's own rules (were auto-allows ever resolved
 // through the same path, a bad github-service-hosts pattern would fail a good
 // file's step). And the README's account of when a file's step rules apply,
-// which the config-file step-rules e2e asserts.
+// which the config-file step-rules e2e asserts. And src/env.ts's allowlist
+// against cargowall's env: tags and direct reads (CONTRIBUTING.md).
 // CARGOWALL_VERSION is the binary's; this action release's own version is
 // ACTION_VERSION in src/version.ts: bump it in the release PR.
 const CARGOWALL_VERSION = 'v2.0.0-rc.17'

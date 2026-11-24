@@ -37,6 +37,22 @@ push/PR and weekly. A forgotten update, a digest without provenance, or a
 tampered release asset is caught in this repo's CI rather than in a consumer's
 job.
 
+Recheck what cargowall reads from its environment, at the new pin, against
+the allowlist in `src/env.ts` (`JOB_VARS`, `JOB_PREFIXES`) and the names
+`src/env.test.ts` asserts never pass (`JOB_SETTABLE`):
+
+```sh
+git grep -o 'env:"[A-Z_,]*"' vX.Y.Z -- 'cmd/*.go' ':!*_test.go'
+git grep -n -E 'os\.(Getenv|LookupEnv|Environ)\(|getenv\("' vX.Y.Z -- '*.go' ':!*_test.go'
+```
+
+Every new variable is either a setting, which joins `JOB_SETTABLE` and stays
+out, or something cargowall needs from the job (as the proxy, OTLP and
+runner-endpoint variables are), which joins the allowlist with a comment
+saying why. Also check what the libraries cargowall links read: Go's HTTP
+proxy variables, the OTLP exporter's `OTEL_*`, and the trust-store
+variables, which stay out.
+
 ### Releasing
 
 The action and the cargowall binary it pins are versioned separately, and the
