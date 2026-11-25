@@ -1,15 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
-import * as path from 'path'
 import {
   CARGOWALL_PATH,
   CARGOWALL_READS,
   LOCAL_CONFIG_VARS,
   cargowallEnv,
+  envWarnings,
   ignoredVarsWarning,
-  preservedEnv,
-  missingToolsWarning,
   trustStoreWarning,
 } from './env'
 
@@ -210,43 +206,48 @@ describe('trustStoreWarning', () => {
   })
 })
 
-describe('preservedEnv', () => {
+describe('the preserved environment', () => {
   // cargowall reads the job's Docker setup from its sudo's environment, so
   // the variables that choose the docker CLI's config stay out of its own.
   it('keeps HOME, DOCKER_CONFIG and DOCKER_CONTEXT out of what sudo preserves', () => {
-    const { env } = cargowallEnv({ HOME: '/home/runner', DOCKER_CONFIG: '/x', DOCKER_CONTEXT: 'c', DOCKER_HOST: 'tcp://h:2376' }, SETTINGS)
+    const { env, preserved: kept } = cargowallEnv({ HOME: '/home/runner', DOCKER_CONFIG: '/x', DOCKER_CONTEXT: 'c', DOCKER_HOST: 'tcp://h:2376' }, SETTINGS)
     expect(env.HOME).toBe('/home/runner')
-    const kept = preservedEnv(env)
     expect(kept.HOME).toBeUndefined()
     expect(kept.DOCKER_CONFIG).toBeUndefined()
     expect(kept.DOCKER_CONTEXT).toBeUndefined()
     expect(kept.DOCKER_HOST).toBe('tcp://h:2376')
     expect(kept.PATH).toBe(CARGOWALL_PATH)
   })
+
+  // Root's docker CLI, without the job's HOME or DOCKER_CONFIG, would look for
+  // TLS client certificates in /root/.docker: point it at the job's default.
+  it("points DOCKER_CERT_PATH at the job's default certificates where TLS is on and it is unset", () => {
+    const tls = { DOCKER_HOST: 'tcp://h:2376', DOCKER_TLS_VERIFY: '1' }
+    expect(cargowallEnv({ ...tls, HOME: '/home/runner' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBe('/home/runner/.docker')
+    expect(cargowallEnv({ ...tls, HOME: '/home/runner', DOCKER_CONFIG: '/cfg' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBe('/cfg')
+    expect(cargowallEnv({ ...tls, HOME: '/home/runner', DOCKER_CERT_PATH: '/certs' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBe('/certs')
+    expect(cargowallEnv({ DOCKER_HOST: 'tcp://h:2375', DOCKER_TLS: '1', HOME: '/h' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBe('/h/.docker')
+    expect(cargowallEnv({ DOCKER_HOST: 'tcp://h:2375', HOME: '/h' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBeUndefined()
+    expect(cargowallEnv({ ...tls, DOCKER_TLS_VERIFY: '', HOME: '/h' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBeUndefined()
+    // The spawn's environment, the sudo process's, is the job's as it was.
+    expect(cargowallEnv({ ...tls, HOME: '/home/runner' }, SETTINGS).env.DOCKER_CERT_PATH).toBeUndefined()
+  })
 })
 
-describe('missingToolsWarning', () => {
-  const dir = () => mkdtempSync(path.join(tmpdir(), 'cwpath-'))
-
-  // A socket with the docker CLI and no systemd (ARC dind, a container: job)
-  // warns; it never refuses.
-  it('warns, naming PATH, when a Docker socket is present and a tool is missing', async () => {
-    const sock = path.join(dir(), 'docker.sock')
-    writeFileSync(sock, '')
-    const bin = dir()
-    writeFileSync(path.join(bin, 'docker'), '#!/bin/sh\n', { mode: 0o755 })
-    expect(await missingToolsWarning(sock, `${bin}:/nonexistent`)).toMatch(/^systemctl isn't on CargoWall's PATH .*startup timeout/)
-    writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\n', { mode: 0o755 })
-    expect(await missingToolsWarning(sock, `${bin}:/nonexistent`)).toBeNull()
+describe('envWarnings', () => {
+  // A blank value (an unset vars.X, say) configures nothing: no warning.
+  it('ignores variables set to an empty or whitespace-only value', () => {
+    const blank = { CARGOWALL_API_URL: '', CARGOWALL_TLS_SNI: '  ', SSL_CERT_FILE: '', SSL_CERT_DIR: '\t' }
+    expect(cargowallEnv(blank, SETTINGS).ignored).toEqual([])
+    expect(cargowallEnv(blank, SETTINGS).trustStore).toEqual([])
+    expect(envWarnings(cargowallEnv(blank, SETTINGS), 'audit')).toEqual([])
   })
 
-  it('takes a directory named after a tool for no tool, and checks nothing without a socket', async () => {
-    const sock = path.join(dir(), 'docker.sock')
-    writeFileSync(sock, '')
-    const bin = dir()
-    mkdirSync(path.join(bin, 'docker'))
-    writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\n', { mode: 0o755 })
-    expect(await missingToolsWarning(sock, bin)).toMatch(/^docker isn't/)
-    expect(await missingToolsWarning(path.join(dir(), 'absent.sock'), '/nonexistent')).toBeNull()
+  it('is each warning that applies, at most once', () => {
+    const w = envWarnings(cargowallEnv({ CARGOWALL_API_URL: 'https://x', SSL_CERT_FILE: '/ca.pem' }, SETTINGS), 'audit')
+    expect(w).toHaveLength(2)
+    expect(w[0]).toContain('CARGOWALL_API_URL')
+    expect(w[1]).toContain('SSL_CERT_FILE')
+    expect(envWarnings(cargowallEnv({}, SETTINGS), 'audit')).toEqual([])
   })
 })

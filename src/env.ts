@@ -1,6 +1,3 @@
-import { promises as fs } from 'fs'
-import * as path from 'path'
-
 /**
  * The environment `cargowall start` runs with.
  *
@@ -42,8 +39,9 @@ const JOB_VARS = [
   // environment the sudo that started it was given; and its own docker
   // probe after a restart (docker info) is that CLI, which needs the TLS
   // and API-version variables beside DOCKER_HOST to reach the same daemon.
-  // They describe the job's Docker, kept together; no cargowall setting is
-  // bound to any of them.
+  // No cargowall setting is bound to any of them. HOME, DOCKER_CONFIG and
+  // DOCKER_CONTEXT reach only the sudo process, never cargowall's own
+  // environment (SPAWN_ONLY_VARS).
   'DOCKER_HOST',
   'DOCKER_CONTEXT',
   'DOCKER_CONFIG',
@@ -146,7 +144,10 @@ export interface CargowallSettings {
 }
 
 export interface CargowallEnv {
+  /** The spawn's environment: the sudo process's, which cargowall reads the job's Docker setup from. */
   env: NodeJS.ProcessEnv
+  /** cargowall's own environment, the names to carry through sudo --preserve-env. */
+  preserved: NodeJS.ProcessEnv
   /**
    * The variables the job set that cargowall would have read as its
    * configuration (CARGOWALL_READS), by name, none of which reaches it.
@@ -174,9 +175,19 @@ export function cargowallEnv(job: NodeJS.ProcessEnv, settings: CargowallSettings
   Object.assign(env, localConfigEnv(settings))
 
   env.PATH = CARGOWALL_PATH
-  const ignored = (CARGOWALL_READS as readonly string[]).filter(name => job[name] !== undefined).sort()
-  const trustStore = TRUST_STORE_VARS.filter(name => job[name] !== undefined)
-  return { env, ignored, trustStore }
+  // A blank value configures nothing (cargowall treats one as unset), so it
+  // is no reason to warn.
+  const set = (name: string) => (job[name] ?? '').trim() !== ''
+  const ignored = (CARGOWALL_READS as readonly string[]).filter(set).sort()
+  const trustStore = TRUST_STORE_VARS.filter(set)
+  return { env, preserved: preservedEnv(env), ignored, trustStore }
+}
+
+/** The warnings about the job's environment, each at most once. */
+export function envWarnings(e: CargowallEnv, fetchPosture: string | null): string[] {
+  return [ignoredVarsWarning(e.ignored), trustStoreWarning(e.trustStore, fetchPosture, e.preserved)].filter(
+    (w): w is string => w !== null
+  )
 }
 
 /**
@@ -234,49 +245,20 @@ export function trustStoreWarning(trustStore: string[], fetchPosture: string | n
  */
 const SPAWN_ONLY_VARS = ['HOME', 'DOCKER_CONFIG', 'DOCKER_CONTEXT'] as const
 
-/** The names to carry into cargowall itself, through sudo --preserve-env. */
-export function preservedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * The names to carry into cargowall itself, through sudo --preserve-env.
+ * Without HOME and DOCKER_CONFIG, root's docker CLI would look for TLS client
+ * certificates in /root/.docker, so where TLS is on and DOCKER_CERT_PATH
+ * isn't set, it is set to the job's default: $DOCKER_CONFIG, or
+ * $HOME/.docker.
+ */
+function preservedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env }
   for (const name of SPAWN_ONLY_VARS) delete out[name]
+  const blank = (v: string | undefined) => (v ?? '').trim() === ''
+  if ((!blank(env.DOCKER_TLS_VERIFY) || !blank(env.DOCKER_TLS)) && blank(env.DOCKER_CERT_PATH)) {
+    const certs = !blank(env.DOCKER_CONFIG) ? env.DOCKER_CONFIG : !blank(env.HOME) ? `${env.HOME}/.docker` : undefined
+    if (certs) out.DOCKER_CERT_PATH = certs
+  }
   return out
-}
-
-/**
- * A warning naming the tools cargowall runs as root on a local Docker daemon
- * (it restarts and probes it) that the fixed PATH doesn't reach, when a
- * Docker socket is present; null when there is nothing to say. Only a
- * warning: the action can't tell a local daemon from a socket mounted into a
- * pod or container (ARC dind, a container: job), where cargowall runs
- * neither tool and there is often no systemd at all.
- */
-export async function missingToolsWarning(dockerSocket = '/var/run/docker.sock', dirs = CARGOWALL_PATH): Promise<string | null> {
-  try {
-    await fs.stat(dockerSocket)
-  } catch {
-    return null
-  }
-  const missing: string[] = []
-  for (const tool of ['docker', 'systemctl']) {
-    let found = false
-    for (const dir of dirs.split(':')) {
-      try {
-        const st = await fs.stat(path.join(dir, tool))
-        if (st.isFile() && (st.mode & 0o111) !== 0) {
-          found = true
-          break
-        }
-      } catch {
-        // not here
-      }
-    }
-    if (!found) missing.push(tool)
-  }
-  if (missing.length > 0) {
-    return (
-      `${missing.join(' and ')} isn't on CargoWall's PATH (${dirs}); it doesn't use the job's PATH as root. ` +
-      'On a host with a local Docker daemon, CargoWall restarts and probes it with these, and their absence ' +
-      'would show as a startup timeout: install or link them into one of those directories'
-    )
-  }
-  return null
 }

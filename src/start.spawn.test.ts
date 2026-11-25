@@ -55,7 +55,6 @@ import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
-import { preservedEnv } from './env'
 import { start, sudoPreserveEnvArgs } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
@@ -216,7 +215,8 @@ describe('start() argument construction', () => {
       // the allow-list never arrives; the helper's list is the whole policy.
       expect(argv).not.toContain('-E')
       expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('docker.io,**.githubusercontent.com')
-      expect(argv.slice(0, argv.indexOf('cargowall'))).toEqual(sudoPreserveEnvArgs(preservedEnv(env)))
+      const kept = Object.fromEntries(Object.entries(env).filter(([n]) => !['HOME', 'DOCKER_CONFIG', 'DOCKER_CONTEXT'].includes(n)))
+      expect(argv.slice(0, argv.indexOf('cargowall'))).toEqual(sudoPreserveEnvArgs(kept))
     })
   })
 

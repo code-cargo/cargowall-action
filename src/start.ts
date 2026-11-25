@@ -7,7 +7,7 @@ import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
 import { requireConfigLoaded, resolveConfigFile } from './configfile'
-import { cargowallEnv, ignoredVarsWarning, missingToolsWarning, preservedEnv, trustStoreWarning } from './env'
+import { cargowallEnv, envWarnings } from './env'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -231,9 +231,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   }
 
   // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
-  const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
+  const cwEnv = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
   const sudo = await io.which('sudo', true)
-  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env), await missingToolsWarning()]) if (w) core.warning(w)
+  envWarnings(cwEnv, apiFailurePosture).forEach(w => core.warning(w))
 
   await repointResolvConf()
 
@@ -258,10 +258,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // runner would trigger a push for a job where cargowall never started.
   // Absence of this state tells the post step cargowall was never spawned.
   core.saveState('cargowall-spawned-at', String(spawnedAtMs))
-  const child = spawn(sudo, [...sudoPreserveEnvArgs(preservedEnv(env)), 'cargowall', ...args], {
+  const child = spawn(sudo, [...sudoPreserveEnvArgs(cwEnv.preserved), 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
-    env,
+    env: cwEnv.env,
   })
   // cargowall's exit status, which sudo passes through. EXIT_REFUSED is the
   // one refusal channel that needs no state file, for a sentinel that could
