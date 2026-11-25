@@ -216,55 +216,6 @@ describe('start() argument construction', () => {
       expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('docker.io,**.githubusercontent.com')
       expect(argv.slice(0, argv.indexOf('cargowall'))).toEqual(sudoPreserveEnvArgs(env))
     })
-
-    it("names only the allowlist in --preserve-env, whatever the job's environment carries", async () => {
-      const inherited = process.env
-      process.env = {
-        PATH: '/usr/bin',
-        HOME: '/home/runner',
-        HTTPS_PROXY: 'http://proxy:3128',
-        no_proxy: 'localhost',
-        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example:4318',
-        ACTIONS_RUNTIME_URL: 'https://pipelines.actions.githubusercontent.com/x/',
-        CARGOWALL_AUDIT_MODE: 'true',
-        CARGOWALL_TLS_SNI: 'off',
-        CARGOWALL_SUDO_LOCKDOWN: 'true',
-        CARGOWALL_API_URL: 'https://attacker.example',
-        CODECARGO_AUTH_TOKEN: 'secret-token-value',
-        SSL_CERT_FILE: '/tmp/evil-ca.pem',
-        GITHUB_TOKEN: 'ghs_secret',
-      }
-      try {
-        withInputs({ mode: 'enforce', offline: 'true' })
-        const argv = await sudoArgs()
-        const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as NodeJS.ProcessEnv
-        const preserve = argv[0]
-        expect(preserve.startsWith('--preserve-env=')).toBe(true)
-        expect(preserve.slice('--preserve-env='.length).split(',').sort()).toEqual([
-          'ACTIONS_RUNTIME_URL',
-          'CARGOWALL_AZURE_INFRA_HOSTS',
-          'CARGOWALL_DEFAULT_ACTION',
-          'CARGOWALL_GITHUB_SERVICE_HOSTS',
-          'HOME',
-          'HTTPS_PROXY',
-          'OTEL_EXPORTER_OTLP_ENDPOINT',
-          'PATH',
-          'no_proxy',
-        ])
-        expect(Object.keys(env).sort()).toEqual(preserve.slice('--preserve-env='.length).split(',').sort())
-        expect(flag(argv, '--audit-mode')).toBeUndefined()
-        expect(argv).not.toContain('--audit-mode')
-
-        const warnings = vi.mocked(core.warning).mock.calls.map(c => String(c[0])).filter(w => w.includes('ignores'))
-        expect(warnings).toHaveLength(1)
-        expect(warnings[0]).toContain('CARGOWALL_AUDIT_MODE, CARGOWALL_SUDO_LOCKDOWN, CARGOWALL_TLS_SNI')
-        expect(warnings[0]).toContain('CODECARGO_AUTH_TOKEN')
-        expect(warnings[0]).not.toContain('secret-token-value')
-        expect(warnings[0]).not.toContain('attacker.example')
-      } finally {
-        process.env = inherited
-      }
-    })
   })
 
   describe('audit log collection (#71)', () => {

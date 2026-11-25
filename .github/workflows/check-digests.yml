@@ -65,3 +65,20 @@ jobs:
           done
 
           exit $status
+
+      # src/env.ts names what the pinned cargowall reads (CARGOWALL_READS),
+      # which never passes from the job and which the step warns about. A
+      # pin bump to a cargowall with a flag bound to a variable the list
+      # lacks fails here, so the list is rechecked rather than left stale.
+      - name: CARGOWALL_READS covers the pinned binary's environment-bound flags
+        run: |
+          set -euo pipefail
+          chmod +x cargowall-linux-amd64
+          help=$(./cargowall-linux-amd64 start --help | grep -oE '\$(CARGOWALL|CODECARGO)_[A-Z0-9_]+' | tr -d '$' | sort -u)
+          reads=$(sed -n '/^export const CARGOWALL_READS/,/^] as const/p' src/env.ts | grep -oE "'(CARGOWALL|CODECARGO)_[A-Z0-9_]+'" | tr -d "'" | sort -u)
+          missing=$(comm -23 <(echo "$help") <(echo "$reads"))
+          if [ -n "$missing" ]; then
+            echo "::error::cargowall start reads these from its environment, and src/env.ts CARGOWALL_READS lacks them: $(echo $missing)"
+            exit 1
+          fi
+          echo "All $(echo "$help" | wc -l) environment-bound flags are in CARGOWALL_READS"

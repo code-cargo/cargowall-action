@@ -1,15 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { CARGOWALL_PATH, CARGOWALL_READS, cargowallEnv, ignoredVarsWarning } from './env'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import * as path from 'path'
+import { CARGOWALL_PATH, CARGOWALL_READS, LOCAL_CONFIG_VARS as ENV_CONFIG_VARS, cargowallEnv, findSudo, ignoredVarsWarning, trustStoreWarning } from './env'
 
-/** The six variables of cargowall's local configuration (LoadFromEnv). */
-const ENV_CONFIG_VARS = [
-  'CARGOWALL_DEFAULT_ACTION',
-  'CARGOWALL_ALLOWED_HOSTS',
-  'CARGOWALL_ALLOWED_CIDRS',
-  'CARGOWALL_BLOCKED_HOSTS',
-  'CARGOWALL_BLOCKED_CIDRS',
-  'CARGOWALL_SEARCH_DOMAINS',
-]
 
 const SETTINGS = {
   configFile: null,
@@ -176,5 +170,37 @@ describe('ignoredVarsWarning', () => {
 
   it('says nothing when the job carried none', () => {
     expect(ignoredVarsWarning([])).toBeNull()
+  })
+})
+
+describe('trustStoreWarning', () => {
+  // With a proxy kept and the CA dropped, the policy fetch behind a
+  // TLS-intercepting proxy fails: say which variable was dropped.
+  it('names the trust-store variables the job set, and never their values', () => {
+    const { trustStore } = cargowallEnv({ SSL_CERT_FILE: '/etc/corp-ca.pem', PATH: '/usr/bin' }, SETTINGS)
+    expect(trustStore).toEqual(['SSL_CERT_FILE'])
+    const warning = trustStoreWarning(trustStore)
+    expect(warning).toContain('SSL_CERT_FILE')
+    expect(warning).toContain('system trust store')
+    expect(warning).not.toContain('/etc/corp-ca.pem')
+    expect(cargowallEnv({ SSL_CERT_FILE: 'a', SSL_CERT_DIR: 'b' }, SETTINGS).trustStore).toEqual(['SSL_CERT_FILE', 'SSL_CERT_DIR'])
+  })
+
+  it('says nothing when the job set neither', () => {
+    expect(cargowallEnv({ PATH: '/usr/bin' }, SETTINGS).trustStore).toEqual([])
+    expect(trustStoreWarning([])).toBeNull()
+  })
+})
+
+describe('findSudo', () => {
+  it("finds an executable sudo on the job's PATH, skipping relative entries", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'findsudo-'))
+    writeFileSync(path.join(dir, 'sudo'), '#!/bin/sh\n', { mode: 0o755 })
+    expect(await findSudo(`bin:/nonexistent:${dir}`)).toBe(path.join(dir, 'sudo'))
+  })
+
+  it('refuses when no PATH entry has one', async () => {
+    await expect(findSudo('/nonexistent:relative')).rejects.toThrow("sudo was not found on the job's PATH")
+    await expect(findSudo(undefined)).rejects.toThrow()
   })
 })

@@ -44,8 +44,15 @@ which the ignored-variable warning names:
 
 ```sh
 git grep -o 'env:"[A-Z0-9_,]*"' vX.Y.Z -- 'cmd/*.go' ':!*_test.go'
-git grep -n -E 'os\.(Getenv|LookupEnv|Environ)\(|getenv\("' vX.Y.Z -- '*.go' ':!*_test.go'
+git grep -n -E 'os\.(Getenv|LookupEnv|Environ)\(|getenv\(' vX.Y.Z -- '*.go' ':!*_test.go'
+git grep -n -o -E '"(CARGOWALL|CODECARGO|OTEL|DOCKER|ACTIONS)_[A-Z0-9_]*"' vX.Y.Z -- '*.go' ':!*_test.go'
 ```
+
+The last catches names read through a helper (`logsFirst(getenv, "OTEL_…")`,
+`os.Getenv(envVar)` over a list). `check-digests` fails a pin bump whose
+binary's `start --help` names a variable `CARGOWALL_READS` lacks, but not a
+direct read or one cargowall needs from the job, which only this recheck
+finds.
 
 Every new variable is either a setting, which joins `CARGOWALL_READS` and stays
 out, or something cargowall needs from the job (as the proxy, OTLP and

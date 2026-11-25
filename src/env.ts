@@ -1,3 +1,6 @@
+import { constants as fsConstants, promises as fs } from 'fs'
+import * as path from 'path'
+
 /**
  * The environment `cargowall start` runs with.
  *
@@ -55,11 +58,25 @@ const JOB_VARS = [
  * cargowall's PATH, fixed rather than the job's. cargowall runs systemctl,
  * docker, gpasswd, visudo and resolvectl as root and finds them on it, and
  * where sudoers sets no secure_path the job's PATH would reach root,
- * $GITHUB_PATH entries the job user can write included. It also finds sudo
- * for the spawn and, through sudo, cargowall itself, which setup installs
- * in /usr/local/bin.
+ * $GITHUB_PATH entries the job user can write included; where sudoers does
+ * set one (the hosted runners), it replaces this anyway. sudo is found on the
+ * job's PATH instead (findSudo), and through sudo cargowall itself, which
+ * setup installs in /usr/local/bin.
  */
 export const CARGOWALL_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+/**
+ * The variables of cargowall's local configuration, its LoadFromEnv: any one
+ * set makes cargowall load the environment and skip --config.
+ */
+export const LOCAL_CONFIG_VARS = [
+  'CARGOWALL_DEFAULT_ACTION',
+  'CARGOWALL_ALLOWED_HOSTS',
+  'CARGOWALL_ALLOWED_CIDRS',
+  'CARGOWALL_BLOCKED_HOSTS',
+  'CARGOWALL_BLOCKED_CIDRS',
+  'CARGOWALL_SEARCH_DOMAINS',
+] as const
 
 /**
  * The variables the pinned cargowall (v2.0.0-rc.17) reads as its own
@@ -105,14 +122,16 @@ export const CARGOWALL_READS = [
   'CARGOWALL_AZURE_INFRA_HOSTS',
   'CARGOWALL_GITHUB_SERVICE_HOSTS',
   'CARGOWALL_GITLAB_SERVICE_HOSTS',
-  // LoadFromEnv's local configuration.
-  'CARGOWALL_DEFAULT_ACTION',
-  'CARGOWALL_ALLOWED_HOSTS',
-  'CARGOWALL_ALLOWED_CIDRS',
-  'CARGOWALL_BLOCKED_HOSTS',
-  'CARGOWALL_BLOCKED_CIDRS',
-  'CARGOWALL_SEARCH_DOMAINS',
+  ...LOCAL_CONFIG_VARS,
 ] as const
+
+/**
+ * The trust-store variables Go reads: never passed, since a job-set trust
+ * root beside a kept proxy could redirect the policy fetch. A job that sets
+ * one is told by name, because behind a TLS-intercepting proxy the fetch
+ * then fails, and under the default api-failure-mode the run is audited.
+ */
+const TRUST_STORE_VARS = ['SSL_CERT_FILE', 'SSL_CERT_DIR'] as const
 
 const JOB_PREFIXES = ['OTEL_EXPORTER_OTLP_'] as const
 
@@ -134,6 +153,8 @@ export interface CargowallEnv {
    * Never their values.
    */
   ignored: string[]
+  /** The trust-store variables the job set, which don't reach cargowall either. */
+  trustStore: string[]
 }
 
 export function cargowallEnv(job: NodeJS.ProcessEnv, settings: CargowallSettings): CargowallEnv {
@@ -154,12 +175,13 @@ export function cargowallEnv(job: NodeJS.ProcessEnv, settings: CargowallSettings
 
   env.PATH = CARGOWALL_PATH
   const ignored = (CARGOWALL_READS as readonly string[]).filter(name => job[name] !== undefined).sort()
-  return { env, ignored }
+  const trustStore = TRUST_STORE_VARS.filter(name => job[name] !== undefined)
+  return { env, ignored, trustStore }
 }
 
 /**
- * The variables of cargowall's local configuration (its LoadFromEnv,
- * ENV_CONFIG_VARS in configfile.ts). With a config file, none: any one set
+ * The variables of cargowall's local configuration (LOCAL_CONFIG_VARS). With
+ * a config file, none: any one set
  * makes cargowall load the environment and skip the file. Without one, the
  * inputs, with deny as the default action. The job's own are never among
  * them.
@@ -181,4 +203,34 @@ export function ignoredVarsWarning(ignored: string[]): string | null {
     'config-file and the CodeCargo policy configure it. Set what you need through one of those, where one ' +
     'covers the setting.'
   )
+}
+
+/** The one warning naming the trust-store variables cargowall doesn't get. */
+export function trustStoreWarning(trustStore: string[]): string | null {
+  if (trustStore.length === 0) return null
+  return (
+    `CargoWall doesn't pass ${trustStore.join(', ')} to cargowall: a private CA it needs, for a ` +
+    'TLS-intercepting proxy say, must be in the system trust store, or its policy fetch fails ' +
+    '(and under the default api-failure-mode the run is audited instead of enforced).'
+  )
+}
+
+/**
+ * The sudo the action starts cargowall with, found on the job's PATH: the
+ * environment the spawn is given carries the fixed CARGOWALL_PATH, which
+ * would otherwise be where it is looked up. Called before DNS is repointed,
+ * so a host with no sudo fails before anything on it is touched.
+ */
+export async function findSudo(jobPath: string | undefined): Promise<string> {
+  for (const dir of (jobPath ?? '').split(':')) {
+    if (!dir.startsWith('/')) continue
+    const candidate = path.join(dir, 'sudo')
+    try {
+      await fs.access(candidate, fsConstants.X_OK)
+      return candidate
+    } catch {
+      // not here
+    }
+  }
+  throw new Error("sudo was not found on the job's PATH; the action starts cargowall through it")
 }

@@ -495,9 +495,9 @@ What reaches cargowall from the job:
 - the runner's endpoints, `ACTIONS_RUNTIME_URL`, `ACTIONS_RESULTS_URL`, `ACTIONS_CACHE_URL` and `ACTIONS_ID_TOKEN_REQUEST_URL`, which it allows;
 - the Docker client's variables, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_TLS`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`, `DOCKER_API_VERSION` and `HOME`, from which it works out which Docker daemon the job's `docker` uses, and with which its own `docker` probe reaches that daemon.
 
-cargowall's `PATH` is fixed (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), never the job's: it runs `systemctl`, `docker` and the sudoers tools as root. Beside those, cargowall gets only what the action sets from this step's inputs. When the job sets a variable cargowall would have read as its configuration, the step warns once, naming the variables it ignored (never their values).
+The action finds `sudo` on the job's `PATH`, but cargowall itself never gets the job's `PATH`: it runs `systemctl`, `docker` and the sudoers tools as root. Where sudoers sets `secure_path`, as on GitHub's hosted runners, that is cargowall's `PATH`; where it doesn't, the action's fixed one is (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), so on such a self-hosted runner `docker` must be in one of those directories. Beside those, cargowall gets only what the action sets from this step's inputs. When the job sets a variable cargowall would have read as its configuration, the step warns once, naming the variables it ignored (never their values).
 
-`SSL_CERT_FILE` and `SSL_CERT_DIR` don't reach cargowall. A runner that needs a private CA to reach the CodeCargo API or an OTLP collector should install it in the system trust store, which cargowall reads by default.
+`SSL_CERT_FILE` and `SSL_CERT_DIR` don't reach cargowall, and the step warns by name when the job sets one. A runner that needs a private CA to reach the CodeCargo API or an OTLP collector, behind a TLS-intercepting proxy say, should install it in the system trust store, which cargowall reads by default: otherwise the policy fetch fails, and under the default `api-failure-mode` the run is audited.
 
 ### Sudo Lockdown
 

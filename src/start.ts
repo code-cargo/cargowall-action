@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
 import { requireConfigLoaded, resolveConfigFile } from './configfile'
-import { cargowallEnv, ignoredVarsWarning } from './env'
+import { cargowallEnv, findSudo, ignoredVarsWarning, trustStoreWarning } from './env'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -229,6 +229,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     core.info("  Policy fetch: skipped — running this step's configuration; post-step audit push still attempted (needs id-token: write)")
   }
 
+  // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
+  const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
+  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore)]) if (w) core.warning(w)
+  const sudo = await findSudo(process.env.PATH)
+
   await repointResolvConf()
 
   // Start cargowall in the background
@@ -239,11 +244,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // the wait, and a stale pidfile pointing at a dead PID would trip the liveness
   // check as a false "exited unexpectedly". Best-effort and root-owned, so sudo.
   await clearStartupFiles()
-
-  // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
-  const { env, ignored } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
-  const ignoredWarning = ignoredVarsWarning(ignored)
-  if (ignoredWarning) core.warning(ignoredWarning)
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
   // Anchor for sentinel freshness: a failure sentinel older than this spawn is
@@ -257,7 +257,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // runner would trigger a push for a job where cargowall never started.
   // Absence of this state tells the post step cargowall was never spawned.
   core.saveState('cargowall-spawned-at', String(spawnedAtMs))
-  const child = spawn('sudo', [...sudoPreserveEnvArgs(env), 'cargowall', ...args], {
+  const child = spawn(sudo, [...sudoPreserveEnvArgs(env), 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
     env,

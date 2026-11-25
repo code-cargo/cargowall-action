@@ -55,15 +55,7 @@ import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
 import * as path from 'path'
-/** The six variables of cargowall's local configuration (LoadFromEnv). */
-const ENV_CONFIG_VARS = [
-  'CARGOWALL_DEFAULT_ACTION',
-  'CARGOWALL_ALLOWED_HOSTS',
-  'CARGOWALL_ALLOWED_CIDRS',
-  'CARGOWALL_BLOCKED_HOSTS',
-  'CARGOWALL_BLOCKED_CIDRS',
-  'CARGOWALL_SEARCH_DOMAINS',
-]
+import { LOCAL_CONFIG_VARS as ENV_CONFIG_VARS } from './env'
 import { generateSummary } from './summary'
 import { start } from './start'
 

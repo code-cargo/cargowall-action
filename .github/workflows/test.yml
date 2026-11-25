@@ -1335,10 +1335,13 @@ jobs:
       contents: read
     # Each of these would decide a setting the step's inputs leave at
     # cargowall's default, were it passed through: audit mode under an
-    # enforcing step, and a blocked host the inputs never name.
+    # enforcing step, and a deny for a host the step allows. example.org is
+    # in no auto-allowed service list, so with the old pass-through the deny
+    # (which beats an allow of the same name) blocks it and the first check
+    # fails.
     env:
       CARGOWALL_AUDIT_MODE: 'true'
-      CARGOWALL_BLOCKED_HOSTS: github.com
+      CARGOWALL_BLOCKED_HOSTS: example.org
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -1349,13 +1352,12 @@ jobs:
           mode: enforce
           offline: 'true'
           allowed-hosts: |
-            github.com
-            api.github.com
+            example.org
 
-      - name: The job's blocked host stays allowed
+      - name: The host the job blocked stays allowed
         uses: ./.github/actions/assert-egress-allowed
         with:
-          url: https://github.com
+          url: https://example.org
 
       - name: A disallowed destination is blocked, not merely audited
         run: |

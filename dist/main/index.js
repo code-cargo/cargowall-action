@@ -1068,14 +1068,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path6 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path7 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path6 && path6[0] !== "/") {
-          path6 = `/${path6}`;
+        if (path7 && path7[0] !== "/") {
+          path7 = `/${path7}`;
         }
-        return new URL(`${origin}${path6}`);
+        return new URL(`${origin}${path7}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1526,39 +1526,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin }
+          request: { method, path: path7, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path6);
+        debuglog("sending request to %s %s/%s", method, origin, path7);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin },
+          request: { method, path: path7, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path6,
+          path7,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin }
+          request: { method, path: path7, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path6);
+        debuglog("trailers received from %s %s/%s", method, origin, path7);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path6, origin },
+          request: { method, path: path7, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path6,
+          path7,
           error2.message
         );
       });
@@ -1607,9 +1607,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path6, origin }
+            request: { method, path: path7, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path6);
+          debuglog("sending request to %s %s/%s", method, origin, path7);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1672,7 +1672,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path6,
+        path: path7,
         method,
         body,
         headers,
@@ -1687,11 +1687,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path6 !== "string") {
+        if (typeof path7 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path6[0] !== "/" && !(path6.startsWith("http://") || path6.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path7[0] !== "/" && !(path7.startsWith("http://") || path7.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path6)) {
+        } else if (invalidPathRegex.test(path7)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1757,7 +1757,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path6, query) : path6;
+        this.path = query ? buildURL(path7, query) : path7;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -6450,7 +6450,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path6, host, upgrade, blocking, reset } = request2;
+      const { method, path: path7, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6531,7 +6531,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path6} HTTP/1.1\r
+      let header = `${method} ${path7} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -7060,7 +7060,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path6, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path7, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -7157,7 +7157,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path6;
+      headers[HTTP2_HEADER_PATH] = path7;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7510,9 +7510,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path6 = search ? `${pathname}${search}` : pathname;
+        const path7 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path6;
+        this.opts.path = path7;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -8751,10 +8751,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path6 = "/",
+          path: path7 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path6;
+        opts.path = origin + path7;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -10726,20 +10726,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path6) {
-      if (typeof path6 !== "string") {
-        return path6;
+    function safeUrl(path7) {
+      if (typeof path7 !== "string") {
+        return path7;
       }
-      const pathSegments = path6.split("?");
+      const pathSegments = path7.split("?");
       if (pathSegments.length !== 2) {
-        return path6;
+        return path7;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path6, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path6);
+    function matchKey(mockDispatch2, { path: path7, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path7);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10761,7 +10761,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path6 }) => matchValue(safeUrl(path6), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path7 }) => matchValue(safeUrl(path7), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10799,9 +10799,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path6, method, body, headers, query } = opts;
+      const { path: path7, method, body, headers, query } = opts;
       return {
-        path: path6,
+        path: path7,
         method,
         body,
         headers,
@@ -11264,10 +11264,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path6, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path7, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path6,
+            Path: path7,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -16146,9 +16146,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path6) {
-      for (let i = 0; i < path6.length; ++i) {
-        const code = path6.charCodeAt(i);
+    function validateCookiePath(path7) {
+      for (let i = 0; i < path7.length; ++i) {
+        const code = path7.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code > 126 || // exclude DEL and non-ascii
         code === 59) {
@@ -19068,11 +19068,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path6 = opts.path;
+          let path7 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path6 = `/${path6}`;
+            path7 = `/${path7}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path6);
+          url = new URL(util.parseOrigin(url).origin + path7);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -22424,8 +22424,8 @@ var Context = class {
       if ((0, import_fs3.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs3.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path6 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path6} does not exist${import_os3.EOL}`);
+        const path7 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path7} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -26120,8 +26120,8 @@ var context2 = new Context();
 
 // src/start.ts
 var import_child_process = require("child_process");
-var import_fs7 = require("fs");
 var import_fs8 = require("fs");
+var import_fs9 = require("fs");
 
 // src/dns.ts
 var import_fs4 = require("fs");
@@ -26521,6 +26521,8 @@ async function requireConfigLoaded(logPath, configFile) {
 }
 
 // src/env.ts
+var import_fs6 = require("fs");
+var path6 = __toESM(require("path"));
 var JOB_VARS = [
   // Go's HTTP transport, for the policy fetch and OTLP export.
   "HTTPS_PROXY",
@@ -26555,6 +26557,14 @@ var JOB_VARS = [
   "HOME"
 ];
 var CARGOWALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+var LOCAL_CONFIG_VARS = [
+  "CARGOWALL_DEFAULT_ACTION",
+  "CARGOWALL_ALLOWED_HOSTS",
+  "CARGOWALL_ALLOWED_CIDRS",
+  "CARGOWALL_BLOCKED_HOSTS",
+  "CARGOWALL_BLOCKED_CIDRS",
+  "CARGOWALL_SEARCH_DOMAINS"
+];
 var CARGOWALL_READS = [
   "CARGOWALL_ALLOW_EXISTING_CONNECTIONS",
   "CARGOWALL_API_FAILURE_MODE",
@@ -26593,14 +26603,9 @@ var CARGOWALL_READS = [
   "CARGOWALL_AZURE_INFRA_HOSTS",
   "CARGOWALL_GITHUB_SERVICE_HOSTS",
   "CARGOWALL_GITLAB_SERVICE_HOSTS",
-  // LoadFromEnv's local configuration.
-  "CARGOWALL_DEFAULT_ACTION",
-  "CARGOWALL_ALLOWED_HOSTS",
-  "CARGOWALL_ALLOWED_CIDRS",
-  "CARGOWALL_BLOCKED_HOSTS",
-  "CARGOWALL_BLOCKED_CIDRS",
-  "CARGOWALL_SEARCH_DOMAINS"
+  ...LOCAL_CONFIG_VARS
 ];
+var TRUST_STORE_VARS = ["SSL_CERT_FILE", "SSL_CERT_DIR"];
 var JOB_PREFIXES = ["OTEL_EXPORTER_OTLP_"];
 function cargowallEnv(job, settings) {
   const env = {};
@@ -26615,7 +26620,8 @@ function cargowallEnv(job, settings) {
   Object.assign(env, localConfigEnv(settings));
   env.PATH = CARGOWALL_PATH;
   const ignored = CARGOWALL_READS.filter((name) => job[name] !== void 0).sort();
-  return { env, ignored };
+  const trustStore = TRUST_STORE_VARS.filter((name) => job[name] !== void 0);
+  return { env, ignored, trustStore };
 }
 function localConfigEnv(settings) {
   if (settings.configFile) return {};
@@ -26628,6 +26634,22 @@ function localConfigEnv(settings) {
 function ignoredVarsWarning(ignored) {
   if (ignored.length === 0) return null;
   return `CargoWall ignores ${ignored.join(", ")} from the job's environment: only this step's inputs, its config-file and the CodeCargo policy configure it. Set what you need through one of those, where one covers the setting.`;
+}
+function trustStoreWarning(trustStore) {
+  if (trustStore.length === 0) return null;
+  return `CargoWall doesn't pass ${trustStore.join(", ")} to cargowall: a private CA it needs, for a TLS-intercepting proxy say, must be in the system trust store, or its policy fetch fails (and under the default api-failure-mode the run is audited instead of enforced).`;
+}
+async function findSudo(jobPath) {
+  for (const dir of (jobPath ?? "").split(":")) {
+    if (!dir.startsWith("/")) continue;
+    const candidate = path6.join(dir, "sudo");
+    try {
+      await import_fs6.promises.access(candidate, import_fs6.constants.X_OK);
+      return candidate;
+    } catch {
+    }
+  }
+  throw new Error("sudo was not found on the job's PATH; the action starts cargowall through it");
 }
 
 // src/effective.ts
@@ -26739,20 +26761,20 @@ function effectiveReport(args) {
 }
 
 // src/resolvconf.ts
-var import_fs6 = require("fs");
+var import_fs7 = require("fs");
 var RESOLV_CONF = "/etc/resolv.conf";
 var RESOLV_CONF_BACKUP = "/etc/resolv.conf.cargowall.bak";
 var RESOLV_CONF_NEW = "/etc/resolv.conf.cargowall.new";
-async function lstatOrNull(path6) {
+async function lstatOrNull(path7) {
   try {
-    return await import_fs6.promises.lstat(path6);
+    return await import_fs7.promises.lstat(path7);
   } catch {
     return null;
   }
 }
 async function readResolvConf() {
   try {
-    return await import_fs6.promises.readFile(RESOLV_CONF, "utf8");
+    return await import_fs7.promises.readFile(RESOLV_CONF, "utf8");
   } catch {
     let contents = "";
     const code = await exec("sudo", ["cat", RESOLV_CONF], {
@@ -26958,16 +26980,16 @@ async function start() {
   if (skipPolicyFetch && apiUrl && !offline) {
     info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
   }
+  const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts });
+  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore)]) if (w) warning(w);
+  const sudo = await findSudo(process.env.PATH);
   await repointResolvConf();
   info("Starting cargowall...");
   await clearStartupFiles();
-  const { env, ignored } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts });
-  const ignoredWarning = ignoredVarsWarning(ignored);
-  if (ignoredWarning) warning(ignoredWarning);
-  const logFd = (0, import_fs8.openSync)(CARGOWALL_LOG, "w");
+  const logFd = (0, import_fs9.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
-  const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
+  const child2 = (0, import_child_process.spawn)(sudo, [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env
@@ -26977,7 +26999,7 @@ async function start() {
     exitCode = code;
   });
   child2.unref();
-  (0, import_fs8.closeSync)(logFd);
+  (0, import_fs9.closeSync)(logFd);
   const spawnedPid = child2.pid;
   if (!spawnedPid) {
     throw new Error("Failed to start cargowall process");
@@ -27156,7 +27178,7 @@ function refusedMessage(reason, refused = null) {
 }
 async function readFailureFile(spawnedAtMs) {
   try {
-    if ((await import_fs7.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs8.promises.stat(FAILURE_FILE)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
@@ -27169,15 +27191,15 @@ var MAX_STATE_FILE_BYTES = 8192;
 var stateFileOwner = { uid: 0 };
 async function readStateFile(filePath) {
   try {
-    if (!(await import_fs7.promises.lstat(filePath)).isFile()) return null;
+    if (!(await import_fs8.promises.lstat(filePath)).isFile()) return null;
   } catch {
     return null;
   }
   let handle;
   try {
-    handle = await import_fs7.promises.open(
+    handle = await import_fs8.promises.open(
       filePath,
-      import_fs8.constants.O_RDONLY | import_fs8.constants.O_NOFOLLOW | import_fs8.constants.O_NONBLOCK
+      import_fs9.constants.O_RDONLY | import_fs9.constants.O_NOFOLLOW | import_fs9.constants.O_NONBLOCK
     );
   } catch {
     return null;
@@ -27200,7 +27222,7 @@ async function readDowngradeFile(spawnedAtMs) {
 }
 async function readFreshStateFile(filePath, spawnedAtMs) {
   try {
-    if ((await import_fs7.promises.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
+    if ((await import_fs8.promises.stat(filePath)).mtimeMs < spawnedAtMs - STALE_SLACK_MS) {
       return null;
     }
   } catch {
