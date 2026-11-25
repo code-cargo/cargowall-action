@@ -207,4 +207,22 @@ describe('start() and the environment it hands cargowall', () => {
     expect(spawn).not.toHaveBeenCalled()
     expect(exec.exec).not.toHaveBeenCalledWith('sudo', expect.arrayContaining(['tee']), expect.anything())
   })
+
+  // ARC dind, or a container: job with the socket mounted: a Docker socket,
+  // the docker CLI, and no systemd. cargowall restarts only a daemon it has
+  // shown to be local, so the step warns and goes on.
+  it('starts cargowall, with a warning, where a Docker socket is present and systemctl is not', async () => {
+    withInputs({ offline: 'true' })
+    withFiles({ [READY_FILE]: '', '/var/run/docker.sock': '' })
+    const stat = vi.mocked(fsp.stat).getMockImplementation()!
+    vi.mocked(fsp.stat).mockImplementation(async (p: unknown) =>
+      String(p) === '/usr/bin/docker'
+        ? ({ isFile: () => true, mode: 0o755 } as Awaited<ReturnType<typeof fsp.stat>>)
+        : stat(p as string)
+    )
+    expect(await start()).toMatchObject({ supported: true })
+    expect(spawn).toHaveBeenCalled()
+    const warnings = vi.mocked(core.warning).mock.calls.map(c => String(c[0]))
+    expect(warnings.filter(w => w.startsWith("systemctl isn't on CargoWall's PATH"))).toHaveLength(1)
+  })
 })

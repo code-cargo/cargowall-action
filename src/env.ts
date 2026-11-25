@@ -242,15 +242,18 @@ export function preservedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
- * The tools cargowall runs as root that the fixed PATH must reach when a
- * Docker socket is present (it restarts and probes the daemon): a missing
- * one would show only as a startup timeout. Throws naming PATH.
+ * A warning naming the tools cargowall runs as root on a local Docker daemon
+ * (it restarts and probes it) that the fixed PATH doesn't reach, when a
+ * Docker socket is present; null when there is nothing to say. Only a
+ * warning: the action can't tell a local daemon from a socket mounted into a
+ * pod or container (ARC dind, a container: job), where cargowall runs
+ * neither tool and there is often no systemd at all.
  */
-export async function requireToolsOnPath(dockerSocket = '/var/run/docker.sock', dirs = CARGOWALL_PATH): Promise<void> {
+export async function missingToolsWarning(dockerSocket = '/var/run/docker.sock', dirs = CARGOWALL_PATH): Promise<string | null> {
   try {
     await fs.stat(dockerSocket)
   } catch {
-    return
+    return null
   }
   const missing: string[] = []
   for (const tool of ['docker', 'systemctl']) {
@@ -269,9 +272,11 @@ export async function requireToolsOnPath(dockerSocket = '/var/run/docker.sock', 
     if (!found) missing.push(tool)
   }
   if (missing.length > 0) {
-    throw new Error(
-      `CargoWall needs ${missing.join(' and ')} on its PATH (${dirs}) to restart and probe Docker, ` +
-        "and doesn't use the job's PATH as root; install or link it into one of those directories"
+    return (
+      `${missing.join(' and ')} isn't on CargoWall's PATH (${dirs}); it doesn't use the job's PATH as root. ` +
+      'On a host with a local Docker daemon, CargoWall restarts and probes it with these, and their absence ' +
+      'would show as a startup timeout: install or link them into one of those directories'
     )
   }
+  return null
 }

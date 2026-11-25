@@ -26647,11 +26647,11 @@ function preservedEnv(env) {
   for (const name of SPAWN_ONLY_VARS) delete out[name];
   return out;
 }
-async function requireToolsOnPath(dockerSocket = "/var/run/docker.sock", dirs = CARGOWALL_PATH) {
+async function missingToolsWarning(dockerSocket = "/var/run/docker.sock", dirs = CARGOWALL_PATH) {
   try {
     await import_fs6.promises.stat(dockerSocket);
   } catch {
-    return;
+    return null;
   }
   const missing = [];
   for (const tool of ["docker", "systemctl"]) {
@@ -26669,10 +26669,9 @@ async function requireToolsOnPath(dockerSocket = "/var/run/docker.sock", dirs = 
     if (!found) missing.push(tool);
   }
   if (missing.length > 0) {
-    throw new Error(
-      `CargoWall needs ${missing.join(" and ")} on its PATH (${dirs}) to restart and probe Docker, and doesn't use the job's PATH as root; install or link it into one of those directories`
-    );
+    return `${missing.join(" and ")} isn't on CargoWall's PATH (${dirs}); it doesn't use the job's PATH as root. On a host with a local Docker daemon, CargoWall restarts and probes it with these, and their absence would show as a startup timeout: install or link them into one of those directories`;
   }
+  return null;
 }
 
 // src/effective.ts
@@ -27004,9 +27003,8 @@ async function start() {
     info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
   }
   const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts });
-  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env)]) if (w) warning(w);
   const sudo = await which("sudo", true);
-  await requireToolsOnPath();
+  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env), await missingToolsWarning()]) if (w) warning(w);
   await repointResolvConf();
   info("Starting cargowall...");
   await clearStartupFiles();

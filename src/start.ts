@@ -7,7 +7,7 @@ import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
 import { requireConfigLoaded, resolveConfigFile } from './configfile'
-import { cargowallEnv, ignoredVarsWarning, preservedEnv, requireToolsOnPath, trustStoreWarning } from './env'
+import { cargowallEnv, ignoredVarsWarning, missingToolsWarning, preservedEnv, trustStoreWarning } from './env'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -232,9 +232,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
   const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
-  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env)]) if (w) core.warning(w)
   const sudo = await io.which('sudo', true)
-  await requireToolsOnPath()
+  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env), await missingToolsWarning()]) if (w) core.warning(w)
 
   await repointResolvConf()
 

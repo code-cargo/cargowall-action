@@ -9,7 +9,7 @@ import {
   cargowallEnv,
   ignoredVarsWarning,
   preservedEnv,
-  requireToolsOnPath,
+  missingToolsWarning,
   trustStoreWarning,
 } from './env'
 
@@ -225,17 +225,19 @@ describe('preservedEnv', () => {
   })
 })
 
-describe('requireToolsOnPath', () => {
+describe('missingToolsWarning', () => {
   const dir = () => mkdtempSync(path.join(tmpdir(), 'cwpath-'))
 
-  it('refuses, naming PATH, when a Docker socket is present and a tool is missing', async () => {
+  // A socket with the docker CLI and no systemd (ARC dind, a container: job)
+  // warns; it never refuses.
+  it('warns, naming PATH, when a Docker socket is present and a tool is missing', async () => {
     const sock = path.join(dir(), 'docker.sock')
     writeFileSync(sock, '')
     const bin = dir()
     writeFileSync(path.join(bin, 'docker'), '#!/bin/sh\n', { mode: 0o755 })
-    await expect(requireToolsOnPath(sock, `${bin}:/nonexistent`)).rejects.toThrow(/needs systemctl on its PATH/)
+    expect(await missingToolsWarning(sock, `${bin}:/nonexistent`)).toMatch(/^systemctl isn't on CargoWall's PATH .*startup timeout/)
     writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\n', { mode: 0o755 })
-    await expect(requireToolsOnPath(sock, `${bin}:/nonexistent`)).resolves.toBeUndefined()
+    expect(await missingToolsWarning(sock, `${bin}:/nonexistent`)).toBeNull()
   })
 
   it('takes a directory named after a tool for no tool, and checks nothing without a socket', async () => {
@@ -244,7 +246,7 @@ describe('requireToolsOnPath', () => {
     const bin = dir()
     mkdirSync(path.join(bin, 'docker'))
     writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\n', { mode: 0o755 })
-    await expect(requireToolsOnPath(sock, bin)).rejects.toThrow(/needs docker/)
-    await expect(requireToolsOnPath(path.join(dir(), 'absent.sock'), '/nonexistent')).resolves.toBeUndefined()
+    expect(await missingToolsWarning(sock, bin)).toMatch(/^docker isn't/)
+    expect(await missingToolsWarning(path.join(dir(), 'absent.sock'), '/nonexistent')).toBeNull()
   })
 })
