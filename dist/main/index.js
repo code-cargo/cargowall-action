@@ -26733,6 +26733,7 @@ async function restartResolved() {
 }
 
 // src/startup.ts
+var STARTUP_BOUNDS_SECONDS = 162;
 var STARTUP_TIMEOUT = 240;
 var EXIT_REFUSED = 3;
 async function waitForReady(p, startedAtMs, timeoutMs = STARTUP_TIMEOUT * 1e3) {
@@ -26743,16 +26744,18 @@ async function waitForReady(p, startedAtMs, timeoutMs = STARTUP_TIMEOUT * 1e3) {
     if (failure !== null) return { kind: "failed", failure };
     if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
     pid = pid ?? await p.pid();
-    if (pid !== null && await p.liveness(pid) === "dead") {
+    const liveness = pid === null ? null : await p.liveness(pid);
+    if (pid !== null && liveness === "dead") {
       const late = await p.failure();
       if (late !== null) return { kind: "failed", failure: late };
       if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
       return { kind: "died", pid };
     }
     const code = p.exitCode();
-    if (pid === null && code !== null) {
+    if (code !== null && liveness !== "alive") {
       const late = await p.failure();
       if (late !== null) return { kind: "failed", failure: late };
+      if (code === EXIT_REFUSED) return { kind: "refused" };
       return { kind: "launcher-exited", code };
     }
     const waited = p.now() - startedAtMs;
@@ -26913,6 +26916,7 @@ async function start() {
   };
   const logFd = (0, import_fs8.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
+  const spawnedAtMono = performance.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
   const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
     detached: true,
@@ -26966,9 +26970,10 @@ async function start() {
     pid: () => readPidFile(spawnedAtMs),
     liveness: processLiveness,
     exitCode: () => exitCode,
-    now: Date.now,
+    now: () => performance.now(),
     sleep: sleep2
-  }, spawnedAtMs);
+  }, spawnedAtMono);
+  const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
   switch (waited.kind) {
     case "failed":
       return failFromSentinel(waited.failure);
@@ -26976,19 +26981,28 @@ async function start() {
       return failRefusedByExit();
     case "died":
     case "launcher-exited":
-      error(waited.kind === "died" ? "CargoWall process exited unexpectedly" : `CargoWall's launcher exited with status ${waited.code} before cargowall wrote its pidfile`);
+      error(waited.kind === "died" ? "CargoWall process exited unexpectedly" : `CargoWall's launcher exited with status ${waited.code} with no live cargowall seen`);
       await showLastLog();
-      return handleStartupFailure("CargoWall failed to start. Network filtering is not active.", "CargoWall failed to start", failOnUnsupported);
+      return handleStartupFailure(
+        "CargoWall failed to start. Network filtering is not active.",
+        "CargoWall failed to start",
+        failOnUnsupported || waited.kind === "launcher-exited" && postureFlags.length > 0
+      );
     case "timeout":
-      error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1e3)}s (the pinned cargowall's own bounds on its startup sum to about 162s; see src/startup.ts)`);
+      error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1e3)}s ` + (pinnedBinary ? `(the pinned cargowall's own bounds on its startup sum to about ${STARTUP_BOUNDS_SECONDS}s; see src/startup.ts)` : "(a binary-path or source-ref cargowall, whose startup bounds were never summed)"));
       await showLastLog();
       await stopCargowall([waited.pid, spawnedPid]);
       return handleStartupFailure("CargoWall timed out. Network filtering is not active.", "CargoWall timed out starting up", failOnUnsupported);
+    case "ready":
+      break;
+    default: {
+      const unhandled = waited;
+      throw new Error(`unhandled startup outcome ${JSON.stringify(unhandled)}`);
+    }
   }
   let cargowallPid = waited.pid;
   info("CargoWall is ready");
   await warnOnDowngrade(spawnedAtMs);
-  const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs));
   const stepRules = stepRulesWarning(postures, postureFlags);
   if (stepRules) warning(stepRules);

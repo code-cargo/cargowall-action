@@ -5,7 +5,15 @@ vi.mock('@actions/exec', () => ({}))
 vi.mock('@actions/tool-cache', () => ({}))
 
 import { CARGOWALL_VERSION } from './setup'
-import { EXIT_REFUSED, STARTUP_BOUNDS_CHECKED_AGAINST, STARTUP_TIMEOUT, waitForReady, type Liveness, type WaitProbes } from './startup'
+import {
+  EXIT_REFUSED,
+  STARTUP_BOUNDS_CHECKED_AGAINST,
+  STARTUP_BOUNDS_SECONDS,
+  STARTUP_TIMEOUT,
+  waitForReady,
+  type Liveness,
+  type WaitProbes,
+} from './startup'
 
 /**
  * A scripted cargowall: each probe answers from what has happened by the
@@ -64,6 +72,24 @@ describe('waitForReady', () => {
     expect(p.sleeps).toHaveLength(0)
   })
 
+  // Exit status 3 that lands after the refusal check, during the pid read,
+  // is still a refusal, never an ordinary launcher exit.
+  it('takes a status 3 that lands mid-poll as a refusal', async () => {
+    let calls = 0
+    const p = scripted({})
+    p.exitCode = () => (++calls > 1 ? EXIT_REFUSED : null)
+    expect(await waitForReady(p, 0)).toEqual({ kind: 'refused' })
+  })
+
+  // Under the sudo lockdown liveness is unknown: a launcher that exited with
+  // a status then ends the wait, though a pidfile was seen.
+  it('ends on a launcher status exit once a pidfile was seen but liveness is unknown', async () => {
+    const p = scripted({ pidAt: 1, exit: { at: 3, code: 2 } })
+    p.liveness = async () => 'unknown'
+    expect(await waitForReady(p, 0)).toEqual({ kind: 'launcher-exited', code: 2 })
+    expect(p.sleeps.length).toBeLessThan(5)
+  })
+
   it('prefers a sentinel that lands as the launcher exits', async () => {
     const p = scripted({ exit: { at: 0, code: 1 }, failureAt: 0 })
     expect(await waitForReady(p, 0)).toEqual({ kind: 'failed', failure: 'boom' })
@@ -120,7 +146,7 @@ describe('STARTUP_TIMEOUT', () => {
     expect(STARTUP_BOUNDS_CHECKED_AGAINST).toBe(CARGOWALL_VERSION)
   })
 
-  it('leaves room over the summed bounds', () => {
-    expect(STARTUP_TIMEOUT).toBeGreaterThanOrEqual(162 * 1.25)
+  it('leaves nearly half again over the summed bounds', () => {
+    expect(STARTUP_TIMEOUT).toBeGreaterThanOrEqual(STARTUP_BOUNDS_SECONDS * 1.45)
   })
 })

@@ -31,18 +31,22 @@
  *   (pkg/network/dns_redirect.go);
  * - the conntrack flush, 2 s (`ctFlushTimeout`).
  *
- * About 162 s in all, the counts above being the largest a stock runner
- * reaches. STARTUP_TIMEOUT adds half as much again, for what was not
- * counted and the work between the waits. A `binary-path` or `source-ref`
+ * About 162 s in all (STARTUP_BOUNDS_SECONDS), the counts above being the
+ * largest a stock runner reaches. STARTUP_TIMEOUT adds nearly half as much
+ * again, for what was not counted and the work between the waits. A `binary-path` or `source-ref`
  * build has bounds of its own that nobody summed.
  *
  * The wait does not cost that long when cargowall fails: it polls every
  * second, and leaves at once on the failure sentinel, on exit status 3, on
- * cargowall's death, and on a launcher that exited before cargowall ever
- * wrote its pidfile (a flag the binary rejects, a sudo or exec failure).
+ * cargowall's death, and on a launcher that exited with a status while no
+ * live cargowall was seen (a flag the binary rejects, a sudo or exec
+ * failure, a cargowall gone before it could say why).
  */
 
-/** The wait, in seconds, measured on the wall clock from the spawn. */
+/** The sum of the pinned cargowall's bounded startup waits above, in seconds. */
+export const STARTUP_BOUNDS_SECONDS = 162
+
+/** The wait, in seconds, on a monotonic clock from the spawn. */
 export const STARTUP_TIMEOUT = 240
 
 /**
@@ -79,19 +83,21 @@ export type WaitOutcome<F> =
   | { kind: 'refused' }
   /** cargowall's pid was read and it has died, with no sentinel. */
   | { kind: 'died'; pid: number }
-  /** The launcher exited before cargowall ever wrote its pidfile. */
+  /** The launcher exited with a status, and no live cargowall was seen. */
   | { kind: 'launcher-exited'; code: number }
   | { kind: 'timeout'; pid: number | null; waitedMs: number }
 
 /**
- * Waits for cargowall to report ready, for timeoutMs of wall clock from
- * startedAtMs.
+ * Waits for cargowall to report ready, for timeoutMs from startedAtMs on
+ * p.now's clock, which must be monotonic: a wall-clock step on a freshly
+ * provisioned runner would otherwise end or stretch the wait.
  *
- * A launcher that exits with a status before any pidfile was seen ends the
- * wait: cargowall writes its pidfile first thing, so it never ran, or died
- * before it could say why. A launcher killed by a signal reports no status,
- * as one torn down with the process tree by the Docker restart does, and
- * the wait goes on. A pidfile once seen hands liveness to the pid.
+ * A launcher that exits with a status ends the wait when no pidfile was
+ * seen (cargowall writes its pidfile first thing, so it never ran, or wrote
+ * and removed it between polls) or when the pid it names isn't shown alive
+ * (liveness is unknown under the sudo lockdown). A launcher killed by a
+ * signal reports no status, as one torn down with the process tree by the
+ * Docker restart does, and the wait goes on.
  */
 export async function waitForReady<F>(
   p: WaitProbes<F>,
@@ -106,7 +112,8 @@ export async function waitForReady<F>(
     if (p.exitCode() === EXIT_REFUSED) return { kind: 'refused' }
 
     pid = pid ?? (await p.pid())
-    if (pid !== null && (await p.liveness(pid)) === 'dead') {
+    const liveness = pid === null ? null : await p.liveness(pid)
+    if (pid !== null && liveness === 'dead') {
       // cargowall writes its sentinel, removes its pidfile and exits within
       // milliseconds, so the sentinel can land between the read above and
       // this check: look again before calling the death unexplained.
@@ -116,9 +123,10 @@ export async function waitForReady<F>(
       return { kind: 'died', pid }
     }
     const code = p.exitCode()
-    if (pid === null && code !== null) {
+    if (code !== null && liveness !== 'alive') {
       const late = await p.failure()
       if (late !== null) return { kind: 'failed', failure: late }
+      if (code === EXIT_REFUSED) return { kind: 'refused' }
       return { kind: 'launcher-exited', code }
     }
 

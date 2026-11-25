@@ -109,7 +109,7 @@ function signalledPids(): string[] {
  * sleeps that takes.
  */
 async function startToTheEnd(): ReturnType<typeof start> {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+  vi.useFakeTimers({ toFake: ['setTimeout', 'Date', 'performance'] })
   try {
     let settled = false
     const run = start().finally(() => { settled = true })

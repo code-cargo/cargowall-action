@@ -8,7 +8,7 @@ import { detectDnsUpstream } from './dns'
 import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
-import { EXIT_REFUSED, Liveness, waitForReady } from './startup'
+import { EXIT_REFUSED, Liveness, STARTUP_BOUNDS_SECONDS, waitForReady } from './startup'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -252,6 +252,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // failureSentinelAnchor, using the wall clock since writer and reader share
   // the machine.
   const spawnedAtMs = Date.now()
+  const spawnedAtMono = performance.now() // the startup wait's clock
   // Saved for the post step, whose downgrade-record check needs the same
   // anchor: without it a leftover record from a previous job on a reused
   // runner would trigger a push for a job where cargowall never started.
@@ -264,8 +265,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   })
   // cargowall's exit status, which sudo passes through. EXIT_REFUSED is the
   // one refusal channel that needs no state file, for a sentinel that could
-  // not be written. Nothing else is read from it: a launcher killed by a
-  // signal reports no status, and liveness stays on the real PID (below).
+  // not be written. Any other status ends the wait when no live cargowall is
+  // seen (waitForReady); a launcher killed by a signal reports none.
   let exitCode: number | null = null
   child.on('exit', code => {
     exitCode = code
@@ -287,8 +288,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // startup (to apply container DNS config), which tears down and re-parents the
   // process tree we launched. Polling that PID yields false "exited" verdicts even
   // though cargowall comes up and filters fine. Instead we wait for the ready
-  // sentinel and, once cargowall has written its own pidfile (just before the
-  // sentinel), use that real PID — a dead real PID is a genuine crash. Under
+  // sentinel and, once cargowall has written its own pidfile (first thing at
+  // startup), use that real PID — a dead real PID is a genuine crash. Under
   // --sudo-lockdown liveness is unobservable (sudo is denied), so we just wait
   // for the sentinel/timeout rather than risk a false crash verdict.
   core.info('Waiting for cargowall to initialize...')
@@ -338,9 +339,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     pid: () => readPidFile(spawnedAtMs),
     liveness: processLiveness,
     exitCode: () => exitCode,
-    now: Date.now,
+    now: () => performance.now(),
     sleep,
-  }, spawnedAtMs)
+  }, spawnedAtMono)
+  const pinnedBinary = !core.getInput('binary-path') && !core.getInput('source-ref')
   switch (waited.kind) {
     case 'failed':
       return failFromSentinel(waited.failure)
@@ -350,15 +352,26 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     case 'launcher-exited':
       core.error(waited.kind === 'died'
         ? 'CargoWall process exited unexpectedly'
-        : `CargoWall's launcher exited with status ${waited.code} before cargowall wrote its pidfile`)
+        : `CargoWall's launcher exited with status ${waited.code} with no live cargowall seen`)
       await showLastLog()
-      return handleStartupFailure('CargoWall failed to start. Network filtering is not active.', 'CargoWall failed to start', failOnUnsupported)
+      // A launcher exit with posture flags requested may be the binary
+      // rejecting one (a binary-path build that predates it): enforcement
+      // the runner can't apply fails the step, as a refusal does.
+      return handleStartupFailure('CargoWall failed to start. Network filtering is not active.', 'CargoWall failed to start',
+        failOnUnsupported || (waited.kind === 'launcher-exited' && postureFlags.length > 0))
     case 'timeout':
       core.error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1000)}s ` +
-        `(the pinned cargowall's own bounds on its startup sum to about 162s; see src/startup.ts)`)
+        (pinnedBinary ? `(the pinned cargowall's own bounds on its startup sum to about ${STARTUP_BOUNDS_SECONDS}s; see src/startup.ts)`
+          : '(a binary-path or source-ref cargowall, whose startup bounds were never summed)'))
       await showLastLog()
       await stopCargowall([waited.pid, spawnedPid])
       return handleStartupFailure('CargoWall timed out. Network filtering is not active.', 'CargoWall timed out starting up', failOnUnsupported)
+    case 'ready':
+      break
+    default: {
+      const unhandled: never = waited
+      throw new Error(`unhandled startup outcome ${JSON.stringify(unhandled)}`)
+    }
   }
   let cargowallPid = waited.pid
 
@@ -370,8 +383,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   await warnOnDowngrade(spawnedAtMs)
   // With a policy or a config file in play, the posture to announce is the one
   // cargowall applies. setup installed the pinned download unless binary-path
-  // or source-ref was given.
-  const pinnedBinary = !core.getInput('binary-path') && !core.getInput('source-ref')
+  // or source-ref was given (pinnedBinary, above).
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs))
   const stepRules = stepRulesWarning(postures, postureFlags)
   if (stepRules) core.warning(stepRules)
@@ -393,8 +405,8 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     core.info(sudoLockdownReport({ inputSudoLockdown: sudoLockdown, policyLoaded: false, pinnedBinary, postures, fileSetsLockdown: true }))
   }
 
-  // Resolve cargowall's real PID (written via --pidfile, just before the ready
-  // sentinel) for the `pid` output and cleanup state. Fall back to the launcher
+  // Resolve cargowall's real PID (written via --pidfile, first thing at
+  // startup) for the `pid` output and cleanup state. Fall back to the launcher
   // PID if the pidfile can't be read.
   cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
   const reportedPid = cargowallPid ?? spawnedPid

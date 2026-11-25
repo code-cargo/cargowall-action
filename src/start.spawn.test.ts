@@ -943,10 +943,20 @@ describe('start() failure-sentinel handling', () => {
     const started = Date.now()
     expect(await start()).toEqual({ supported: false, pid: null })
     expect(Date.now() - started).toBeLessThan(5000)
-    expect(core.error).toHaveBeenCalledWith("CargoWall's launcher exited with status 80 before cargowall wrote its pidfile")
+    expect(core.error).toHaveBeenCalledWith("CargoWall's launcher exited with status 80 with no live cargowall seen")
 
     withInputs({ 'fail-on-unsupported': 'true' })
     launcherExitsWith(1)
+    await expect(start()).rejects.toThrow(/CargoWall failed to start/)
+  })
+
+  // A launcher exit with an enforcing posture requested may be a binary that
+  // rejects the posture's flag: like a refusal, it fails the step whatever
+  // fail-on-unsupported says.
+  it('fails the step on a launcher exit when posture flags were requested', async () => {
+    withInputs({ 'fail-on-unsupported': 'false', 'container-egress': 'enforce', 'tls-sni': 'enforce' })
+    withFiles({})
+    launcherExitsWith(80)
     await expect(start()).rejects.toThrow(/CargoWall failed to start/)
   })
 
