@@ -30,7 +30,7 @@ const BINARY_NAME = 'cargowall'
 // which the config-file step-rules e2e asserts.
 // CARGOWALL_VERSION is the binary's; this action release's own version is
 // ACTION_VERSION in src/version.ts: bump it in the release PR.
-const CARGOWALL_VERSION = 'v2.0.0-rc.17'
+export const CARGOWALL_VERSION = 'v2.0.0-rc.17'
 const CARGOWALL_REPO = 'code-cargo/cargowall'
 
 // SHA-256 of each published binary, pinned here instead of fetched from

@@ -26732,6 +26732,63 @@ async function restartResolved() {
   }
 }
 
+// src/startup.ts
+var STARTUP_BOUNDS = [
+  { wait: "restarting a local Docker daemon (dockerRestartTimeout, pkg/network/docker.go)", seconds: 60 },
+  {
+    wait: "the sudo lockdown's checks, 10 s each (probeTimeout, pkg/lockdown/verify.go): the sudo probe, sudo -n -l with an allowlist, and a test -w for each of two Docker sockets",
+    seconds: 40
+  },
+  { wait: "the policy fetch (policyFetchTotalBudget, cmd/api.go)", seconds: 10 },
+  { wait: "the DNS proxy binding its listeners (cmd/start.go)", seconds: 10 },
+  {
+    wait: "the Docker probes in pkg/podenv, 2 s each: the socket's listener, three daemon requests (answerWithin), the runtime probe, the ping (pingWithBridges) and the unix socket diag",
+    seconds: 14
+  },
+  { wait: "the nftables transactions, 2 s each (nftTimeout): the redirect, three guard tables, a retry", seconds: 10 },
+  { wait: "listing Docker's networks (unaryTimeout, pkg/containers/network.go)", seconds: 5 },
+  { wait: "startup pre-resolution (preResolveDeadline, cmd/preresolve.go)", seconds: 5 },
+  { wait: "flushing systemd-resolved's cache, and its WaitDelay (pkg/network/dns_redirect.go)", seconds: 6 },
+  { wait: "the conntrack flush (ctFlushTimeout)", seconds: 2 }
+];
+var STARTUP_BOUNDS_SECONDS = STARTUP_BOUNDS.reduce((sum, b) => sum + b.seconds, 0);
+var STARTUP_TIMEOUT = Math.ceil(STARTUP_BOUNDS_SECONDS * 1.5 / 10) * 10;
+function enforcingRungRequested(postureFlags, mode) {
+  return mode !== "audit" && postureFlags.some((f) => /^--(container-egress|tls-sni)=enforce/.test(f));
+}
+var EXIT_REFUSED = 3;
+async function waitForReady(p, startedAtMs, timeoutMs = STARTUP_TIMEOUT * 1e3) {
+  let pid = null;
+  let liveness = null;
+  for (; ; ) {
+    if (await p.ready()) return { kind: "ready", pid };
+    const failure = await p.failure();
+    if (failure !== null) return { kind: "failed", failure };
+    if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
+    pid = pid ?? await p.pid();
+    if (pid !== null && liveness !== "unknown") liveness = await p.liveness(pid);
+    if (pid !== null && liveness === "dead") {
+      const late = await p.failure();
+      if (late !== null) return { kind: "failed", failure: late };
+      if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
+      return { kind: "died", pid };
+    }
+    const code = p.exitCode();
+    if (code !== null && liveness !== "alive") {
+      const late = await p.failure();
+      if (late !== null) return { kind: "failed", failure: late };
+      if (code === EXIT_REFUSED) return { kind: "refused" };
+      return { kind: "launcher-exited", code };
+    }
+    const waited = p.now() - startedAtMs;
+    if (waited >= timeoutMs) {
+      if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
+      return { kind: "timeout", pid: pid ?? await p.pid(), waitedMs: waited };
+    }
+    await p.sleep(Math.min(1e3, timeoutMs - waited));
+  }
+}
+
 // src/start.ts
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
 var CARGOWALL_LOG = "/tmp/cargowall.log";
@@ -26741,8 +26798,6 @@ var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var MODE_FILE = "/tmp/cargowall-mode";
 var POSTURES_FILE = "/tmp/cargowall-postures";
-var STARTUP_TIMEOUT = 30;
-var EXIT_REFUSED = 3;
 var VALID_MODES = ["enforce", "audit"];
 var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
 var TLS_SNI_VALUES = ["off", "observe", "enforce", "enforce-pinned"];
@@ -26883,6 +26938,7 @@ async function start() {
   };
   const logFd = (0, import_fs8.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
+  const spawnedAtMono = performance.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
   const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
     detached: true,
@@ -26926,55 +26982,47 @@ async function start() {
       true
     );
   };
-  let cargowallPid = null;
-  let ready = false;
-  for (let i = 0; i < STARTUP_TIMEOUT; i++) {
-    if (await readFreshStateFile(READY_FILE, spawnedAtMs) !== null) {
-      ready = true;
-      break;
-    }
-    const failure = await readFailureFile(spawnedAtMs);
-    if (failure !== null) {
-      return failFromSentinel(failure);
-    }
-    if (exitCode === EXIT_REFUSED) {
+  const waited = await waitForReady({
+    // Read like the other state files (readFreshStateFile): a stale ready
+    // file that survived a failed clearStartupFiles rm must not short-circuit
+    // the wait with a false "ready" while this run's cargowall is still coming
+    // up, and the sentinel counts only when root-owned.
+    ready: async () => await readFreshStateFile(READY_FILE, spawnedAtMs) !== null,
+    failure: () => readFailureFile(spawnedAtMs),
+    pid: () => readPidFile(spawnedAtMs),
+    liveness: processLiveness,
+    exitCode: () => exitCode,
+    now: () => performance.now(),
+    sleep: sleep2
+  }, spawnedAtMono);
+  const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
+  switch (waited.kind) {
+    case "failed":
+      return failFromSentinel(waited.failure);
+    case "refused":
       return failRefusedByExit();
-    }
-    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
-    if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
-      const late = await readFailureFile(spawnedAtMs);
-      if (late !== null) {
-        return failFromSentinel(late);
-      }
-      if (exitCode === EXIT_REFUSED) {
-        return failRefusedByExit();
-      }
-      error("CargoWall process exited unexpectedly");
+    case "died":
+    case "launcher-exited":
+      error(waited.kind === "died" ? "CargoWall process exited unexpectedly" : `CargoWall's launcher exited with status ${waited.code} with no live cargowall seen`);
       await showLastLog();
-      return handleStartupFailure(
-        "CargoWall failed to start. Network filtering is not active.",
-        "CargoWall failed to start",
-        failOnUnsupported
-      );
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) return handleStartupFailure("", enforcingRungFailure("failed to start", postureFlags), true);
+      return handleStartupFailure("CargoWall failed to start. Network filtering is not active.", "CargoWall failed to start", failOnUnsupported);
+    case "timeout":
+      error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1e3)}s ` + (pinnedBinary ? `(the pinned cargowall's own bounds on its startup sum to about ${STARTUP_BOUNDS_SECONDS}s; see src/startup.ts)` : "(a binary-path or source-ref cargowall, whose startup bounds were never summed)"));
+      await showLastLog();
+      await stopCargowall([waited.pid, spawnedPid]);
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) return handleStartupFailure("", enforcingRungFailure("timed out starting up", postureFlags), true);
+      return handleStartupFailure("CargoWall timed out. Network filtering is not active.", "CargoWall timed out starting up", failOnUnsupported);
+    case "ready":
+      break;
+    default: {
+      const unhandled = waited;
+      throw new Error(`unhandled startup outcome ${JSON.stringify(unhandled)}`);
     }
-    await sleep2(1e3);
   }
-  if (!ready) {
-    if (exitCode === EXIT_REFUSED) {
-      return failRefusedByExit();
-    }
-    error("Timeout waiting for cargowall to be ready");
-    await showLastLog();
-    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid]);
-    return handleStartupFailure(
-      "CargoWall timed out. Network filtering is not active.",
-      "CargoWall timed out starting up",
-      failOnUnsupported
-    );
-  }
+  let cargowallPid = waited.pid;
   info("CargoWall is ready");
   await warnOnDowngrade(spawnedAtMs);
-  const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");
   const postures = parsePostures(await readFreshStateFile(POSTURES_FILE, spawnedAtMs));
   const stepRules = stepRulesWarning(postures, postureFlags);
   if (stepRules) warning(stepRules);
@@ -27162,6 +27210,9 @@ async function stopCargowall(pids) {
     if (pid == null) continue;
     await exec("sudo", ["kill", String(pid)], { ignoreReturnCode: true, silent: true });
   }
+}
+function enforcingRungFailure(what, postureFlags) {
+  return `CargoWall ${what}, and this run asked to enforce ${postureFlags.join(" ")}: fail-on-unsupported: false doesn't run such a job without its firewall`;
 }
 async function handleStartupFailure(warnMessage, throwMessage, failOnUnsupported) {
   await restoreDns();
