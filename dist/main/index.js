@@ -26733,18 +26733,40 @@ async function restartResolved() {
 }
 
 // src/startup.ts
-var STARTUP_BOUNDS_SECONDS = 162;
-var STARTUP_TIMEOUT = 240;
+var STARTUP_BOUNDS = [
+  { wait: "restarting a local Docker daemon (dockerRestartTimeout, pkg/network/docker.go)", seconds: 60 },
+  {
+    wait: "the sudo lockdown's checks, 10 s each (probeTimeout, pkg/lockdown/verify.go): the sudo probe, sudo -n -l with an allowlist, and a test -w for each of two Docker sockets",
+    seconds: 40
+  },
+  { wait: "the policy fetch (policyFetchTotalBudget, cmd/api.go)", seconds: 10 },
+  { wait: "the DNS proxy binding its listeners (cmd/start.go)", seconds: 10 },
+  {
+    wait: "the Docker probes in pkg/podenv, 2 s each: the socket's listener, three daemon requests (answerWithin), the runtime probe, the ping (pingWithBridges) and the unix socket diag",
+    seconds: 14
+  },
+  { wait: "the nftables transactions, 2 s each (nftTimeout): the redirect, three guard tables, a retry", seconds: 10 },
+  { wait: "listing Docker's networks (unaryTimeout, pkg/containers/network.go)", seconds: 5 },
+  { wait: "startup pre-resolution (preResolveDeadline, cmd/preresolve.go)", seconds: 5 },
+  { wait: "flushing systemd-resolved's cache, and its WaitDelay (pkg/network/dns_redirect.go)", seconds: 6 },
+  { wait: "the conntrack flush (ctFlushTimeout)", seconds: 2 }
+];
+var STARTUP_BOUNDS_SECONDS = STARTUP_BOUNDS.reduce((sum, b) => sum + b.seconds, 0);
+var STARTUP_TIMEOUT = Math.ceil(STARTUP_BOUNDS_SECONDS * 1.5 / 10) * 10;
+function enforcingRungRequested(postureFlags, mode) {
+  return mode !== "audit" && postureFlags.some((f) => /^--(container-egress|tls-sni)=enforce/.test(f));
+}
 var EXIT_REFUSED = 3;
 async function waitForReady(p, startedAtMs, timeoutMs = STARTUP_TIMEOUT * 1e3) {
   let pid = null;
+  let liveness = null;
   for (; ; ) {
     if (await p.ready()) return { kind: "ready", pid };
     const failure = await p.failure();
     if (failure !== null) return { kind: "failed", failure };
     if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
     pid = pid ?? await p.pid();
-    const liveness = pid === null ? null : await p.liveness(pid);
+    if (pid !== null && liveness !== "unknown") liveness = await p.liveness(pid);
     if (pid !== null && liveness === "dead") {
       const late = await p.failure();
       if (late !== null) return { kind: "failed", failure: late };
@@ -26983,11 +27005,10 @@ async function start() {
     case "launcher-exited":
       error(waited.kind === "died" ? "CargoWall process exited unexpectedly" : `CargoWall's launcher exited with status ${waited.code} with no live cargowall seen`);
       await showLastLog();
-      return handleStartupFailure(
-        "CargoWall failed to start. Network filtering is not active.",
-        "CargoWall failed to start",
-        failOnUnsupported || waited.kind === "launcher-exited" && postureFlags.length > 0
-      );
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) {
+        return handleStartupFailure("", `CargoWall failed to start, and this run asked to enforce ${postureFlags.join(" ")}: fail-on-unsupported: false doesn't run such a job without its firewall`, true);
+      }
+      return handleStartupFailure("CargoWall failed to start. Network filtering is not active.", "CargoWall failed to start", failOnUnsupported);
     case "timeout":
       error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1e3)}s ` + (pinnedBinary ? `(the pinned cargowall's own bounds on its startup sum to about ${STARTUP_BOUNDS_SECONDS}s; see src/startup.ts)` : "(a binary-path or source-ref cargowall, whose startup bounds were never summed)"));
       await showLastLog();

@@ -25761,6 +25761,28 @@ function parseModeFile(raw) {
   return value === "enforce" || value === "audit" ? value : null;
 }
 
+// src/startup.ts
+var STARTUP_BOUNDS = [
+  { wait: "restarting a local Docker daemon (dockerRestartTimeout, pkg/network/docker.go)", seconds: 60 },
+  {
+    wait: "the sudo lockdown's checks, 10 s each (probeTimeout, pkg/lockdown/verify.go): the sudo probe, sudo -n -l with an allowlist, and a test -w for each of two Docker sockets",
+    seconds: 40
+  },
+  { wait: "the policy fetch (policyFetchTotalBudget, cmd/api.go)", seconds: 10 },
+  { wait: "the DNS proxy binding its listeners (cmd/start.go)", seconds: 10 },
+  {
+    wait: "the Docker probes in pkg/podenv, 2 s each: the socket's listener, three daemon requests (answerWithin), the runtime probe, the ping (pingWithBridges) and the unix socket diag",
+    seconds: 14
+  },
+  { wait: "the nftables transactions, 2 s each (nftTimeout): the redirect, three guard tables, a retry", seconds: 10 },
+  { wait: "listing Docker's networks (unaryTimeout, pkg/containers/network.go)", seconds: 5 },
+  { wait: "startup pre-resolution (preResolveDeadline, cmd/preresolve.go)", seconds: 5 },
+  { wait: "flushing systemd-resolved's cache, and its WaitDelay (pkg/network/dns_redirect.go)", seconds: 6 },
+  { wait: "the conntrack flush (ctFlushTimeout)", seconds: 2 }
+];
+var STARTUP_BOUNDS_SECONDS = STARTUP_BOUNDS.reduce((sum, b) => sum + b.seconds, 0);
+var STARTUP_TIMEOUT = Math.ceil(STARTUP_BOUNDS_SECONDS * 1.5 / 10) * 10;
+
 // src/start.ts
 var STALE_SLACK_MS = 2e3;
 function sentinelReason(raw) {

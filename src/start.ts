@@ -8,7 +8,7 @@ import { detectDnsUpstream } from './dns'
 import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
-import { EXIT_REFUSED, Liveness, STARTUP_BOUNDS_SECONDS, waitForReady } from './startup'
+import { EXIT_REFUSED, Liveness, STARTUP_BOUNDS_SECONDS, enforcingRungRequested, waitForReady } from './startup'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -354,11 +354,14 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
         ? 'CargoWall process exited unexpectedly'
         : `CargoWall's launcher exited with status ${waited.code} with no live cargowall seen`)
       await showLastLog()
-      // A launcher exit with posture flags requested may be the binary
-      // rejecting one (a binary-path build that predates it): enforcement
-      // the runner can't apply fails the step, as a refusal does.
-      return handleStartupFailure('CargoWall failed to start. Network filtering is not active.', 'CargoWall failed to start',
-        failOnUnsupported || (waited.kind === 'launcher-exited' && postureFlags.length > 0))
+      // With an enforcing rung asked for under an enforcing mode, a cargowall
+      // that never came up (a binary-path build that predates the flag, say)
+      // fails the step, as its own refusal would: whatever the outcome's name.
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) {
+        return handleStartupFailure('', `CargoWall failed to start, and this run asked to enforce ` +
+          `${postureFlags.join(' ')}: fail-on-unsupported: false doesn't run such a job without its firewall`, true)
+      }
+      return handleStartupFailure('CargoWall failed to start. Network filtering is not active.', 'CargoWall failed to start', failOnUnsupported)
     case 'timeout':
       core.error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1000)}s ` +
         (pinnedBinary ? `(the pinned cargowall's own bounds on its startup sum to about ${STARTUP_BOUNDS_SECONDS}s; see src/startup.ts)`

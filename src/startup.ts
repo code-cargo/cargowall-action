@@ -4,37 +4,12 @@
  *
  * The wait must outlast cargowall's own worst case, or the action gives up,
  * and with `fail-on-unsupported: false` runs the job unfiltered, while
- * cargowall is still starting within its limits. The bounded waits on the
- * pinned cargowall's path to ready (STARTUP_BOUNDS_CHECKED_AGAINST), from
- * its source:
- *
- * - restarting a local Docker daemon onto its DNS settings, 60 s
- *   (`dockerRestartTimeout`, pkg/network/docker.go), after which it warns
- *   and carries on;
- * - the sudo lockdown's checks, 10 s each (`probeTimeout`,
- *   pkg/lockdown/verify.go): the sudo probe, `sudo -n -l` with an
- *   allowlist, and one `test -w` per Docker socket the job's workers can
- *   reach (`warnDockerAccess`: the default socket and each worker's
- *   DOCKER_HOST, two on a runner with one non-default host): 40 s;
- * - the policy fetch, 10 s (`policyFetchTotalBudget`, cmd/api.go);
- * - the DNS proxy binding its listeners, 10 s (cmd/start.go);
- * - the Docker probes in pkg/podenv, 2 s each: the socket's listener
- *   (dockerd.go), up to three daemon requests (`answerWithin`), the
- *   container runtime probe (dockerd.go), the ping (`pingWithBridges`,
- *   dockerup.go) and the unix socket diag (unixdiag.go): 14 s;
- * - the nftables transactions, 2 s each (`nftTimeout`): the redirect's,
- *   the three guard tables' and a retry: 10 s;
- * - listing Docker's networks for the hook's carve-outs, 5 s
- *   (`unaryTimeout`, pkg/containers/network.go);
- * - startup pre-resolution, 5 s (`preResolveDeadline`, cmd/preresolve.go);
- * - flushing systemd-resolved's cache, 5 s and its 1 s `WaitDelay`
- *   (pkg/network/dns_redirect.go);
- * - the conntrack flush, 2 s (`ctFlushTimeout`).
- *
- * About 162 s in all (STARTUP_BOUNDS_SECONDS), the counts above being the
- * largest a stock runner reaches. STARTUP_TIMEOUT adds nearly half as much
- * again, for what was not counted and the work between the waits. A `binary-path` or `source-ref`
- * build has bounds of its own that nobody summed.
+ * cargowall is still starting within its limits. STARTUP_BOUNDS lists the
+ * bounded waits on the pinned cargowall's path to ready
+ * (STARTUP_BOUNDS_CHECKED_AGAINST), from its source, each at the largest
+ * count a stock runner reaches; the wait is half as much again, for what
+ * was not counted and the work between the waits. A `binary-path` or
+ * `source-ref` build has bounds of its own that nobody summed.
  *
  * The wait does not cost that long when cargowall fails: it polls every
  * second, and leaves at once on the failure sentinel, on exit status 3, on
@@ -43,11 +18,43 @@
  * failure, a cargowall gone before it could say why).
  */
 
-/** The sum of the pinned cargowall's bounded startup waits above, in seconds. */
-export const STARTUP_BOUNDS_SECONDS = 162
+/** The pinned cargowall's bounded startup waits, in seconds. The one place to edit. */
+export const STARTUP_BOUNDS: ReadonlyArray<{ wait: string; seconds: number }> = [
+  { wait: 'restarting a local Docker daemon (dockerRestartTimeout, pkg/network/docker.go)', seconds: 60 },
+  {
+    wait: "the sudo lockdown's checks, 10 s each (probeTimeout, pkg/lockdown/verify.go): the sudo probe, " +
+      'sudo -n -l with an allowlist, and a test -w for each of two Docker sockets',
+    seconds: 40,
+  },
+  { wait: 'the policy fetch (policyFetchTotalBudget, cmd/api.go)', seconds: 10 },
+  { wait: 'the DNS proxy binding its listeners (cmd/start.go)', seconds: 10 },
+  {
+    wait: "the Docker probes in pkg/podenv, 2 s each: the socket's listener, three daemon requests " +
+      '(answerWithin), the runtime probe, the ping (pingWithBridges) and the unix socket diag',
+    seconds: 14,
+  },
+  { wait: 'the nftables transactions, 2 s each (nftTimeout): the redirect, three guard tables, a retry', seconds: 10 },
+  { wait: "listing Docker's networks (unaryTimeout, pkg/containers/network.go)", seconds: 5 },
+  { wait: 'startup pre-resolution (preResolveDeadline, cmd/preresolve.go)', seconds: 5 },
+  { wait: "flushing systemd-resolved's cache, and its WaitDelay (pkg/network/dns_redirect.go)", seconds: 6 },
+  { wait: 'the conntrack flush (ctFlushTimeout)', seconds: 2 },
+]
 
-/** The wait, in seconds, on a monotonic clock from the spawn. */
-export const STARTUP_TIMEOUT = 240
+/** The sum of STARTUP_BOUNDS, in seconds. */
+export const STARTUP_BOUNDS_SECONDS = STARTUP_BOUNDS.reduce((sum, b) => sum + b.seconds, 0)
+
+/** The wait, in seconds, on a monotonic clock from the spawn: the sum and half again, rounded up to 10 s. */
+export const STARTUP_TIMEOUT = Math.ceil((STARTUP_BOUNDS_SECONDS * 1.5) / 10) * 10
+
+/**
+ * Whether the run asked for an enforcing rung (--container-egress=enforce,
+ * a --tls-sni enforce rung) under an enforcing mode: what cargowall itself
+ * would refuse to start without, so a cargowall that never came up fails the
+ * step whatever fail-on-unsupported says.
+ */
+export function enforcingRungRequested(postureFlags: readonly string[], mode: string): boolean {
+  return mode !== 'audit' && postureFlags.some(f => /^--(container-egress|tls-sni)=enforce/.test(f))
+}
 
 /**
  * The cargowall release the bounds above were summed from. A test fails
@@ -105,6 +112,7 @@ export async function waitForReady<F>(
   timeoutMs: number = STARTUP_TIMEOUT * 1000,
 ): Promise<WaitOutcome<F>> {
   let pid: number | null = null
+  let liveness: Liveness | null = null
   for (;;) {
     if (await p.ready()) return { kind: 'ready', pid }
     const failure = await p.failure()
@@ -112,7 +120,9 @@ export async function waitForReady<F>(
     if (p.exitCode() === EXIT_REFUSED) return { kind: 'refused' }
 
     pid = pid ?? (await p.pid())
-    const liveness = pid === null ? null : await p.liveness(pid)
+    // An unknown liveness (sudo denied under the lockdown) stays unknown for
+    // the rest of startup: no more denied sudo calls once it is known.
+    if (pid !== null && liveness !== 'unknown') liveness = await p.liveness(pid)
     if (pid !== null && liveness === 'dead') {
       // cargowall writes its sentinel, removes its pidfile and exits within
       // milliseconds, so the sentinel can land between the read above and

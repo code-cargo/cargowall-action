@@ -47,6 +47,7 @@ vi.mock('fs', () => ({
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
+import { spawn } from 'child_process'
 import { start } from './start'
 import { STARTUP_TIMEOUT } from './startup'
 
@@ -256,5 +257,77 @@ describe('start() and the posture record', () => {
     expect(core.info).toHaveBeenCalledWith(
       "Sudo lockdown: not reported by cargowall (this step's input: false, which a CodeCargo policy that sets sudo lockdown replaces)"
     )
+  })
+})
+
+/** The launcher exits with code as soon as start() listens for it. */
+function launcherExitsWith(code: number): void {
+  vi.mocked(spawn).mockImplementationOnce((() => ({
+    pid: LAUNCHER_PID,
+    unref: vi.fn(),
+    on: vi.fn((event: string, cb: (code: number) => void) => {
+      if (event === 'exit') cb(code)
+    }),
+  })) as unknown as typeof spawn)
+}
+
+function withInputs(inputs: Record<string, string>): void {
+  vi.mocked(core.getInput).mockImplementation((name: string) => inputs[name] ?? '')
+}
+
+describe('start() and a launcher that exits', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(core.getMultilineInput).mockImplementation((name: string) =>
+      name === 'github-service-hosts' ? ['github.com'] : name === 'azure-infra-hosts' ? ['trafficmanager.net'] : []
+    )
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
+    withStateFiles({}, Number.MAX_SAFE_INTEGER)
+  })
+
+  // A flag the binary rejects, or a sudo or exec failure: the launcher exits
+  // with a status before cargowall writes its pidfile. That ends the wait at
+  // once, honouring fail-on-unsupported, rather than after the full wait.
+  it('leaves the wait at once on a launcher that exited before any pidfile', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    launcherExitsWith(80)
+    const started = Date.now()
+    expect(await start()).toEqual({ supported: false, pid: null })
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(core.error).toHaveBeenCalledWith("CargoWall's launcher exited with status 80 with no live cargowall seen")
+
+    withInputs({ 'fail-on-unsupported': 'true' })
+    launcherExitsWith(1)
+    await expect(start()).rejects.toThrow(/CargoWall failed to start/)
+  })
+
+  // With an enforcing rung asked for under an enforcing mode, a cargowall that
+  // never came up (a binary that rejects the rung's flag, say) fails the step
+  // whatever fail-on-unsupported says, and says why. An observe rung, or any
+  // rung under mode: audit, keeps the warning.
+  it('fails the step on a launcher exit only for an enforcing rung under an enforcing mode', async () => {
+    withInputs({ 'fail-on-unsupported': 'false', 'container-egress': 'enforce', 'tls-sni': 'enforce' })
+    launcherExitsWith(80)
+    await expect(start()).rejects.toThrow(/asked to enforce .*--container-egress=enforce.*fail-on-unsupported: false doesn't run/)
+
+    withInputs({ 'fail-on-unsupported': 'false', 'container-egress': 'observe', 'tls-sni': 'observe' })
+    launcherExitsWith(80)
+    expect(await start()).toEqual({ supported: false, pid: null })
+
+    withInputs({ 'fail-on-unsupported': 'false', mode: 'audit', 'container-egress': 'enforce' })
+    launcherExitsWith(80)
+    expect(await start()).toEqual({ supported: false, pid: null })
+  })
+
+  // The same exit is "died" when one poll caught the pidfile first: the rule
+  // is the same.
+  it('applies the same rule to a cargowall that died after writing its pidfile', async () => {
+    withInputs({ 'fail-on-unsupported': 'false', 'container-egress': 'enforce' })
+    withStateFiles({ [PID_FILE]: { body: '4243\n', owner: 0 } }, Number.MAX_SAFE_INTEGER)
+    // 4243 is gone; pid 1 answers, so sudo works.
+    vi.mocked(exec.exec).mockImplementation(async (cmd, args) =>
+      cmd === 'sudo' && args?.[1] === 'kill' && args?.[3] === '4243' ? 1 : 0
+    )
+    await expect(start()).rejects.toThrow(/asked to enforce .*--container-egress=enforce/)
   })
 })

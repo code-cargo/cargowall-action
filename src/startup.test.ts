@@ -7,6 +7,8 @@ vi.mock('@actions/tool-cache', () => ({}))
 import { CARGOWALL_VERSION } from './setup'
 import {
   EXIT_REFUSED,
+  STARTUP_BOUNDS,
+  enforcingRungRequested,
   STARTUP_BOUNDS_CHECKED_AGAINST,
   STARTUP_BOUNDS_SECONDS,
   STARTUP_TIMEOUT,
@@ -90,6 +92,19 @@ describe('waitForReady', () => {
     expect(p.sleeps.length).toBeLessThan(5)
   })
 
+  // Under the sudo lockdown every liveness probe is a denied sudo: once one
+  // answers unknown, no more are made.
+  it('stops probing liveness once it is unknown', async () => {
+    const p = scripted({ pidAt: 0, readyAt: 100 })
+    let probes = 0
+    p.liveness = async () => {
+      probes++
+      return 'unknown'
+    }
+    expect(await waitForReady(p, 0)).toEqual({ kind: 'ready', pid: 4243 })
+    expect(probes).toBe(1)
+  })
+
   it('prefers a sentinel that lands as the launcher exits', async () => {
     const p = scripted({ exit: { at: 0, code: 1 }, failureAt: 0 })
     expect(await waitForReady(p, 0)).toEqual({ kind: 'failed', failure: 'boom' })
@@ -146,7 +161,19 @@ describe('STARTUP_TIMEOUT', () => {
     expect(STARTUP_BOUNDS_CHECKED_AGAINST).toBe(CARGOWALL_VERSION)
   })
 
-  it('leaves nearly half again over the summed bounds', () => {
-    expect(STARTUP_TIMEOUT).toBeGreaterThanOrEqual(STARTUP_BOUNDS_SECONDS * 1.45)
+  it('is the itemised bounds summed, and half again', () => {
+    expect(STARTUP_BOUNDS_SECONDS).toBe(STARTUP_BOUNDS.reduce((s, b) => s + b.seconds, 0))
+    expect(STARTUP_BOUNDS_SECONDS).toBe(162)
+    expect(STARTUP_TIMEOUT).toBeGreaterThanOrEqual(STARTUP_BOUNDS_SECONDS * 1.5)
+  })
+})
+
+describe('enforcingRungRequested', () => {
+  it('is an enforcing rung under an enforcing mode, and only that', () => {
+    expect(enforcingRungRequested(['--container-egress=enforce'], 'enforce')).toBe(true)
+    expect(enforcingRungRequested(['--container-egress=enforce', '--tls-sni=enforce-pinned'], 'enforce')).toBe(true)
+    expect(enforcingRungRequested(['--container-egress=observe', '--tls-sni=observe'], 'enforce')).toBe(false)
+    expect(enforcingRungRequested(['--container-egress=enforce'], 'audit')).toBe(false)
+    expect(enforcingRungRequested([], 'enforce')).toBe(false)
   })
 })

@@ -346,7 +346,7 @@ Worth knowing before you enable it:
 | `github-service-hosts`       | GitHub service hostnames to auto-allow on port 443 (one per line). Replaces the default list rather than adding to it; an empty value is an error                                                                                                                                      | See [defaults](#automatically-allowed-traffic) |
 | `azure-infra-hosts`          | Azure infrastructure hostnames to auto-allow on port 443 (one per line), applied only on Azure. Replaces the default list rather than adding to it; an empty value is an error                                                                                                         | See [defaults](#automatically-allowed-traffic) |
 | `config-file`                | A JSON file that is this step's whole configuration, used when no CodeCargo policy loads. Not combinable with `allowed-hosts`, `allowed-cidrs` or `search-domains`; see [With Config File](#with-config-file)                                                                          |                                                |
-| `fail-on-unsupported`        | Fail if CargoWall can't run here (eBPF unsupported, or startup failed) rather than warn and continue. Enforcement the runner can't apply [always fails the step](#cargowall-refused-to-start)                                                                                          | `false`                                        |
+| `fail-on-unsupported`        | Fail if CargoWall can't run here (eBPF unsupported, or startup failed) rather than warn and continue. Enforcement the runner can't apply, including a cargowall that never came up when an enforcing `container-egress` or `tls-sni` rung was asked for, [always fails the step](#cargowall-refused-to-start) | `false`                                        |
 | `sudo-lockdown`              | Restrict sudo for the job's user to the allowlist. Allowlisted commands and docker access are outside it — see [Sudo Lockdown](#sudo-lockdown)                                                                                                                                         | `false`                                        |
 | `sudo-allow-commands`        | Command paths to allow via sudo when locked, one per line                                                                                                                                                                                                                              |                                                |
 | `dns-upstream`               | Upstream DNS server (auto-detected if not set)                                                                                                                                                                                                                                         | auto-detect                                    |
@@ -550,6 +550,14 @@ the configuration:
   `github.com:443/tcp`. The reason names the file or the entry and what is
   wrong with it. Fix it; this fails under `mode: audit` too, since no mode
   can apply a configuration that isn't there.
+
+- **CargoWall never came up, and this run asked to enforce
+  `container-egress` or a `tls-sni` rung under `mode: enforce`:** the launcher
+  exited, or cargowall died, before it was ready and without saying why (a
+  `binary-path` or `source-ref` build that predates the flag rejects it this
+  way, as does a `sudo` that can't run). The error names the flags. It fails
+  the step as cargowall's own refusal would, whatever `fail-on-unsupported`
+  says; an `observe` rung, or any rung under `mode: audit`, only warns.
 
 - **`--container-egress=enforce`, or a `--tls-sni` enforce rung, when the
   policy enforces:** the cgroup hook couldn't attach, or couldn't be limited
