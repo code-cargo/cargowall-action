@@ -833,8 +833,8 @@ jobs:
             exit 1
           fi
 
-          # The failure sentinel is what makes this immediate rather than a
-          # 30-second readiness timeout.
+          # The failure sentinel is what makes this immediate, with the
+          # binary's reason, rather than the startup wait's timeout.
           echo "failure sentinel:"; cat /tmp/cargowall-failed
           grep -q 'policy lockdown' /tmp/cargowall-failed
 

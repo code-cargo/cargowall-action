@@ -8,7 +8,7 @@ import { detectDnsUpstream } from './dns'
 import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
-import { STARTUP_TIMEOUT } from './startup'
+import { EXIT_REFUSED, Liveness, waitForReady } from './startup'
 
 const AUDIT_LOG = '/tmp/cargowall-audit.json'
 const CARGOWALL_LOG = '/tmp/cargowall.log'
@@ -27,9 +27,6 @@ const MODE_FILE = '/tmp/cargowall-mode'
 // posturesFile). The pinned cargowall's names the sudo lockdown whenever it was
 // asked for.
 const POSTURES_FILE = '/tmp/cargowall-postures'
-// `cargowall start`'s exit status for a refused posture (cmd/postures.go
-// exitRefused) — keep in sync. See sentinelRefusal.
-const EXIT_REFUSED = 3
 
 const VALID_MODES = ['enforce', 'audit'] as const
 
@@ -331,64 +328,39 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     )
   }
 
-  let cargowallPid: number | null = null
-  let ready = false
-  for (let i = 0; i < STARTUP_TIMEOUT; i++) {
+  const waited = await waitForReady<StartupFailure>({
     // Read like the other state files (readFreshStateFile): a stale ready
     // file that survived a failed clearStartupFiles rm must not short-circuit
     // the wait with a false "ready" while this run's cargowall is still coming
     // up, and the sentinel counts only when root-owned.
-    if ((await readFreshStateFile(READY_FILE, spawnedAtMs)) !== null) {
-      ready = true
-      break
-    }
-
-    // cargowall reported a startup failure.
-    const failure = await readFailureFile(spawnedAtMs)
-    if (failure !== null) {
-      return failFromSentinel(failure)
-    }
-    if (exitCode === EXIT_REFUSED) {
+    ready: async () => (await readFreshStateFile(READY_FILE, spawnedAtMs)) !== null,
+    failure: () => readFailureFile(spawnedAtMs),
+    pid: () => readPidFile(spawnedAtMs),
+    liveness: processLiveness,
+    exitCode: () => exitCode,
+    now: Date.now,
+    sleep,
+  }, spawnedAtMs)
+  switch (waited.kind) {
+    case 'failed':
+      return failFromSentinel(waited.failure)
+    case 'refused':
       return failRefusedByExit()
-    }
-
-    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs)
-    if (cargowallPid !== null && (await processLiveness(cargowallPid)) === 'dead') {
-      // cargowall writes its sentinel, removes its pidfile and exits within
-      // milliseconds, so the sentinel can land between the read above and
-      // this check: look again before calling the death unexplained.
-      const late = await readFailureFile(spawnedAtMs)
-      if (late !== null) {
-        return failFromSentinel(late)
-      }
-      if (exitCode === EXIT_REFUSED) {
-        return failRefusedByExit()
-      }
-      core.error('CargoWall process exited unexpectedly')
+    case 'died':
+    case 'launcher-exited':
+      core.error(waited.kind === 'died'
+        ? 'CargoWall process exited unexpectedly'
+        : `CargoWall's launcher exited with status ${waited.code} before cargowall wrote its pidfile`)
       await showLastLog()
-      return handleStartupFailure(
-        'CargoWall failed to start. Network filtering is not active.',
-        'CargoWall failed to start',
-        failOnUnsupported,
-      )
-    }
-
-    await sleep(1000)
+      return handleStartupFailure('CargoWall failed to start. Network filtering is not active.', 'CargoWall failed to start', failOnUnsupported)
+    case 'timeout':
+      core.error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1000)}s ` +
+        `(the pinned cargowall's own bounds on its startup sum to about 162s; see src/startup.ts)`)
+      await showLastLog()
+      await stopCargowall([waited.pid, spawnedPid])
+      return handleStartupFailure('CargoWall timed out. Network filtering is not active.', 'CargoWall timed out starting up', failOnUnsupported)
   }
-
-  if (!ready) {
-    if (exitCode === EXIT_REFUSED) {
-      return failRefusedByExit()
-    }
-    core.error(`Timeout waiting for cargowall to be ready: not ready after ${STARTUP_TIMEOUT}s, past every bound cargowall sets on its own startup`)
-    await showLastLog()
-    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid])
-    return handleStartupFailure(
-      'CargoWall timed out. Network filtering is not active.',
-      'CargoWall timed out starting up',
-      failOnUnsupported,
-    )
-  }
+  let cargowallPid = waited.pid
 
   core.info('CargoWall is ready')
 
@@ -474,7 +446,6 @@ export function sudoPreserveEnvArgs(env: NodeJS.ProcessEnv): string[] {
   return [`--preserve-env=${names.join(',')}`]
 }
 
-type Liveness = 'alive' | 'dead' | 'unknown'
 
 /**
  * Liveness of a root-owned PID. An unprivileged `kill -0` of a root process
@@ -922,9 +893,9 @@ export function resolveApiFailureMode(args: { input: string; modeSupplied: boole
  * a second default free to drift from the binary's.
  *
  * The combination is rejected here rather than by the binary because a flag
- * cargowall refuses exits the process before it writes any sentinel, which
- * reaches the caller as a bare 30-second wait-ready timeout instead of the
- * input they typed. The binary stays authoritative.
+ * cargowall refuses exits the process before it writes any sentinel or
+ * pidfile, which reaches the caller only as a launcher that exited with a
+ * status instead of the input they typed. The binary stays authoritative.
  */
 export function resolveEgressPostures(args: { containerEgress: string; tlsSni: string }): string[] {
   const containerEgress = args.containerEgress.trim().toLowerCase()

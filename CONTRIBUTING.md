@@ -39,8 +39,10 @@ job.
 
 Recheck `STARTUP_TIMEOUT` in `src/startup.ts` against the new cargowall's
 bounded waits on its way to ready; its comment lists them and their sum. It
-must stay above that sum, or the action gives up on a cargowall still
-starting within its own limits.
+must stay well above that sum, or the action gives up on a cargowall still
+starting within its own limits. Then move `STARTUP_BOUNDS_CHECKED_AGAINST`
+to the new version: `src/startup.test.ts` fails until it equals
+`CARGOWALL_VERSION`.
 
 ### Releasing
 

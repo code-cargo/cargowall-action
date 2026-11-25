@@ -26733,7 +26733,36 @@ async function restartResolved() {
 }
 
 // src/startup.ts
-var STARTUP_TIMEOUT = 120;
+var STARTUP_TIMEOUT = 240;
+var EXIT_REFUSED = 3;
+async function waitForReady(p, startedAtMs, timeoutMs = STARTUP_TIMEOUT * 1e3) {
+  let pid = null;
+  for (; ; ) {
+    if (await p.ready()) return { kind: "ready", pid };
+    const failure = await p.failure();
+    if (failure !== null) return { kind: "failed", failure };
+    if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
+    pid = pid ?? await p.pid();
+    if (pid !== null && await p.liveness(pid) === "dead") {
+      const late = await p.failure();
+      if (late !== null) return { kind: "failed", failure: late };
+      if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
+      return { kind: "died", pid };
+    }
+    const code = p.exitCode();
+    if (pid === null && code !== null) {
+      const late = await p.failure();
+      if (late !== null) return { kind: "failed", failure: late };
+      return { kind: "launcher-exited", code };
+    }
+    const waited = p.now() - startedAtMs;
+    if (waited >= timeoutMs) {
+      if (p.exitCode() === EXIT_REFUSED) return { kind: "refused" };
+      return { kind: "timeout", pid: pid ?? await p.pid(), waitedMs: waited };
+    }
+    await p.sleep(Math.min(1e3, timeoutMs - waited));
+  }
+}
 
 // src/start.ts
 var AUDIT_LOG = "/tmp/cargowall-audit.json";
@@ -26744,7 +26773,6 @@ var FAILURE_FILE = "/tmp/cargowall-failed";
 var DOWNGRADE_FILE = "/tmp/cargowall-downgrade";
 var MODE_FILE = "/tmp/cargowall-mode";
 var POSTURES_FILE = "/tmp/cargowall-postures";
-var EXIT_REFUSED = 3;
 var VALID_MODES = ["enforce", "audit"];
 var CONTAINER_EGRESS_VALUES = ["observe", "enforce"];
 var TLS_SNI_VALUES = ["off", "observe", "enforce", "enforce-pinned"];
@@ -26928,52 +26956,36 @@ async function start() {
       true
     );
   };
-  let cargowallPid = null;
-  let ready = false;
-  for (let i = 0; i < STARTUP_TIMEOUT; i++) {
-    if (await readFreshStateFile(READY_FILE, spawnedAtMs) !== null) {
-      ready = true;
-      break;
-    }
-    const failure = await readFailureFile(spawnedAtMs);
-    if (failure !== null) {
-      return failFromSentinel(failure);
-    }
-    if (exitCode === EXIT_REFUSED) {
+  const waited = await waitForReady({
+    // Read like the other state files (readFreshStateFile): a stale ready
+    // file that survived a failed clearStartupFiles rm must not short-circuit
+    // the wait with a false "ready" while this run's cargowall is still coming
+    // up, and the sentinel counts only when root-owned.
+    ready: async () => await readFreshStateFile(READY_FILE, spawnedAtMs) !== null,
+    failure: () => readFailureFile(spawnedAtMs),
+    pid: () => readPidFile(spawnedAtMs),
+    liveness: processLiveness,
+    exitCode: () => exitCode,
+    now: Date.now,
+    sleep: sleep2
+  }, spawnedAtMs);
+  switch (waited.kind) {
+    case "failed":
+      return failFromSentinel(waited.failure);
+    case "refused":
       return failRefusedByExit();
-    }
-    cargowallPid = cargowallPid ?? await readPidFile(spawnedAtMs);
-    if (cargowallPid !== null && await processLiveness(cargowallPid) === "dead") {
-      const late = await readFailureFile(spawnedAtMs);
-      if (late !== null) {
-        return failFromSentinel(late);
-      }
-      if (exitCode === EXIT_REFUSED) {
-        return failRefusedByExit();
-      }
-      error("CargoWall process exited unexpectedly");
+    case "died":
+    case "launcher-exited":
+      error(waited.kind === "died" ? "CargoWall process exited unexpectedly" : `CargoWall's launcher exited with status ${waited.code} before cargowall wrote its pidfile`);
       await showLastLog();
-      return handleStartupFailure(
-        "CargoWall failed to start. Network filtering is not active.",
-        "CargoWall failed to start",
-        failOnUnsupported
-      );
-    }
-    await sleep2(1e3);
+      return handleStartupFailure("CargoWall failed to start. Network filtering is not active.", "CargoWall failed to start", failOnUnsupported);
+    case "timeout":
+      error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1e3)}s (the pinned cargowall's own bounds on its startup sum to about 162s; see src/startup.ts)`);
+      await showLastLog();
+      await stopCargowall([waited.pid, spawnedPid]);
+      return handleStartupFailure("CargoWall timed out. Network filtering is not active.", "CargoWall timed out starting up", failOnUnsupported);
   }
-  if (!ready) {
-    if (exitCode === EXIT_REFUSED) {
-      return failRefusedByExit();
-    }
-    error(`Timeout waiting for cargowall to be ready: not ready after ${STARTUP_TIMEOUT}s, past every bound cargowall sets on its own startup`);
-    await showLastLog();
-    await stopCargowall([cargowallPid ?? await readPidFile(spawnedAtMs), spawnedPid]);
-    return handleStartupFailure(
-      "CargoWall timed out. Network filtering is not active.",
-      "CargoWall timed out starting up",
-      failOnUnsupported
-    );
-  }
+  let cargowallPid = waited.pid;
   info("CargoWall is ready");
   await warnOnDowngrade(spawnedAtMs);
   const pinnedBinary = !getInput("binary-path") && !getInput("source-ref");

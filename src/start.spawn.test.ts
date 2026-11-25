@@ -932,6 +932,24 @@ describe('start() failure-sentinel handling', () => {
     await expect(start()).rejects.toThrow(/refused to start: .*exited with status 3.*no firewall/)
   })
 
+  // A flag the binary rejects, or a sudo or exec failure: the launcher exits
+  // with a status before cargowall writes its pidfile. That ends the wait at
+  // once, honouring fail-on-unsupported, rather than after the full wait.
+  it('leaves the wait at once on a launcher that exited before any pidfile', async () => {
+    withInputs({ 'fail-on-unsupported': 'false' })
+    withFiles({})
+    launcherExitsWith(80)
+
+    const started = Date.now()
+    expect(await start()).toEqual({ supported: false, pid: null })
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(core.error).toHaveBeenCalledWith("CargoWall's launcher exited with status 80 before cargowall wrote its pidfile")
+
+    withInputs({ 'fail-on-unsupported': 'true' })
+    launcherExitsWith(1)
+    await expect(start()).rejects.toThrow(/CargoWall failed to start/)
+  })
+
   it('takes exit status 3 as the refusal when the sentinel lacks the line', async () => {
     withInputs({ 'fail-on-unsupported': 'false' })
     withFiles({ [FAILURE_FILE]: sentinel('cargowall startup failed: --tls-sni=enforce requested but could not be applied: x') })

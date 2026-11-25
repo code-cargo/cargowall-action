@@ -48,6 +48,7 @@ import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { start } from './start'
+import { STARTUP_TIMEOUT } from './startup'
 
 const READY_FILE = '/tmp/cargowall-ready'
 const PID_FILE = '/tmp/cargowall.pid'
@@ -108,7 +109,7 @@ function signalledPids(): string[] {
  * sleeps that takes.
  */
 async function startToTheEnd(): ReturnType<typeof start> {
-  vi.useFakeTimers({ toFake: ['setTimeout'] })
+  vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
   try {
     let settled = false
     const run = start().finally(() => { settled = true })
@@ -146,27 +147,24 @@ describe('start() and the cargowall pidfile', () => {
     expect(signalledPids()).toEqual([])
   })
 
-  // cargowall's own bound on a Docker restart is 60s, after which it carries
-  // on to ready: a wait shorter than its worst case gave up on a cargowall
-  // still starting within its limits (src/startup.ts).
-  it('waits as long as cargowall may take, two minutes, then gives up', async () => {
-    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '4243\n', owner: 0 } }, 119)
+  // The wait outlasts cargowall's own bounds (src/startup.ts): a ready
+  // sentinel well past the old 30s still ends it as ready.
+  it('waits past cargowall\'s own startup bounds for the ready sentinel', async () => {
+    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '4243\n', owner: 0 } }, 200)
     expect(await startToTheEnd()).toEqual({ supported: true, pid: 4243 })
+  })
 
-    vi.clearAllMocks()
-    vi.mocked(exec.exec).mockImplementation(async () => 0)
-    withStateFiles({ [READY_FILE]: ready(0), [PID_FILE]: { body: '4243\n', owner: 0 } }, 120)
+  it('gives up after STARTUP_TIMEOUT seconds of wall clock, naming the wait', async () => {
+    withStateFiles({ [PID_FILE]: { body: '4243\n', owner: 0 } })
     expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
-    expect(core.error).toHaveBeenCalledWith(expect.stringContaining('not ready after 120s'))
-    const readyLooks = vi.mocked(fsp.stat).mock.calls.filter(([p]) => String(p) === READY_FILE).length
-    expect(readyLooks).toBe(120)
+    expect(core.error).toHaveBeenCalledWith(expect.stringContaining(`not ready after ${STARTUP_TIMEOUT}s`))
   })
 
   it('stops cargowall through its launcher on a timeout with no trusted pidfile', async () => {
     withStateFiles({ [PID_FILE]: { body: '31337\n', owner: 0, stale: true } })
 
     expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
-    expect(core.error).toHaveBeenCalledWith(expect.stringContaining('Timeout waiting for cargowall to be ready: not ready after 120s'))
+    expect(core.error).toHaveBeenCalledWith(expect.stringContaining('Timeout waiting for cargowall to be ready: not ready after'))
     expect(signalledPids()).toEqual([String(LAUNCHER_PID)])
     expect(exec.exec).toHaveBeenCalledWith('sudo', ['kill', String(LAUNCHER_PID)], expect.anything())
   })
