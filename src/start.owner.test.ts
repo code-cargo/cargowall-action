@@ -112,10 +112,14 @@ function signalledPids(): string[] {
 async function startToTheEnd(): ReturnType<typeof start> {
   vi.useFakeTimers({ toFake: ['setTimeout', 'Date', 'performance'] })
   try {
-    let settled = false
-    const run = start().finally(() => { settled = true })
-    for (let i = 0; !settled && i < 1000; i++) await vi.advanceTimersByTimeAsync(1000)
-    return await run
+    // The outcome is held as it settles, so a rejection is handled before the
+    // clock runs on, and rethrown after.
+    let outcome: { v: Awaited<ReturnType<typeof start>> } | { e: unknown } | undefined
+    void start().then(v => { outcome = { v } }, e => { outcome = { e } })
+    for (let i = 0; !outcome && i < 1000; i++) await vi.advanceTimersByTimeAsync(1000)
+    if (!outcome) throw new Error('start() never settled')
+    if ('e' in outcome) throw outcome.e
+    return outcome.v
   } finally {
     vi.useRealTimers()
   }
@@ -164,14 +168,19 @@ describe('start() and the cargowall pidfile', () => {
   // A timeout with an enforcing rung asked for under an enforcing mode fails
   // the step, as the other ways cargowall never comes up do; an observe rung
   // keeps the warning.
-  it('fails the step on a timeout only for an enforcing rung under an enforcing mode', async () => {
-    const inputs = (i: Record<string, string>) => vi.mocked(core.getInput).mockImplementation((name: string) => i[name] ?? '')
-    inputs({ 'fail-on-unsupported': 'false', 'container-egress': 'enforce' })
+  const withTimeoutInputs = (i: Record<string, string>) =>
+    vi.mocked(core.getInput).mockImplementation((name: string) => i[name] ?? '')
+
+  it('fails the step on a timeout for an enforcing rung under an enforcing mode', async () => {
+    withTimeoutInputs({ 'fail-on-unsupported': 'false', 'container-egress': 'enforce' })
     withStateFiles({ [PID_FILE]: { body: '4243\n', owner: 0 } })
     await expect(startToTheEnd()).rejects.toThrow(/timed out starting up, and this run asked to enforce --container-egress=enforce.*fail-on-unsupported: false doesn't run/)
     expect(signalledPids()).toContain('4243')
+  })
 
-    inputs({ 'fail-on-unsupported': 'false', 'container-egress': 'observe' })
+  it('only warns on a timeout for an observe rung', async () => {
+    withTimeoutInputs({ 'fail-on-unsupported': 'false', 'container-egress': 'observe' })
+    withStateFiles({ [PID_FILE]: { body: '4243\n', owner: 0 } })
     expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
   })
 
