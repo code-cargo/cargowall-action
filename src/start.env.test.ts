@@ -2,18 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
  * The environment `start()` hands cargowall through sudo: the allowlist of
- * src/env.ts, named in --preserve-env, and sudo found before DNS is touched.
- * Split from start.spawn.test.ts, whose mocks it shares.
- *
- * Covers the arguments `start()` actually hands the cargowall binary.
- *
- * This is the regression surface for both #69 (policy-fetch posture) and #71
- * (audit-summary must not gate event collection): the resolution logic is unit
- * tested elsewhere, but nothing else proves the resolved value reaches the
- * command line, or that a flag dropped on one path is dropped on all of them.
- *
- * Lives in its own file because it needs the whole module graph mocked, while
- * start.test.ts deliberately mocks only `getMultilineInput`.
+ * src/env.ts, the names --preserve-env carries, and the sudo it spawns,
+ * found before DNS is touched. Its own file because start.spawn.test.ts is
+ * at the size limit; the mocks are the same shape as there.
  */
 
 vi.mock('@actions/core', () => ({
@@ -29,6 +20,7 @@ vi.mock('@actions/core', () => ({
   saveState: vi.fn(),
   setOutput: vi.fn(),
 }))
+vi.mock('@actions/io', () => ({ which: vi.fn(async () => '/usr/bin/sudo') }))
 vi.mock('@actions/exec', () => ({ exec: vi.fn(async () => 0) }))
 vi.mock('@actions/github', () => ({ context: { job: 'build' } }))
 // Only the detection is stubbed: proxyResolvConf stays real so these tests
@@ -58,33 +50,10 @@ import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
-import { start, sudoPreserveEnvArgs } from './start'
+import * as io from '@actions/io'
+import { start } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
-const FAILURE_FILE = '/tmp/cargowall-failed'
-const DOWNGRADE_FILE = '/tmp/cargowall-downgrade'
-const PID_FILE = '/tmp/cargowall.pid'
-const MODE_FILE = '/tmp/cargowall-mode'
-const POSTURES_FILE = '/tmp/cargowall-postures'
-const AUDIT_NOTICE = 'CargoWall running in AUDIT MODE - connections logged but NOT blocked'
-
-/** The launcher exits with code as soon as start() listens for it. */
-function launcherExitsWith(code: number): void {
-  vi.mocked(spawn).mockImplementationOnce((() => ({
-    pid: 4242,
-    unref: vi.fn(),
-    on: vi.fn((event: string, cb: (code: number) => void) => {
-      if (event === 'exit') cb(code)
-    }),
-  })) as unknown as typeof spawn)
-}
-
-/** cargowall's real pid, 4243, is gone; pid 1 answers, so sudo works. */
-function cargowallDied(): void {
-  vi.mocked(exec.exec).mockImplementation(async (cmd, args) =>
-    cmd === 'sudo' && args?.[1] === 'kill' && args?.[3] === '4243' ? 1 : 0
-  )
-}
 
 /**
  * Model the state files cargowall writes. Absent paths make fs.access reject
@@ -137,11 +106,6 @@ function withFiles(
   })
 }
 
-/** Sentinel content exactly as cargowall writes it: pid stamp, then reason. */
-function sentinel(reason: string, pid = 4242): string {
-  return `pid=${pid}\n${reason}\n`
-}
-
 /**
  * The two auto-allow host lists carry non-empty defaults in action.yml, which
  * the runner materialises for us — requireNonEmptyHostList treats an empty
@@ -158,23 +122,12 @@ function withInputs(inputs: Record<string, string>): void {
   vi.mocked(core.getInput).mockImplementation((name: string) => inputs[name] ?? '')
 }
 
-/** The argv handed to the cargowall binary (spawn is `sudo --preserve-env=… cargowall …`). */
-async function cargowallArgs(): Promise<string[]> {
-  const argv = await sudoArgs()
-  return argv.slice(argv.indexOf('cargowall') + 1)
-}
-
 /** The whole argv handed to sudo, and the env the spawn was given. */
 async function sudoArgs(): Promise<string[]> {
   await start()
   const call = vi.mocked(spawn).mock.calls.at(-1)
   if (!call) throw new Error('cargowall was never spawned')
   return call[1] as string[]
-}
-
-/** Value of a `--flag=value` argument, or undefined when the flag is absent. */
-function flag(args: string[], name: string): string | undefined {
-  return args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1)
 }
 
 describe('start() and the environment it hands cargowall', () => {
@@ -217,13 +170,13 @@ describe('start() and the environment it hands cargowall', () => {
           'CARGOWALL_AZURE_INFRA_HOSTS',
           'CARGOWALL_DEFAULT_ACTION',
           'CARGOWALL_GITHUB_SERVICE_HOSTS',
-          'HOME',
           'HTTPS_PROXY',
           'OTEL_EXPORTER_OTLP_ENDPOINT',
           'PATH',
           'no_proxy',
         ])
-        expect(Object.keys(env).sort()).toEqual(preserve.slice('--preserve-env='.length).split(',').sort())
+        // HOME is in the spawn env, for the sudo process, but not preserved.
+        expect(Object.keys(env).sort()).toEqual([...preserve.slice('--preserve-env='.length).split(','), 'HOME'].sort())
 
         const warnings = vi.mocked(core.warning).mock.calls.map(c => String(c[0])).filter(w => w.includes('ignores'))
         expect(warnings).toHaveLength(1)
@@ -236,31 +189,22 @@ describe('start() and the environment it hands cargowall', () => {
       }
     })
 
-  // sudo is found on the job's PATH, since the spawn's environment carries
-  // cargowall's fixed one, and before DNS is repointed, so a host without it
-  // fails with nothing touched.
-  it("spawns the sudo found on the job's PATH, and fails before touching DNS without one", async () => {
-    const inherited = process.env
-    process.env = { PATH: 'relative/bin:/opt/tools/bin:/usr/bin' }
-    try {
-      withInputs({ offline: 'true' })
-      vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
-        if (String(p) === '/opt/tools/bin/sudo' || String(p) === READY_FILE) return undefined
-        throw new Error(`ENOENT: ${String(p)}`)
-      })
-      await start()
-      expect(vi.mocked(spawn).mock.calls.at(-1)?.[0]).toBe('/opt/tools/bin/sudo')
+  // sudo is found on the job's PATH, as every other sudo the action runs is
+  // (io.which), since the spawn's environment carries cargowall's fixed one,
+  // and before DNS is repointed, so a host without it fails with nothing
+  // touched.
+  it("spawns the sudo io.which finds, and fails before touching DNS without one", async () => {
+    withInputs({ offline: 'true' })
+    vi.mocked(io.which).mockResolvedValueOnce('/opt/tools/bin/sudo')
+    await start()
+    expect(io.which).toHaveBeenCalledWith('sudo', true)
+    expect(vi.mocked(spawn).mock.calls.at(-1)?.[0]).toBe('/opt/tools/bin/sudo')
 
-      vi.clearAllMocks()
-      vi.mocked(exec.exec).mockImplementation(async () => 0)
-      vi.mocked(fsp.access).mockImplementation(async (p: unknown) => {
-        throw new Error(`ENOENT: ${String(p)}`)
-      })
-      await expect(start()).rejects.toThrow("sudo was not found on the job's PATH")
-      expect(spawn).not.toHaveBeenCalled()
-      expect(exec.exec).not.toHaveBeenCalledWith('sudo', expect.arrayContaining(['tee']), expect.anything())
-    } finally {
-      process.env = inherited
-    }
+    vi.clearAllMocks()
+    vi.mocked(exec.exec).mockImplementation(async () => 0)
+    vi.mocked(io.which).mockRejectedValueOnce(new Error('Unable to locate executable file: sudo'))
+    await expect(start()).rejects.toThrow('Unable to locate executable file: sudo')
+    expect(spawn).not.toHaveBeenCalled()
+    expect(exec.exec).not.toHaveBeenCalledWith('sudo', expect.arrayContaining(['tee']), expect.anything())
   })
 })

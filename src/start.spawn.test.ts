@@ -25,6 +25,7 @@ vi.mock('@actions/core', () => ({
   saveState: vi.fn(),
   setOutput: vi.fn(),
 }))
+vi.mock('@actions/io', () => ({ which: vi.fn(async () => '/usr/bin/sudo') }))
 vi.mock('@actions/exec', () => ({ exec: vi.fn(async () => 0) }))
 vi.mock('@actions/github', () => ({ context: { job: 'build' } }))
 // Only the detection is stubbed: proxyResolvConf stays real so these tests
@@ -54,6 +55,7 @@ import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
+import { preservedEnv } from './env'
 import { start, sudoPreserveEnvArgs } from './start'
 
 const READY_FILE = '/tmp/cargowall-ready'
@@ -214,7 +216,7 @@ describe('start() argument construction', () => {
       // the allow-list never arrives; the helper's list is the whole policy.
       expect(argv).not.toContain('-E')
       expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('docker.io,**.githubusercontent.com')
-      expect(argv.slice(0, argv.indexOf('cargowall'))).toEqual(sudoPreserveEnvArgs(env))
+      expect(argv.slice(0, argv.indexOf('cargowall'))).toEqual(sudoPreserveEnvArgs(preservedEnv(env)))
     })
   })
 

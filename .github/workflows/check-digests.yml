@@ -70,15 +70,17 @@ jobs:
       # which never passes from the job and which the step warns about. A
       # pin bump to a cargowall with a flag bound to a variable the list
       # lacks fails here, so the list is rechecked rather than left stale.
+      # src/env.drift.test.ts compares the real array, spreads included.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
       - name: CARGOWALL_READS covers the pinned binary's environment-bound flags
         run: |
           set -euo pipefail
           chmod +x cargowall-linux-amd64
-          help=$(./cargowall-linux-amd64 start --help | grep -oE '\$(CARGOWALL|CODECARGO)_[A-Z0-9_]+' | tr -d '$' | sort -u)
-          reads=$(sed -n '/^export const CARGOWALL_READS/,/^] as const/p' src/env.ts | grep -oE "'(CARGOWALL|CODECARGO)_[A-Z0-9_]+'" | tr -d "'" | sort -u)
-          missing=$(comm -23 <(echo "$help") <(echo "$reads"))
-          if [ -n "$missing" ]; then
-            echo "::error::cargowall start reads these from its environment, and src/env.ts CARGOWALL_READS lacks them: $(echo $missing)"
-            exit 1
-          fi
-          echo "All $(echo "$help" | wc -l) environment-bound flags are in CARGOWALL_READS"
+          ./cargowall-linux-amd64 start --help > "$RUNNER_TEMP/cargowall-start-help.txt"
+          CARGOWALL_START_HELP="$RUNNER_TEMP/cargowall-start-help.txt" npx vitest run src/env.drift.test.ts

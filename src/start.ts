@@ -1,12 +1,13 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import * as github from '@actions/github'
+import * as io from '@actions/io'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
 import { requireConfigLoaded, resolveConfigFile } from './configfile'
-import { cargowallEnv, findSudo, ignoredVarsWarning, trustStoreWarning } from './env'
+import { cargowallEnv, ignoredVarsWarning, preservedEnv, requireToolsOnPath, trustStoreWarning } from './env'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -231,8 +232,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
 
   // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
   const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
-  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore)]) if (w) core.warning(w)
-  const sudo = await findSudo(process.env.PATH)
+  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env)]) if (w) core.warning(w)
+  const sudo = await io.which('sudo', true)
+  await requireToolsOnPath()
 
   await repointResolvConf()
 
@@ -257,7 +259,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // runner would trigger a push for a job where cargowall never started.
   // Absence of this state tells the post step cargowall was never spawned.
   core.saveState('cargowall-spawned-at', String(spawnedAtMs))
-  const child = spawn(sudo, [...sudoPreserveEnvArgs(env), 'cargowall', ...args], {
+  const child = spawn(sudo, [...sudoPreserveEnvArgs(preservedEnv(env)), 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
     env,

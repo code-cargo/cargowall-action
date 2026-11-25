@@ -1,4 +1,4 @@
-import { constants as fsConstants, promises as fs } from 'fs'
+import { promises as fs } from 'fs'
 import * as path from 'path'
 
 /**
@@ -59,11 +59,11 @@ const JOB_VARS = [
  * docker, gpasswd, visudo and resolvectl as root and finds them on it, and
  * where sudoers sets no secure_path the job's PATH would reach root,
  * $GITHUB_PATH entries the job user can write included; where sudoers does
- * set one (the hosted runners), it replaces this anyway. sudo is found on the
- * job's PATH instead (findSudo), and through sudo cargowall itself, which
- * setup installs in /usr/local/bin.
+ * set one (the hosted runners), it replaces this anyway; this is Ubuntu's
+ * default secure_path. sudo is found on the job's PATH instead (io.which),
+ * and through sudo cargowall itself, which setup installs in /usr/local/bin.
  */
-export const CARGOWALL_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export const CARGOWALL_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin'
 
 /**
  * The variables of cargowall's local configuration, its LoadFromEnv: any one
@@ -205,32 +205,73 @@ export function ignoredVarsWarning(ignored: string[]): string | null {
   )
 }
 
-/** The one warning naming the trust-store variables cargowall doesn't get. */
-export function trustStoreWarning(trustStore: string[]): string | null {
-  if (trustStore.length === 0) return null
+/**
+ * The one warning naming the trust-store variables cargowall doesn't get,
+ * only where cargowall will make a TLS connection they could matter to: a
+ * policy fetch (fetchPosture, the api-failure-mode that then applies) or an
+ * OTLP export.
+ */
+export function trustStoreWarning(trustStore: string[], fetchPosture: string | null, env: NodeJS.ProcessEnv): string | null {
+  const otlp = Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT || env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT)
+  if (trustStore.length === 0 || (fetchPosture === null && !otlp)) return null
+  const consequence =
+    fetchPosture === 'audit' ? 'the policy fetch fails and the run is audited instead of enforced'
+    : fetchPosture === 'fail' ? 'the policy fetch fails and the run is locked down'
+    : fetchPosture !== null ? "the policy fetch fails and this step's own configuration applies"
+    : 'OTLP export fails'
   return (
     `CargoWall doesn't pass ${trustStore.join(', ')} to cargowall: a private CA it needs, for a ` +
-    'TLS-intercepting proxy say, must be in the system trust store, or its policy fetch fails ' +
-    '(and under the default api-failure-mode the run is audited instead of enforced).'
+    `TLS-intercepting proxy say, must be in the system trust store, or ${consequence}.`
   )
 }
 
 /**
- * The sudo the action starts cargowall with, found on the job's PATH: the
- * environment the spawn is given carries the fixed CARGOWALL_PATH, which
- * would otherwise be where it is looked up. Called before DNS is repointed,
- * so a host with no sudo fails before anything on it is touched.
+ * The variables only the sudo process needs in its environment, never
+ * cargowall's own. cargowall reads the job's Docker setup from the
+ * environment its sudo was given (pkg/podenv dockerEnv, under SUDO_UID), so
+ * these stay in the spawn env; but in cargowall's own they would choose the
+ * docker CLI config, and with it the plugins, root's `docker info` loads.
  */
-export async function findSudo(jobPath: string | undefined): Promise<string> {
-  for (const dir of (jobPath ?? '').split(':')) {
-    if (!dir.startsWith('/')) continue
-    const candidate = path.join(dir, 'sudo')
-    try {
-      await fs.access(candidate, fsConstants.X_OK)
-      return candidate
-    } catch {
-      // not here
-    }
+const SPAWN_ONLY_VARS = ['HOME', 'DOCKER_CONFIG', 'DOCKER_CONTEXT'] as const
+
+/** The names to carry into cargowall itself, through sudo --preserve-env. */
+export function preservedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env }
+  for (const name of SPAWN_ONLY_VARS) delete out[name]
+  return out
+}
+
+/**
+ * The tools cargowall runs as root that the fixed PATH must reach when a
+ * Docker socket is present (it restarts and probes the daemon): a missing
+ * one would show only as a startup timeout. Throws naming PATH.
+ */
+export async function requireToolsOnPath(dockerSocket = '/var/run/docker.sock', dirs = CARGOWALL_PATH): Promise<void> {
+  try {
+    await fs.stat(dockerSocket)
+  } catch {
+    return
   }
-  throw new Error("sudo was not found on the job's PATH; the action starts cargowall through it")
+  const missing: string[] = []
+  for (const tool of ['docker', 'systemctl']) {
+    let found = false
+    for (const dir of dirs.split(':')) {
+      try {
+        const st = await fs.stat(path.join(dir, tool))
+        if (st.isFile() && (st.mode & 0o111) !== 0) {
+          found = true
+          break
+        }
+      } catch {
+        // not here
+      }
+    }
+    if (!found) missing.push(tool)
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `CargoWall needs ${missing.join(' and ')} on its PATH (${dirs}) to restart and probe Docker, ` +
+        "and doesn't use the job's PATH as root; install or link it into one of those directories"
+    )
+  }
 }

@@ -26556,7 +26556,7 @@ var JOB_VARS = [
   "DOCKER_API_VERSION",
   "HOME"
 ];
-var CARGOWALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+var CARGOWALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
 var LOCAL_CONFIG_VARS = [
   "CARGOWALL_DEFAULT_ACTION",
   "CARGOWALL_ALLOWED_HOSTS",
@@ -26635,21 +26635,44 @@ function ignoredVarsWarning(ignored) {
   if (ignored.length === 0) return null;
   return `CargoWall ignores ${ignored.join(", ")} from the job's environment: only this step's inputs, its config-file and the CodeCargo policy configure it. Set what you need through one of those, where one covers the setting.`;
 }
-function trustStoreWarning(trustStore) {
-  if (trustStore.length === 0) return null;
-  return `CargoWall doesn't pass ${trustStore.join(", ")} to cargowall: a private CA it needs, for a TLS-intercepting proxy say, must be in the system trust store, or its policy fetch fails (and under the default api-failure-mode the run is audited instead of enforced).`;
+function trustStoreWarning(trustStore, fetchPosture, env) {
+  const otlp = Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT || env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT);
+  if (trustStore.length === 0 || fetchPosture === null && !otlp) return null;
+  const consequence = fetchPosture === "audit" ? "the policy fetch fails and the run is audited instead of enforced" : fetchPosture === "fail" ? "the policy fetch fails and the run is locked down" : fetchPosture !== null ? "the policy fetch fails and this step's own configuration applies" : "OTLP export fails";
+  return `CargoWall doesn't pass ${trustStore.join(", ")} to cargowall: a private CA it needs, for a TLS-intercepting proxy say, must be in the system trust store, or ${consequence}.`;
 }
-async function findSudo(jobPath) {
-  for (const dir of (jobPath ?? "").split(":")) {
-    if (!dir.startsWith("/")) continue;
-    const candidate = path6.join(dir, "sudo");
-    try {
-      await import_fs6.promises.access(candidate, import_fs6.constants.X_OK);
-      return candidate;
-    } catch {
-    }
+var SPAWN_ONLY_VARS = ["HOME", "DOCKER_CONFIG", "DOCKER_CONTEXT"];
+function preservedEnv(env) {
+  const out = { ...env };
+  for (const name of SPAWN_ONLY_VARS) delete out[name];
+  return out;
+}
+async function requireToolsOnPath(dockerSocket = "/var/run/docker.sock", dirs = CARGOWALL_PATH) {
+  try {
+    await import_fs6.promises.stat(dockerSocket);
+  } catch {
+    return;
   }
-  throw new Error("sudo was not found on the job's PATH; the action starts cargowall through it");
+  const missing = [];
+  for (const tool of ["docker", "systemctl"]) {
+    let found = false;
+    for (const dir of dirs.split(":")) {
+      try {
+        const st = await import_fs6.promises.stat(path6.join(dir, tool));
+        if (st.isFile() && (st.mode & 73) !== 0) {
+          found = true;
+          break;
+        }
+      } catch {
+      }
+    }
+    if (!found) missing.push(tool);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `CargoWall needs ${missing.join(" and ")} on its PATH (${dirs}) to restart and probe Docker, and doesn't use the job's PATH as root; install or link it into one of those directories`
+    );
+  }
 }
 
 // src/effective.ts
@@ -26981,15 +27004,16 @@ async function start() {
     info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
   }
   const { env, ignored, trustStore } = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts });
-  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore)]) if (w) warning(w);
-  const sudo = await findSudo(process.env.PATH);
+  for (const w of [ignoredVarsWarning(ignored), trustStoreWarning(trustStore, apiFailurePosture, env)]) if (w) warning(w);
+  const sudo = await which("sudo", true);
+  await requireToolsOnPath();
   await repointResolvConf();
   info("Starting cargowall...");
   await clearStartupFiles();
   const logFd = (0, import_fs9.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
-  const child2 = (0, import_child_process.spawn)(sudo, [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
+  const child2 = (0, import_child_process.spawn)(sudo, [...sudoPreserveEnvArgs(preservedEnv(env)), "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env

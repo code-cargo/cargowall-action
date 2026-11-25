@@ -1,8 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import * as path from 'path'
-import { CARGOWALL_PATH, CARGOWALL_READS, LOCAL_CONFIG_VARS as ENV_CONFIG_VARS, cargowallEnv, findSudo, ignoredVarsWarning, trustStoreWarning } from './env'
+import {
+  CARGOWALL_PATH,
+  CARGOWALL_READS,
+  LOCAL_CONFIG_VARS,
+  cargowallEnv,
+  ignoredVarsWarning,
+  preservedEnv,
+  requireToolsOnPath,
+  trustStoreWarning,
+} from './env'
 
 
 const SETTINGS = {
@@ -128,7 +137,7 @@ describe('cargowallEnv', () => {
 
   it('with a config file, passes none of the LoadFromEnv variables, so cargowall reads the file', () => {
     const { env } = cargowallEnv(jobEnv(), { ...SETTINGS, configFile: '/work/cargowall.json' })
-    for (const name of ENV_CONFIG_VARS) expect(env[name], name).toBeUndefined()
+    for (const name of LOCAL_CONFIG_VARS) expect(env[name], name).toBeUndefined()
     expect(env.PATH).toBe(CARGOWALL_PATH)
   })
 
@@ -174,33 +183,68 @@ describe('ignoredVarsWarning', () => {
 })
 
 describe('trustStoreWarning', () => {
-  // With a proxy kept and the CA dropped, the policy fetch behind a
-  // TLS-intercepting proxy fails: say which variable was dropped.
-  it('names the trust-store variables the job set, and never their values', () => {
-    const { trustStore } = cargowallEnv({ SSL_CERT_FILE: '/etc/corp-ca.pem', PATH: '/usr/bin' }, SETTINGS)
+  const job = { SSL_CERT_FILE: '/etc/corp-ca.pem', PATH: '/usr/bin' }
+
+  // With a proxy kept and the CA dropped, a TLS connection behind a
+  // TLS-intercepting proxy fails: say which variable was dropped, and what
+  // the failure costs under the posture that applies.
+  it('names the variables, never their values, and the cost under each failure posture', () => {
+    const { trustStore } = cargowallEnv(job, SETTINGS)
     expect(trustStore).toEqual(['SSL_CERT_FILE'])
-    const warning = trustStoreWarning(trustStore)
-    expect(warning).toContain('SSL_CERT_FILE')
-    expect(warning).toContain('system trust store')
-    expect(warning).not.toContain('/etc/corp-ca.pem')
+    const audit = trustStoreWarning(trustStore, 'audit', {})
+    expect(audit).toContain('SSL_CERT_FILE')
+    expect(audit).toContain('system trust store')
+    expect(audit).toContain('audited instead of enforced')
+    expect(audit).not.toContain('/etc/corp-ca.pem')
+    expect(trustStoreWarning(trustStore, 'fail', {})).toContain('locked down')
+    expect(trustStoreWarning(trustStore, 'local', {})).toContain("this step's own configuration applies")
+    expect(trustStoreWarning(trustStore, null, { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example' })).toContain(
+      'OTLP export fails'
+    )
     expect(cargowallEnv({ SSL_CERT_FILE: 'a', SSL_CERT_DIR: 'b' }, SETTINGS).trustStore).toEqual(['SSL_CERT_FILE', 'SSL_CERT_DIR'])
   })
 
-  it('says nothing when the job set neither', () => {
-    expect(cargowallEnv({ PATH: '/usr/bin' }, SETTINGS).trustStore).toEqual([])
-    expect(trustStoreWarning([])).toBeNull()
+  it('says nothing when no fetch or export will happen, or the job set neither', () => {
+    expect(trustStoreWarning(['SSL_CERT_FILE'], null, {})).toBeNull()
+    expect(trustStoreWarning([], 'audit', {})).toBeNull()
   })
 })
 
-describe('findSudo', () => {
-  it("finds an executable sudo on the job's PATH, skipping relative entries", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'findsudo-'))
-    writeFileSync(path.join(dir, 'sudo'), '#!/bin/sh\n', { mode: 0o755 })
-    expect(await findSudo(`bin:/nonexistent:${dir}`)).toBe(path.join(dir, 'sudo'))
+describe('preservedEnv', () => {
+  // cargowall reads the job's Docker setup from its sudo's environment, so
+  // the variables that choose the docker CLI's config stay out of its own.
+  it('keeps HOME, DOCKER_CONFIG and DOCKER_CONTEXT out of what sudo preserves', () => {
+    const { env } = cargowallEnv({ HOME: '/home/runner', DOCKER_CONFIG: '/x', DOCKER_CONTEXT: 'c', DOCKER_HOST: 'tcp://h:2376' }, SETTINGS)
+    expect(env.HOME).toBe('/home/runner')
+    const kept = preservedEnv(env)
+    expect(kept.HOME).toBeUndefined()
+    expect(kept.DOCKER_CONFIG).toBeUndefined()
+    expect(kept.DOCKER_CONTEXT).toBeUndefined()
+    expect(kept.DOCKER_HOST).toBe('tcp://h:2376')
+    expect(kept.PATH).toBe(CARGOWALL_PATH)
+  })
+})
+
+describe('requireToolsOnPath', () => {
+  const dir = () => mkdtempSync(path.join(tmpdir(), 'cwpath-'))
+
+  it('refuses, naming PATH, when a Docker socket is present and a tool is missing', async () => {
+    const sock = path.join(dir(), 'docker.sock')
+    writeFileSync(sock, '')
+    const bin = dir()
+    writeFileSync(path.join(bin, 'docker'), '#!/bin/sh\n', { mode: 0o755 })
+    await expect(requireToolsOnPath(sock, `${bin}:/nonexistent`)).rejects.toThrow(/needs systemctl on its PATH/)
+    writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\n', { mode: 0o755 })
+    await expect(requireToolsOnPath(sock, `${bin}:/nonexistent`)).resolves.toBeUndefined()
   })
 
-  it('refuses when no PATH entry has one', async () => {
-    await expect(findSudo('/nonexistent:relative')).rejects.toThrow("sudo was not found on the job's PATH")
-    await expect(findSudo(undefined)).rejects.toThrow()
+  it('takes a directory named after a tool for no tool, and checks nothing without a socket', async () => {
+    const sock = path.join(dir(), 'docker.sock')
+    writeFileSync(sock, '')
+    const bin = dir()
+    mkdirSync(path.join(bin, 'docker'))
+    writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\n', { mode: 0o755 })
+    await expect(requireToolsOnPath(sock, bin)).rejects.toThrow(/needs docker/)
+    await expect(requireToolsOnPath(path.join(dir(), 'absent.sock'), '/nonexistent')).resolves.toBeUndefined()
   })
 })
