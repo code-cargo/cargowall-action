@@ -481,17 +481,21 @@ Setting `github-service-hosts` or `azure-infra-hosts` **replaces** the correspon
 
 ### The Job's Environment
 
-The job's environment never configures cargowall. cargowall binds most of its settings to `CARGOWALL_*` variables, so the action starts it with a named set of variables only, never the job's whole environment: a variable from the workflow's or job's `env:`, from `$GITHUB_ENV`, or from the runner can't turn audit mode on, point the policy fetch elsewhere, add rules, or change any setting this step's inputs leave at cargowall's default. Every setting comes from an input, the CodeCargo policy, or cargowall's own default.
+cargowall binds most of its settings to `CARGOWALL_*` variables, so the action starts it with a named set of variables only, never the job's whole environment. No variable from the workflow's or job's `env:`, from `$GITHUB_ENV`, or from the runner sets a cargowall setting: not the mode, not the policy fetch's target, not the rules, and none that this step's inputs leave at cargowall's default. Every setting comes from an input, the `config-file`, the CodeCargo policy, or cargowall's own default. A setting with no input of its own (`CARGOWALL_BPF_STATS`, `CARGOWALL_CLOUD_PROVIDER`, `CARGOWALL_INTERFACE`, among others) has no channel at all, and the step's own `env:` can't be told from the job's.
+
+The variables that do reach cargowall can still change what it does at runtime:
+
+- **A proxy the job sets can break the policy fetch.** Under the default `api-failure-mode` (`audit`, unless `mode` is set), a fetch that fails runs the job in audit mode, blocking nothing. Set `api-failure-mode: fail` where a job's environment must not be able to turn enforcement off this way: a failed fetch then locks the run down instead.
+- **A runner endpoint the runner leaves unset can be set by the job.** cargowall allows HTTPS to the host each `ACTIONS_*_URL` names. The runner sets `ACTIONS_RUNTIME_URL` for every action step, overriding the job's value, but sets `ACTIONS_CACHE_URL`, `ACTIONS_RESULTS_URL` and `ACTIONS_ID_TOKEN_REQUEST_URL` only when it has them (the last only with `permissions: id-token: write`). Where it doesn't, a value from the job's `env:` or `$GITHUB_ENV` reaches cargowall and adds that allow.
 
 What reaches cargowall from the job:
 
 - the proxy variables, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, upper and lower case, which the policy fetch and OTLP export honour;
 - the OTLP export variables, `OTEL_EXPORTER_OTLP_*`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME`;
 - the runner's endpoints, `ACTIONS_RUNTIME_URL`, `ACTIONS_RESULTS_URL`, `ACTIONS_CACHE_URL` and `ACTIONS_ID_TOKEN_REQUEST_URL`, which it allows;
-- `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `HOME`, from which it works out which Docker daemon the job's `docker` uses;
-- `PATH`.
+- the Docker client's variables, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_TLS`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`, `DOCKER_API_VERSION` and `HOME`, from which it works out which Docker daemon the job's `docker` uses, and with which its own `docker` probe reaches that daemon.
 
-Beside those, cargowall gets only what the action sets from this step's inputs. When the job carries a `CARGOWALL_*` or `CODECARGO_*` variable, the step warns once, naming the variables it ignored (never their values).
+cargowall's `PATH` is fixed (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), never the job's: it runs `systemctl`, `docker` and the sudoers tools as root. Beside those, cargowall gets only what the action sets from this step's inputs. When the job sets a variable cargowall would have read as its configuration, the step warns once, naming the variables it ignored (never their values).
 
 `SSL_CERT_FILE` and `SSL_CERT_DIR` don't reach cargowall. A runner that needs a private CA to reach the CodeCargo API or an OTLP collector should install it in the system trust store, which cargowall reads by default.
 

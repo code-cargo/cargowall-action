@@ -38,15 +38,16 @@ tampered release asset is caught in this repo's CI rather than in a consumer's
 job.
 
 Recheck what cargowall reads from its environment, at the new pin, against
-the allowlist in `src/env.ts` (`JOB_VARS`, `JOB_PREFIXES`) and the names
-`src/env.test.ts` asserts never pass (`JOB_SETTABLE`):
+`src/env.ts`: the allowlist (`JOB_VARS`, `JOB_PREFIXES`), and the names it
+lists as what cargowall reads (`CARGOWALL_READS`), which never pass and
+which the ignored-variable warning names:
 
 ```sh
-git grep -o 'env:"[A-Z_,]*"' vX.Y.Z -- 'cmd/*.go' ':!*_test.go'
+git grep -o 'env:"[A-Z0-9_,]*"' vX.Y.Z -- 'cmd/*.go' ':!*_test.go'
 git grep -n -E 'os\.(Getenv|LookupEnv|Environ)\(|getenv\("' vX.Y.Z -- '*.go' ':!*_test.go'
 ```
 
-Every new variable is either a setting, which joins `JOB_SETTABLE` and stays
+Every new variable is either a setting, which joins `CARGOWALL_READS` and stays
 out, or something cargowall needs from the job (as the proxy, OTLP and
 runner-endpoint variables are), which joins the allowlist with a comment
 saying why. Also check what the libraries cargowall links read: Go's HTTP

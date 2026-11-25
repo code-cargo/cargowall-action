@@ -16,8 +16,7 @@ const BINARY_NAME = 'cargowall'
 // `sudo-lockdown` line whenever the flag or the policy asked for the lockdown:
 // from the pinned download, sudoLockdownReport (src/effective.ts) reports a
 // record without that line as the lockdown off. When moving the pin, also
-// recheck what src/configfile.ts mirrors of cargowall: ENV_CONFIG_VARS against
-// LoadFromEnv; CONFIG_KEYS, RULE_KEYS, PORT_KEYS, STEP_KEYS and
+// recheck what src/configfile.ts mirrors of cargowall: CONFIG_KEYS, RULE_KEYS, PORT_KEYS, STEP_KEYS and
 // SUDO_LOCKDOWN_KEYS against the config file's JSON tags; PROTOCOLS against
 // expandPorts; RULE_TYPES and ACTIONS against the rule types and actions
 // cargowall acts on; LABEL against the hostname patterns it compiles;
@@ -28,7 +27,8 @@ const BINARY_NAME = 'cargowall'
 // through the same path, a bad github-service-hosts pattern would fail a good
 // file's step). And the README's account of when a file's step rules apply,
 // which the config-file step-rules e2e asserts. And src/env.ts's allowlist
-// against cargowall's env: tags and direct reads (CONTRIBUTING.md).
+// and its CARGOWALL_READS against cargowall's env: tags, direct reads and
+// LoadFromEnv (CONTRIBUTING.md).
 // CARGOWALL_VERSION is the binary's; this action release's own version is
 // ACTION_VERSION in src/version.ts: bump it in the release PR.
 const CARGOWALL_VERSION = 'v2.0.0-rc.17'

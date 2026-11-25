@@ -8,20 +8,6 @@ import { promises as fs } from 'fs'
 import { isIP } from 'net'
 import * as path from 'path'
 
-/**
- * The variables cargowall's CI loader reads as a configuration (LoadFromEnv in
- * cargowall's pkg/config). Any one of them set makes it load the environment
- * and skip --config, so with a config file none may reach it.
- */
-export const ENV_CONFIG_VARS = [
-  'CARGOWALL_DEFAULT_ACTION',
-  'CARGOWALL_ALLOWED_HOSTS',
-  'CARGOWALL_ALLOWED_CIDRS',
-  'CARGOWALL_BLOCKED_HOSTS',
-  'CARGOWALL_BLOCKED_CIDRS',
-  'CARGOWALL_SEARCH_DOMAINS',
-] as const
-
 /** The top-level keys of cargowall's config file (FirewallConfig). */
 const CONFIG_KEYS = ['rules', 'defaultAction', 'searchDomains', 'sudoLockdown', 'steps']
 

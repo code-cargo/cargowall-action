@@ -26538,19 +26538,70 @@ var JOB_VARS = [
   "ACTIONS_CACHE_URL",
   "ACTIONS_ID_TOKEN_REQUEST_URL",
   // How the job reaches Docker. cargowall identifies the daemon the job's
-  // docker CLI uses from these, as the CLI resolves it (pkg/podenv), reading
-  // them from the environment the sudo that started it was given. They
-  // describe the job's Docker; no cargowall setting is bound to them.
+  // docker CLI uses from DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG and
+  // HOME, as the CLI resolves it (pkg/podenv), reading them from the
+  // environment the sudo that started it was given; and its own docker
+  // probe after a restart (docker info) is that CLI, which needs the TLS
+  // and API-version variables beside DOCKER_HOST to reach the same daemon.
+  // They describe the job's Docker, kept together; no cargowall setting is
+  // bound to any of them.
   "DOCKER_HOST",
   "DOCKER_CONTEXT",
   "DOCKER_CONFIG",
-  "HOME",
-  // The commands cargowall runs (systemctl, docker, gpasswd, visudo,
-  // resolvectl) are found on it.
-  "PATH"
+  "DOCKER_TLS",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "DOCKER_API_VERSION",
+  "HOME"
+];
+var CARGOWALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+var CARGOWALL_READS = [
+  "CARGOWALL_ALLOW_EXISTING_CONNECTIONS",
+  "CARGOWALL_API_FAILURE_MODE",
+  "CARGOWALL_API_URL",
+  "CARGOWALL_AUDIT_LOG",
+  "CARGOWALL_AUDIT_MODE",
+  "CARGOWALL_AUTO_ALLOW_CLOUD_METADATA",
+  "CARGOWALL_AUTO_ALLOW_GITHUB_HOSTS",
+  "CARGOWALL_AUTO_ALLOW_GITLAB_HOSTS",
+  "CARGOWALL_BPF_STATS",
+  "CARGOWALL_CONFIG",
+  "CARGOWALL_CONTAINER_EGRESS",
+  "CARGOWALL_DNS_QUERY_FILTERING",
+  "CARGOWALL_DNS_REDIRECT",
+  "CARGOWALL_DNS_REDIRECT_IPTABLES",
+  "CARGOWALL_DNS_UPSTREAM",
+  "CARGOWALL_DOCKER_DNS_INTERCEPTION",
+  "CARGOWALL_FAILURE_FILE",
+  "CARGOWALL_GITHUB_ACTION",
+  "CARGOWALL_GITLAB_CI",
+  "CARGOWALL_INTERFACE",
+  "CARGOWALL_JOB_KEY",
+  "CARGOWALL_PIDFILE",
+  "CARGOWALL_PREPOPULATE_DNS_CACHE",
+  "CARGOWALL_READY_FILE",
+  "CARGOWALL_RUNNER_WORKER_PID",
+  "CARGOWALL_STEP_ATTRIBUTION",
+  "CARGOWALL_STEP_ORDINAL_BASE",
+  "CARGOWALL_SUDO_ALLOW_COMMANDS",
+  "CARGOWALL_SUDO_LOCKDOWN",
+  "CARGOWALL_SUDO_LOCKDOWN_USER",
+  "CARGOWALL_TLS_SNI",
+  "CODECARGO_AUTH_TOKEN",
+  // Read directly, not through a flag.
+  "CARGOWALL_CLOUD_PROVIDER",
+  "CARGOWALL_AZURE_INFRA_HOSTS",
+  "CARGOWALL_GITHUB_SERVICE_HOSTS",
+  "CARGOWALL_GITLAB_SERVICE_HOSTS",
+  // LoadFromEnv's local configuration.
+  "CARGOWALL_DEFAULT_ACTION",
+  "CARGOWALL_ALLOWED_HOSTS",
+  "CARGOWALL_ALLOWED_CIDRS",
+  "CARGOWALL_BLOCKED_HOSTS",
+  "CARGOWALL_BLOCKED_CIDRS",
+  "CARGOWALL_SEARCH_DOMAINS"
 ];
 var JOB_PREFIXES = ["OTEL_EXPORTER_OTLP_"];
-var CONFIG_NAME = /^(CARGOWALL|CODECARGO)_/;
 function cargowallEnv(job, settings) {
   const env = {};
   for (const [name, value] of Object.entries(job)) {
@@ -26562,7 +26613,8 @@ function cargowallEnv(job, settings) {
   env.CARGOWALL_GITHUB_SERVICE_HOSTS = settings.githubServiceHosts;
   env.CARGOWALL_AZURE_INFRA_HOSTS = settings.azureInfraHosts;
   Object.assign(env, localConfigEnv(settings));
-  const ignored = Object.keys(job).filter((name) => job[name] !== void 0 && CONFIG_NAME.test(name)).sort();
+  env.PATH = CARGOWALL_PATH;
+  const ignored = CARGOWALL_READS.filter((name) => job[name] !== void 0).sort();
   return { env, ignored };
 }
 function localConfigEnv(settings) {
@@ -26575,7 +26627,7 @@ function localConfigEnv(settings) {
 }
 function ignoredVarsWarning(ignored) {
   if (ignored.length === 0) return null;
-  return `CargoWall ignores ${ignored.join(", ")} from the job's environment: only this step's inputs and the CodeCargo policy configure it. Set what you need through the action's inputs.`;
+  return `CargoWall ignores ${ignored.join(", ")} from the job's environment: only this step's inputs, its config-file and the CodeCargo policy configure it. Set what you need through one of those, where one covers the setting.`;
 }
 
 // src/effective.ts

@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { ENV_CONFIG_VARS } from './configfile'
-import { cargowallEnv, ignoredVarsWarning } from './env'
+import { CARGOWALL_PATH, CARGOWALL_READS, cargowallEnv, ignoredVarsWarning } from './env'
+
+/** The six variables of cargowall's local configuration (LoadFromEnv). */
+const ENV_CONFIG_VARS = [
+  'CARGOWALL_DEFAULT_ACTION',
+  'CARGOWALL_ALLOWED_HOSTS',
+  'CARGOWALL_ALLOWED_CIDRS',
+  'CARGOWALL_BLOCKED_HOSTS',
+  'CARGOWALL_BLOCKED_CIDRS',
+  'CARGOWALL_SEARCH_DOMAINS',
+]
 
 const SETTINGS = {
   configFile: null,
@@ -12,57 +21,10 @@ const SETTINGS = {
 }
 
 /**
- * Every variable the pinned cargowall (v2.0.0-rc.17) binds a setting to, or
- * reads directly, that the action does not set itself: none may arrive from
- * the job. The action-set ones are checked separately below.
+ * Variables Go and its libraries read, never by name in cargowall: none may
+ * arrive from the job either.
  */
-const JOB_SETTABLE = [
-  'CARGOWALL_AUDIT_MODE',
-  'CARGOWALL_API_URL',
-  'CODECARGO_AUTH_TOKEN',
-  'CARGOWALL_JOB_KEY',
-  'CARGOWALL_API_FAILURE_MODE',
-  'CARGOWALL_CONFIG',
-  'CARGOWALL_BLOCKED_HOSTS',
-  'CARGOWALL_BLOCKED_CIDRS',
-  'CARGOWALL_SUDO_LOCKDOWN',
-  'CARGOWALL_SUDO_ALLOW_COMMANDS',
-  'CARGOWALL_SUDO_LOCKDOWN_USER',
-  'CARGOWALL_TLS_SNI',
-  'CARGOWALL_CONTAINER_EGRESS',
-  'CARGOWALL_ALLOW_EXISTING_CONNECTIONS',
-  'CARGOWALL_DOCKER_DNS_INTERCEPTION',
-  'CARGOWALL_DNS_QUERY_FILTERING',
-  'CARGOWALL_DNS_REDIRECT',
-  'CARGOWALL_DNS_REDIRECT_IPTABLES',
-  'CARGOWALL_DNS_UPSTREAM',
-  'CARGOWALL_PREPOPULATE_DNS_CACHE',
-  'CARGOWALL_AUTO_ALLOW_CLOUD_METADATA',
-  'CARGOWALL_AUTO_ALLOW_GITHUB_HOSTS',
-  'CARGOWALL_AUTO_ALLOW_GITLAB_HOSTS',
-  'CARGOWALL_GITLAB_CI',
-  'CARGOWALL_GITLAB_SERVICE_HOSTS',
-  'CARGOWALL_CLOUD_PROVIDER',
-  'CARGOWALL_GITHUB_ACTION',
-  'CARGOWALL_STEP_ATTRIBUTION',
-  'CARGOWALL_STEP_ORDINAL_BASE',
-  'CARGOWALL_RUNNER_WORKER_PID',
-  'CARGOWALL_INTERFACE',
-  'CARGOWALL_BPF_STATS',
-  'CARGOWALL_AUDIT_LOG',
-  'CARGOWALL_PIDFILE',
-  'CARGOWALL_READY_FILE',
-  'CARGOWALL_FAILURE_FILE',
-  'CARGOWALL_TEST_STRICT',
-  'CARGOWALL_SCOPE_OUTSIDE',
-  // Read by Go and its libraries, never by name in cargowall.
-  'SSL_CERT_FILE',
-  'SSL_CERT_DIR',
-  'GODEBUG',
-  'GOMAXPROCS',
-  'GOTRACEBACK',
-  'LD_PRELOAD',
-]
+const RUNTIME_VARS = ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'GODEBUG', 'GOMAXPROCS', 'GOTRACEBACK', 'LD_PRELOAD']
 
 /** The kept classes, each as the job might set it. */
 const KEPT = {
@@ -81,20 +43,23 @@ const KEPT = {
   ACTIONS_RESULTS_URL: 'https://results-receiver.actions.githubusercontent.com/',
   ACTIONS_CACHE_URL: 'https://artifactcache.actions.githubusercontent.com/x/',
   ACTIONS_ID_TOKEN_REQUEST_URL: 'https://pipelines.actions.githubusercontent.com/x/idtoken',
-  DOCKER_HOST: 'tcp://localhost:2375',
+  DOCKER_HOST: 'tcp://localhost:2376',
   DOCKER_CONTEXT: 'dind',
   DOCKER_CONFIG: '/home/runner/.docker',
+  DOCKER_TLS: '1',
+  DOCKER_TLS_VERIFY: '1',
+  DOCKER_CERT_PATH: '/certs/client',
+  DOCKER_API_VERSION: '1.47',
   HOME: '/home/runner',
-  PATH: '/usr/local/bin:/usr/bin:/bin',
 }
 
 function jobEnv(): NodeJS.ProcessEnv {
   return {
     ...KEPT,
-    ...Object.fromEntries(JOB_SETTABLE.map(n => [n, `job-${n}`])),
-    ...Object.fromEntries(ENV_CONFIG_VARS.map(n => [n, `job-${n}`])),
-    CARGOWALL_GITHUB_SERVICE_HOSTS: 'job-hosts',
-    CARGOWALL_AZURE_INFRA_HOSTS: 'job-hosts',
+    PATH: '/home/runner/.local/bin:/usr/bin:/bin',
+    ...Object.fromEntries([...CARGOWALL_READS, ...RUNTIME_VARS].map(n => [n, `job-${n}`])),
+    CARGOWALL_VERSION: 'v2.0.0-rc.17',
+    CODECARGO_OTHER_TOOL: 'x',
     GITHUB_TOKEN: 'ghs_secret',
     ACTIONS_RUNTIME_TOKEN: 'secret',
     RUNNER_TEMP: '/home/runner/work/_temp',
@@ -104,13 +69,23 @@ function jobEnv(): NodeJS.ProcessEnv {
 describe('cargowallEnv', () => {
   it('passes no variable the job set that cargowall would read as a setting', () => {
     const { env } = cargowallEnv(jobEnv(), SETTINGS)
-    for (const name of JOB_SETTABLE) expect(env[name], name).toBeUndefined()
+    const passed = [...CARGOWALL_READS, ...RUNTIME_VARS].filter(
+      n => !['CARGOWALL_GITHUB_SERVICE_HOSTS', 'CARGOWALL_AZURE_INFRA_HOSTS', 'CARGOWALL_DEFAULT_ACTION'].includes(n)
+    )
+    for (const name of passed) expect(env[name], name).toBeUndefined()
+    expect(env.CARGOWALL_GITHUB_SERVICE_HOSTS).not.toMatch(/^job-/)
+    expect(env.CARGOWALL_DEFAULT_ACTION).toBe('deny')
     for (const name of ['GITHUB_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'RUNNER_TEMP']) expect(env[name], name).toBeUndefined()
   })
 
-  it('keeps the proxy, OTLP, runner-endpoint, Docker and PATH variables, lower-case proxies included', () => {
+  it('keeps the proxy, OTLP, runner-endpoint and Docker variables, lower-case proxies included', () => {
     const { env } = cargowallEnv(jobEnv(), SETTINGS)
     expect(env).toMatchObject(KEPT)
+  })
+
+  it("gives cargowall a fixed PATH, never the job's", () => {
+    expect(cargowallEnv(jobEnv(), SETTINGS).env.PATH).toBe(CARGOWALL_PATH)
+    expect(cargowallEnv({}, SETTINGS).env.PATH).toBe(CARGOWALL_PATH)
   })
 
   it("is the action's settings and the kept classes, nothing else", () => {
@@ -118,6 +93,7 @@ describe('cargowallEnv', () => {
     expect(Object.keys(env).sort()).toEqual(
       [
         ...Object.keys(KEPT),
+        'PATH',
         'CARGOWALL_GITHUB_SERVICE_HOSTS',
         'CARGOWALL_AZURE_INFRA_HOSTS',
         'CARGOWALL_DEFAULT_ACTION',
@@ -159,16 +135,15 @@ describe('cargowallEnv', () => {
   it('with a config file, passes none of the LoadFromEnv variables, so cargowall reads the file', () => {
     const { env } = cargowallEnv(jobEnv(), { ...SETTINGS, configFile: '/work/cargowall.json' })
     for (const name of ENV_CONFIG_VARS) expect(env[name], name).toBeUndefined()
-    expect(env.PATH).toBe(KEPT.PATH)
+    expect(env.PATH).toBe(CARGOWALL_PATH)
   })
 
-  it("names every CARGOWALL_ and CODECARGO_ variable the job carried, the action's own included", () => {
+  it('names the variables cargowall would have read, and only those', () => {
     const { ignored } = cargowallEnv(jobEnv(), SETTINGS)
-    const expected = [...new Set([...JOB_SETTABLE, ...ENV_CONFIG_VARS, 'CARGOWALL_GITHUB_SERVICE_HOSTS', 'CARGOWALL_AZURE_INFRA_HOSTS'])]
-      .filter(n => /^(CARGOWALL|CODECARGO)_/.test(n))
-      .sort()
-    expect(ignored).toEqual(expected)
-    expect(cargowallEnv({ PATH: '/usr/bin', CARGOWALL: 'x', XCARGOWALL_Y: 'x' }, SETTINGS).ignored).toEqual([])
+    expect(ignored).toEqual([...CARGOWALL_READS].sort())
+    expect(ignored).not.toContain('CARGOWALL_VERSION')
+    expect(ignored).not.toContain('CODECARGO_OTHER_TOOL')
+    expect(cargowallEnv({ PATH: '/usr/bin', CARGOWALL_VERSION: 'v2', CODECARGO_X: 'x' }, SETTINGS).ignored).toEqual([])
   })
 })
 
@@ -181,7 +156,7 @@ describe('CARGOWALL_CONFIG', () => {
     for (const configFile of [null, '/work/cargowall.json']) {
       const { env, ignored } = cargowallEnv(base, { ...SETTINGS, configFile })
       expect(env.CARGOWALL_CONFIG, String(configFile)).toBeUndefined()
-      expect(env.PATH).toBe('/usr/bin')
+      expect(env.PATH).toBe(CARGOWALL_PATH)
       expect(ignored).toEqual(['CARGOWALL_CONFIG'])
     }
     expect(base.CARGOWALL_CONFIG).toBe('/etc/cargowall/runner.json')
