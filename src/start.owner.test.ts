@@ -161,6 +161,20 @@ describe('start() and the cargowall pidfile', () => {
     expect(core.error).toHaveBeenCalledWith(expect.stringContaining(`not ready after ${STARTUP_TIMEOUT}s`))
   })
 
+  // A timeout with an enforcing rung asked for under an enforcing mode fails
+  // the step, as the other ways cargowall never comes up do; an observe rung
+  // keeps the warning.
+  it('fails the step on a timeout only for an enforcing rung under an enforcing mode', async () => {
+    const inputs = (i: Record<string, string>) => vi.mocked(core.getInput).mockImplementation((name: string) => i[name] ?? '')
+    inputs({ 'fail-on-unsupported': 'false', 'container-egress': 'enforce' })
+    withStateFiles({ [PID_FILE]: { body: '4243\n', owner: 0 } })
+    await expect(startToTheEnd()).rejects.toThrow(/timed out starting up, and this run asked to enforce --container-egress=enforce.*fail-on-unsupported: false doesn't run/)
+    expect(signalledPids()).toContain('4243')
+
+    inputs({ 'fail-on-unsupported': 'false', 'container-egress': 'observe' })
+    expect(await startToTheEnd()).toEqual({ supported: false, pid: null })
+  })
+
   it('stops cargowall through its launcher on a timeout with no trusted pidfile', async () => {
     withStateFiles({ [PID_FILE]: { body: '31337\n', owner: 0, stale: true } })
 

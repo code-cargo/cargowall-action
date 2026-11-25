@@ -356,11 +356,9 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
       await showLastLog()
       // With an enforcing rung asked for under an enforcing mode, a cargowall
       // that never came up (a binary-path build that predates the flag, say)
-      // fails the step, as its own refusal would: whatever the outcome's name.
-      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) {
-        return handleStartupFailure('', `CargoWall failed to start, and this run asked to enforce ` +
-          `${postureFlags.join(' ')}: fail-on-unsupported: false doesn't run such a job without its firewall`, true)
-      }
+      // fails the step, as its own refusal would: whatever the outcome's name,
+      // a timeout included.
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) return handleStartupFailure('', enforcingRungFailure('failed to start', postureFlags), true)
       return handleStartupFailure('CargoWall failed to start. Network filtering is not active.', 'CargoWall failed to start', failOnUnsupported)
     case 'timeout':
       core.error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1000)}s ` +
@@ -368,6 +366,7 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
           : '(a binary-path or source-ref cargowall, whose startup bounds were never summed)'))
       await showLastLog()
       await stopCargowall([waited.pid, spawnedPid])
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) return handleStartupFailure('', enforcingRungFailure('timed out starting up', postureFlags), true)
       return handleStartupFailure('CargoWall timed out. Network filtering is not active.', 'CargoWall timed out starting up', failOnUnsupported)
     case 'ready':
       break
@@ -798,6 +797,12 @@ async function stopCargowall(pids: Array<number | null>): Promise<void> {
  * cargowall isn't running, so leaving it would break DNS for subsequent jobs on
  * a reused/self-hosted runner. Must happen on the throw path too.
  */
+/** The error for a cargowall that never came up when an enforcing rung was asked for. */
+function enforcingRungFailure(what: string, postureFlags: readonly string[]): string {
+  return `CargoWall ${what}, and this run asked to enforce ${postureFlags.join(' ')}: ` +
+    "fail-on-unsupported: false doesn't run such a job without its firewall"
+}
+
 async function handleStartupFailure(
   warnMessage: string,
   throwMessage: string,

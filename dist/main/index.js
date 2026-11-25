@@ -27005,14 +27005,13 @@ async function start() {
     case "launcher-exited":
       error(waited.kind === "died" ? "CargoWall process exited unexpectedly" : `CargoWall's launcher exited with status ${waited.code} with no live cargowall seen`);
       await showLastLog();
-      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) {
-        return handleStartupFailure("", `CargoWall failed to start, and this run asked to enforce ${postureFlags.join(" ")}: fail-on-unsupported: false doesn't run such a job without its firewall`, true);
-      }
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) return handleStartupFailure("", enforcingRungFailure("failed to start", postureFlags), true);
       return handleStartupFailure("CargoWall failed to start. Network filtering is not active.", "CargoWall failed to start", failOnUnsupported);
     case "timeout":
       error(`Timeout waiting for cargowall to be ready: not ready after ${Math.round(waited.waitedMs / 1e3)}s ` + (pinnedBinary ? `(the pinned cargowall's own bounds on its startup sum to about ${STARTUP_BOUNDS_SECONDS}s; see src/startup.ts)` : "(a binary-path or source-ref cargowall, whose startup bounds were never summed)"));
       await showLastLog();
       await stopCargowall([waited.pid, spawnedPid]);
+      if (enforcingRungRequested(postureFlags, mode) && !failOnUnsupported) return handleStartupFailure("", enforcingRungFailure("timed out starting up", postureFlags), true);
       return handleStartupFailure("CargoWall timed out. Network filtering is not active.", "CargoWall timed out starting up", failOnUnsupported);
     case "ready":
       break;
@@ -27211,6 +27210,9 @@ async function stopCargowall(pids) {
     if (pid == null) continue;
     await exec("sudo", ["kill", String(pid)], { ignoreReturnCode: true, silent: true });
   }
+}
+function enforcingRungFailure(what, postureFlags) {
+  return `CargoWall ${what}, and this run asked to enforce ${postureFlags.join(" ")}: fail-on-unsupported: false doesn't run such a job without its firewall`;
 }
 async function handleStartupFailure(warnMessage, throwMessage, failOnUnsupported) {
   await restoreDns();

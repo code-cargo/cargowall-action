@@ -553,7 +553,8 @@ the configuration:
 
 - **CargoWall never came up, and this run asked to enforce
   `container-egress` or a `tls-sni` rung under `mode: enforce`:** the launcher
-  exited, or cargowall died, before it was ready and without saying why (a
+  exited, cargowall died, or it wasn't ready when the startup wait ran out
+  (the step stops it), without saying why (a
   `binary-path` or `source-ref` build that predates the flag rejects it this
   way, as does a `sudo` that can't run). The error names the flags. It fails
   the step as cargowall's own refusal would, whatever `fail-on-unsupported`
