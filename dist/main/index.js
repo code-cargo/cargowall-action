@@ -26618,6 +26618,7 @@ function cargowallEnv(job, settings) {
   env.CARGOWALL_AZURE_INFRA_HOSTS = settings.azureInfraHosts;
   Object.assign(env, localConfigEnv(settings));
   env.PATH = CARGOWALL_PATH;
+  setDefaultCertPath(env);
   const set = (name) => (job[name] ?? "").trim() !== "";
   const ignored = CARGOWALL_READS.filter(set).sort();
   const trustStore = TRUST_STORE_VARS.filter(set);
@@ -26650,12 +26651,13 @@ var SPAWN_ONLY_VARS = ["HOME", "DOCKER_CONFIG", "DOCKER_CONTEXT"];
 function preservedEnv(env) {
   const out = { ...env };
   for (const name of SPAWN_ONLY_VARS) delete out[name];
-  const blank = (v) => (v ?? "").trim() === "";
-  if ((!blank(env.DOCKER_TLS_VERIFY) || !blank(env.DOCKER_TLS)) && blank(env.DOCKER_CERT_PATH)) {
-    const certs = !blank(env.DOCKER_CONFIG) ? env.DOCKER_CONFIG : !blank(env.HOME) ? `${env.HOME}/.docker` : void 0;
-    if (certs) out.DOCKER_CERT_PATH = certs;
-  }
   return out;
+}
+function setDefaultCertPath(env) {
+  const blank = (v) => (v ?? "").trim() === "";
+  if (blank(env.DOCKER_TLS_VERIFY) && blank(env.DOCKER_TLS) || !blank(env.DOCKER_CERT_PATH)) return;
+  const certs = !blank(env.DOCKER_CONFIG) ? env.DOCKER_CONFIG : !blank(env.HOME) ? `${env.HOME}/.docker` : void 0;
+  if (certs) env.DOCKER_CERT_PATH = certs;
 }
 
 // src/effective.ts

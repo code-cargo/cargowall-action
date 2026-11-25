@@ -229,8 +229,9 @@ describe('the preserved environment', () => {
     expect(cargowallEnv({ DOCKER_HOST: 'tcp://h:2375', DOCKER_TLS: '1', HOME: '/h' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBe('/h/.docker')
     expect(cargowallEnv({ DOCKER_HOST: 'tcp://h:2375', HOME: '/h' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBeUndefined()
     expect(cargowallEnv({ ...tls, DOCKER_TLS_VERIFY: '', HOME: '/h' }, SETTINGS).preserved.DOCKER_CERT_PATH).toBeUndefined()
-    // The spawn's environment, the sudo process's, is the job's as it was.
-    expect(cargowallEnv({ ...tls, HOME: '/home/runner' }, SETTINGS).env.DOCKER_CERT_PATH).toBeUndefined()
+    // sudo --preserve-env takes the value from the spawn's environment, so it
+    // is there too.
+    expect(cargowallEnv({ ...tls, HOME: '/home/runner' }, SETTINGS).env.DOCKER_CERT_PATH).toBe('/home/runner/.docker')
   })
 })
 

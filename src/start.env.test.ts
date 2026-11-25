@@ -207,4 +207,21 @@ describe('start() and the environment it hands cargowall', () => {
     expect(spawn).not.toHaveBeenCalled()
     expect(exec.exec).not.toHaveBeenCalledWith('sudo', expect.arrayContaining(['tee']), expect.anything())
   })
+
+  // sudo --preserve-env=NAME takes NAME's value from sudo's own environment,
+  // the spawn's: the default certificate path must be in both.
+  it("hands cargowall the job's default Docker certificate path where TLS is on", async () => {
+    const inherited = process.env
+    process.env = { PATH: '/usr/bin', HOME: '/home/runner', DOCKER_HOST: 'tcp://h:2376', DOCKER_TLS_VERIFY: '1' }
+    try {
+      withInputs({ offline: 'true' })
+      const argv = await sudoArgs()
+      const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as NodeJS.ProcessEnv
+      expect(env.DOCKER_CERT_PATH).toBe('/home/runner/.docker')
+      expect(argv[0].slice('--preserve-env='.length).split(',')).toContain('DOCKER_CERT_PATH')
+      expect(argv[0].slice('--preserve-env='.length).split(',')).not.toContain('HOME')
+    } finally {
+      process.env = inherited
+    }
+  })
 })

@@ -175,6 +175,7 @@ export function cargowallEnv(job: NodeJS.ProcessEnv, settings: CargowallSettings
   Object.assign(env, localConfigEnv(settings))
 
   env.PATH = CARGOWALL_PATH
+  setDefaultCertPath(env)
   // A blank value configures nothing (cargowall treats one as unset), so it
   // is no reason to warn.
   const set = (name: string) => (job[name] ?? '').trim() !== ''
@@ -246,19 +247,26 @@ export function trustStoreWarning(trustStore: string[], fetchPosture: string | n
 const SPAWN_ONLY_VARS = ['HOME', 'DOCKER_CONFIG', 'DOCKER_CONTEXT'] as const
 
 /**
- * The names to carry into cargowall itself, through sudo --preserve-env.
- * Without HOME and DOCKER_CONFIG, root's docker CLI would look for TLS client
- * certificates in /root/.docker, so where TLS is on and DOCKER_CERT_PATH
- * isn't set, it is set to the job's default: $DOCKER_CONFIG, or
- * $HOME/.docker.
+ * The names to carry into cargowall itself, through sudo --preserve-env,
+ * which preserves each from the spawn's environment: so anything added here
+ * must be in that environment too.
  */
 function preservedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env }
   for (const name of SPAWN_ONLY_VARS) delete out[name]
-  const blank = (v: string | undefined) => (v ?? '').trim() === ''
-  if ((!blank(env.DOCKER_TLS_VERIFY) || !blank(env.DOCKER_TLS)) && blank(env.DOCKER_CERT_PATH)) {
-    const certs = !blank(env.DOCKER_CONFIG) ? env.DOCKER_CONFIG : !blank(env.HOME) ? `${env.HOME}/.docker` : undefined
-    if (certs) out.DOCKER_CERT_PATH = certs
-  }
   return out
+}
+
+/**
+ * Without HOME and DOCKER_CONFIG, root's docker CLI would look for TLS client
+ * certificates in /root/.docker, so where TLS is on and DOCKER_CERT_PATH
+ * isn't set, it is set, in the spawn's environment, to the job's default:
+ * $DOCKER_CONFIG, or $HOME/.docker. That is where the job's own CLI looks, so
+ * pkg/podenv, reading the sudo process's environment, sees nothing new.
+ */
+function setDefaultCertPath(env: NodeJS.ProcessEnv): void {
+  const blank = (v: string | undefined) => (v ?? '').trim() === ''
+  if ((blank(env.DOCKER_TLS_VERIFY) && blank(env.DOCKER_TLS)) || !blank(env.DOCKER_CERT_PATH)) return
+  const certs = !blank(env.DOCKER_CONFIG) ? env.DOCKER_CONFIG : !blank(env.HOME) ? `${env.HOME}/.docker` : undefined
+  if (certs) env.DOCKER_CERT_PATH = certs
 }
