@@ -1,11 +1,13 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import * as github from '@actions/github'
+import * as io from '@actions/io'
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { closeSync, openSync, constants as fsConstants } from 'fs'
 import { detectDnsUpstream } from './dns'
-import { localConfigEnv, requireConfigLoaded, resolveConfigFile } from './configfile'
+import { requireConfigLoaded, resolveConfigFile } from './configfile'
+import { cargowallEnv, envWarnings } from './env'
 import { effectiveReport, modeEcho, modeNotices, parseModeFile, parsePostures, stepRulesWarning, sudoLockdownEcho, sudoLockdownReport } from './effective'
 import { repointResolvConf, restoreDns } from './resolvconf'
 
@@ -228,6 +230,11 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
     core.info("  Policy fetch: skipped — running this step's configuration; post-step audit push still attempted (needs id-token: write)")
   }
 
+  // cargowall's environment is an allowlist: the job's own variables never configure it (src/env.ts).
+  const cwEnv = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts })
+  const sudo = await io.which('sudo', true)
+  envWarnings(cwEnv, apiFailurePosture).forEach(w => core.warning(w))
+
   await repointResolvConf()
 
   // Start cargowall in the background
@@ -238,15 +245,6 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // the wait, and a stale pidfile pointing at a dead PID would trip the liveness
   // check as a false "exited unexpectedly". Best-effort and root-owned, so sudo.
   await clearStartupFiles()
-
-  // Set environment variables for cargowall
-  const env = {
-    ...localConfigEnv(process.env, configFile, { allowedHosts, allowedCidrs, searchDomains }),
-    // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
-    // them would hand cargowall's narrower built-in defaults to the user unannounced.
-    CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
-    CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts,
-  }
 
   const logFd = openSync(CARGOWALL_LOG, 'w')
   // Anchor for sentinel freshness: a failure sentinel older than this spawn is
@@ -260,10 +258,10 @@ export async function start(): Promise<{ supported: boolean; pid: number | null 
   // runner would trigger a push for a job where cargowall never started.
   // Absence of this state tells the post step cargowall was never spawned.
   core.saveState('cargowall-spawned-at', String(spawnedAtMs))
-  const child = spawn('sudo', [...sudoPreserveEnvArgs(env), 'cargowall', ...args], {
+  const child = spawn(sudo, [...sudoPreserveEnvArgs(cwEnv.preserved), 'cargowall', ...args], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
-    env,
+    env: cwEnv.env,
   })
   // cargowall's exit status, which sudo passes through. EXIT_REFUSED is the
   // one refusal channel that needs no state file, for a sentinel that could

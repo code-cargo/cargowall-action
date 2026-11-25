@@ -65,3 +65,22 @@ jobs:
           done
 
           exit $status
+
+      # src/env.ts names what the pinned cargowall reads (CARGOWALL_READS),
+      # which never passes from the job and which the step warns about. A
+      # pin bump to a cargowall with a flag bound to a variable the list
+      # lacks fails here, so the list is rechecked rather than left stale.
+      # src/env.drift.test.ts compares the real array, spreads included.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: CARGOWALL_READS covers the pinned binary's environment-bound flags
+        run: |
+          set -euo pipefail
+          chmod +x cargowall-linux-amd64
+          ./cargowall-linux-amd64 start --help > "$RUNNER_TEMP/cargowall-start-help.txt"
+          CARGOWALL_START_HELP="$RUNNER_TEMP/cargowall-start-help.txt" npx vitest run src/env.drift.test.ts

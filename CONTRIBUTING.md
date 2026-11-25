@@ -37,6 +37,30 @@ push/PR and weekly. A forgotten update, a digest without provenance, or a
 tampered release asset is caught in this repo's CI rather than in a consumer's
 job.
 
+Recheck what cargowall reads from its environment, at the new pin, against
+`src/env.ts`: the allowlist (`JOB_VARS`, `JOB_PREFIXES`), and the names it
+lists as what cargowall reads (`CARGOWALL_READS`), which never pass and
+which the ignored-variable warning names:
+
+```sh
+git grep -o 'env:"[A-Z0-9_,]*"' vX.Y.Z -- 'cmd/*.go' ':!*_test.go'
+git grep -n -E 'os\.(Getenv|LookupEnv|Environ)\(|getenv\(' vX.Y.Z -- '*.go' ':!*_test.go'
+git grep -n -o -E '"(CARGOWALL|CODECARGO|OTEL|DOCKER|ACTIONS)_[A-Z0-9_]*"' vX.Y.Z -- '*.go' ':!*_test.go'
+```
+
+The last catches names read through a helper (`logsFirst(getenv, "OTEL_…")`,
+`os.Getenv(envVar)` over a list). `check-digests` fails a pin bump whose
+binary's `start --help` names a variable `CARGOWALL_READS` lacks, but not a
+direct read or one cargowall needs from the job, which only this recheck
+finds.
+
+Every new variable is either a setting, which joins `CARGOWALL_READS` and stays
+out, or something cargowall needs from the job (as the proxy, OTLP and
+runner-endpoint variables are), which joins the allowlist with a comment
+saying why. Also check what the libraries cargowall links read: Go's HTTP
+proxy variables, the OTLP exporter's `OTEL_*`, and the trust-store
+variables, which stay out.
+
 ### Releasing
 
 The action and the cargowall binary it pins are versioned separately, and the

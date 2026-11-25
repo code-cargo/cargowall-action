@@ -24,6 +24,7 @@ vi.mock('@actions/core', () => ({
   saveState: vi.fn(),
   setOutput: vi.fn(),
 }))
+vi.mock('@actions/io', () => ({ which: vi.fn(async () => '/usr/bin/sudo') }))
 vi.mock('@actions/exec', () => ({ exec: vi.fn(async () => 0) }))
 // For the post step, which the FIX-A case runs after start().
 vi.mock('./summary', () => ({ generateSummary: vi.fn(async () => undefined) }))
@@ -55,7 +56,7 @@ import * as exec from '@actions/exec'
 import { promises as fsp } from 'fs'
 import { spawn } from 'child_process'
 import * as path from 'path'
-import { ENV_CONFIG_VARS } from './configfile'
+import { LOCAL_CONFIG_VARS } from './env'
 import { generateSummary } from './summary'
 import { start } from './start'
 
@@ -134,7 +135,7 @@ const flag = (args: string[], name: string) => args.find(a => a.startsWith(`${na
 
 /** No variable that would make cargowall read the environment instead of the file. */
 function expectNoEnvConfig(env: NodeJS.ProcessEnv): void {
-  for (const name of ENV_CONFIG_VARS) expect(env[name], name).toBeUndefined()
+  for (const name of LOCAL_CONFIG_VARS) expect(env[name], name).toBeUndefined()
 }
 
 /** start() refused before touching the runner: no resolv.conf write, no spawn. */
@@ -210,7 +211,7 @@ describe('start() and config-file', () => {
     expect(flag(spawned().args, '--config')).toBe(resolved)
   })
 
-  it('without a file, sets the environment configuration from the inputs, as before', async () => {
+  it("without a file, sets the environment configuration from the inputs, and never the job's", async () => {
     withInputs({ offline: 'true' }, { 'allowed-hosts': ['github.com'] })
     await start()
     const { args, env } = spawned()
@@ -218,7 +219,7 @@ describe('start() and config-file', () => {
     expect(flag(args, '--config')).toBeUndefined()
     expect(env.CARGOWALL_DEFAULT_ACTION).toBe('deny')
     expect(env.CARGOWALL_ALLOWED_HOSTS).toBe('github.com')
-    expect(env.CARGOWALL_BLOCKED_HOSTS).toBe('from-the-job.example')
+    expect(env.CARGOWALL_BLOCKED_HOSTS).toBeUndefined()
   })
 
   it.each(['allowed-hosts', 'allowed-cidrs', 'search-domains'])(

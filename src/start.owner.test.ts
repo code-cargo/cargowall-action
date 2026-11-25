@@ -21,6 +21,7 @@ vi.mock('@actions/core', () => ({
   saveState: vi.fn(),
   setOutput: vi.fn(),
 }))
+vi.mock('@actions/io', () => ({ which: vi.fn(async () => '/usr/bin/sudo') }))
 vi.mock('@actions/exec', () => ({ exec: vi.fn(async () => 0) }))
 vi.mock('@actions/github', () => ({ context: { job: 'build' } }))
 vi.mock('./dns', async importOriginal => ({

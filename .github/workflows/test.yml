@@ -1327,3 +1327,42 @@ jobs:
             exit 1
           fi
           echo "audit log has $(wc -l < /tmp/cargowall-audit.json) events"
+
+  test-job-env-ignored:
+    name: The job's environment does not configure cargowall (#111)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Each of these would decide a setting the step's inputs leave at
+    # cargowall's default, were it passed through: audit mode under an
+    # enforcing step, and a deny for a host the step allows. example.org is
+    # in no auto-allowed service list, so with the old pass-through the deny
+    # (which beats an allow of the same name) blocks it and the first check
+    # fails.
+    env:
+      CARGOWALL_AUDIT_MODE: 'true'
+      CARGOWALL_BLOCKED_HOSTS: example.org
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup CargoWall
+        id: cargowall
+        uses: ./
+        with:
+          mode: enforce
+          offline: 'true'
+          allowed-hosts: |
+            example.org
+
+      - name: The host the job blocked stays allowed
+        uses: ./.github/actions/assert-egress-allowed
+        with:
+          url: https://example.org
+
+      - name: A disallowed destination is blocked, not merely audited
+        run: |
+          if curl -sf --max-time 5 https://example.com > /dev/null 2>&1; then
+            echo "ERROR: example.com reached under mode: enforce; CARGOWALL_AUDIT_MODE from the job applied"
+            exit 1
+          fi
+          echo "Correctly blocked example.com"

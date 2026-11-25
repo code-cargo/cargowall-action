@@ -479,6 +479,26 @@ Both lists follow the [subdomain rule](#how-hostnames-match), so `blob.core.wind
 
 Setting `github-service-hosts` or `azure-infra-hosts` **replaces** the corresponding list rather than adding to it; whatever you list is the whole list. Neither can be disabled by setting it to an empty value — that is rejected with an error, because it would silently hand you a different set of defaults rather than turning the feature off.
 
+### The Job's Environment
+
+cargowall binds most of its settings to `CARGOWALL_*` variables, so the action starts it with a named set of variables only, never the job's whole environment. No variable from the workflow's or job's `env:`, from `$GITHUB_ENV`, or from the runner sets a cargowall setting: not the mode, not the policy fetch's target, not the rules, and none that this step's inputs leave at cargowall's default. Every setting comes from an input, the `config-file`, the CodeCargo policy, or cargowall's own default. A setting with no input of its own (`CARGOWALL_BPF_STATS`, `CARGOWALL_CLOUD_PROVIDER`, `CARGOWALL_INTERFACE`, among others) has no channel at all, and the step's own `env:` can't be told from the job's.
+
+The variables that do reach cargowall can still change what it does at runtime:
+
+- **A proxy the job sets can break the policy fetch.** Under the default `api-failure-mode` (`audit`, unless `mode` is set), a fetch that fails runs the job in audit mode, blocking nothing. Set `api-failure-mode: fail` where a job's environment must not be able to turn enforcement off this way: a failed fetch then locks the run down instead.
+- **A runner endpoint the runner leaves unset can be set by the job.** cargowall allows HTTPS to the host each `ACTIONS_*_URL` names. The runner sets `ACTIONS_RUNTIME_URL` for every action step, overriding the job's value, but sets `ACTIONS_CACHE_URL`, `ACTIONS_RESULTS_URL` and `ACTIONS_ID_TOKEN_REQUEST_URL` only when it has them (the last only with `permissions: id-token: write`). Where it doesn't, a value from the job's `env:` or `$GITHUB_ENV` reaches cargowall and adds that allow.
+
+What reaches cargowall from the job:
+
+- the proxy variables, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, upper and lower case, which the policy fetch and OTLP export honour;
+- the OTLP export variables, `OTEL_EXPORTER_OTLP_*`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME`;
+- the runner's endpoints, `ACTIONS_RUNTIME_URL`, `ACTIONS_RESULTS_URL`, `ACTIONS_CACHE_URL` and `ACTIONS_ID_TOKEN_REQUEST_URL`, which it allows;
+- the Docker client's variables: `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `HOME` reach the `sudo` that starts cargowall, from whose environment cargowall works out which Docker daemon the job's `docker` uses; `DOCKER_HOST`, `DOCKER_TLS`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH` and `DOCKER_API_VERSION` also reach cargowall itself, so its own `docker` probe reaches that daemon. The job's `HOME`, `DOCKER_CONFIG` and `DOCKER_CONTEXT` don't, so root's `docker` never loads the job's CLI config or plugins.
+
+The action finds `sudo` on the job's `PATH`, but cargowall itself never gets the job's `PATH`: it runs `systemctl`, `docker` and the sudoers tools as root. Where sudoers sets `secure_path`, as on GitHub's hosted runners, that is cargowall's `PATH`; where it doesn't, the action's fixed one is (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin`, Ubuntu's `secure_path`). Beside those, cargowall gets only what the action sets from this step's inputs. When the job sets a variable cargowall would have read as its configuration, the step warns once, naming the variables it ignored (never their values).
+
+`SSL_CERT_FILE` and `SSL_CERT_DIR` don't reach cargowall, and the step warns by name when the job sets one and cargowall will fetch a policy or export to OTLP. A runner that needs a private CA to reach the CodeCargo API or an OTLP collector, behind a TLS-intercepting proxy say, should install it in the system trust store, which cargowall reads by default: otherwise the policy fetch fails, and under the default `api-failure-mode` the run is audited.
+
 ### Sudo Lockdown
 
 When `sudo-lockdown: true`, sudo for the job's user runs only the allowlist: the commands `sudo-allow-commands` lists, or the CodeCargo policy's when the policy sets the sudo lockdown. Anything else, such as `sudo iptables -F`, `sudo pkill cargowall` or `sudo vim /etc/resolv.conf`, is refused:

@@ -8,20 +8,6 @@ import { promises as fs } from 'fs'
 import { isIP } from 'net'
 import * as path from 'path'
 
-/**
- * The variables cargowall's CI loader reads as a configuration (LoadFromEnv in
- * cargowall's pkg/config). Any one of them set makes it load the environment
- * and skip --config, so with a config file none may reach it.
- */
-export const ENV_CONFIG_VARS = [
-  'CARGOWALL_DEFAULT_ACTION',
-  'CARGOWALL_ALLOWED_HOSTS',
-  'CARGOWALL_ALLOWED_CIDRS',
-  'CARGOWALL_BLOCKED_HOSTS',
-  'CARGOWALL_BLOCKED_CIDRS',
-  'CARGOWALL_SEARCH_DOMAINS',
-] as const
-
 /** The top-level keys of cargowall's config file (FirewallConfig). */
 const CONFIG_KEYS = ['rules', 'defaultAction', 'searchDomains', 'sudoLockdown', 'steps']
 
@@ -375,28 +361,4 @@ export async function requireConfigLoaded(logPath: string, configFile: string): 
       'allowed (in audit, every other connection is reported as would-deny). ' +
       `Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, 'No config loaded').trim()}` : ''}`
   )
-}
-
-/**
- * The environment cargowall starts with, as far as its local configuration
- * goes. With a config file, no configuration variable reaches it, the job's
- * own included, so it reads the file; without one, the inputs set the
- * configuration, with deny as the default action. CARGOWALL_CONFIG never
- * reaches it: --config carries this step's file, and cargowall refuses to
- * start with a file that variable names beside the inputs' configuration.
- */
-export function localConfigEnv(base: NodeJS.ProcessEnv, configFile: string | null, inputs: EnvConfigInputs): NodeJS.ProcessEnv {
-  const env = { ...base }
-  delete env.CARGOWALL_CONFIG
-  if (configFile) {
-    for (const name of ENV_CONFIG_VARS) delete env[name]
-    return env
-  }
-  return {
-    ...env,
-    CARGOWALL_DEFAULT_ACTION: 'deny',
-    ...(inputs.allowedHosts && { CARGOWALL_ALLOWED_HOSTS: inputs.allowedHosts }),
-    ...(inputs.allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: inputs.allowedCidrs }),
-    ...(inputs.searchDomains && { CARGOWALL_SEARCH_DOMAINS: inputs.searchDomains }),
-  }
 }

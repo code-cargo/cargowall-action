@@ -26314,14 +26314,6 @@ async function detectDnsUpstream(userInput) {
 var import_fs5 = require("fs");
 var import_net2 = require("net");
 var path5 = __toESM(require("path"));
-var ENV_CONFIG_VARS = [
-  "CARGOWALL_DEFAULT_ACTION",
-  "CARGOWALL_ALLOWED_HOSTS",
-  "CARGOWALL_ALLOWED_CIDRS",
-  "CARGOWALL_BLOCKED_HOSTS",
-  "CARGOWALL_BLOCKED_CIDRS",
-  "CARGOWALL_SEARCH_DOMAINS"
-];
 var CONFIG_KEYS = ["rules", "defaultAction", "searchDomains", "sudoLockdown", "steps"];
 var RULE_KEYS = ["type", "value", "ports", "action"];
 var PORT_KEYS = ["port", "protocol"];
@@ -26527,20 +26519,145 @@ async function requireConfigLoaded(logPath, configFile) {
     `CargoWall did not load config-file ${configFile}, so it is running deny-all, with only CI infrastructure allowed (in audit, every other connection is reported as would-deny). Fix the file${why ? `; cargowall said: ${why.replace(/^.*?No config loaded/, "No config loaded").trim()}` : ""}`
   );
 }
-function localConfigEnv(base, configFile, inputs) {
-  const env = { ...base };
-  delete env.CARGOWALL_CONFIG;
-  if (configFile) {
-    for (const name of ENV_CONFIG_VARS) delete env[name];
-    return env;
+
+// src/env.ts
+var JOB_VARS = [
+  // Go's HTTP transport, for the policy fetch and OTLP export.
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+  // OTLP log export (pkg/otlp); OTEL_EXPORTER_OTLP_* by prefix below.
+  "OTEL_RESOURCE_ATTRIBUTES",
+  "OTEL_SERVICE_NAME",
+  // The runner's endpoints, which the GitHub auto-allow opens.
+  "ACTIONS_RUNTIME_URL",
+  "ACTIONS_RESULTS_URL",
+  "ACTIONS_CACHE_URL",
+  "ACTIONS_ID_TOKEN_REQUEST_URL",
+  // How the job reaches Docker. cargowall identifies the daemon the job's
+  // docker CLI uses from DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG and
+  // HOME, as the CLI resolves it (pkg/podenv), reading them from the
+  // environment the sudo that started it was given; and its own docker
+  // probe after a restart (docker info) is that CLI, which needs the TLS
+  // and API-version variables beside DOCKER_HOST to reach the same daemon.
+  // No cargowall setting is bound to any of them. HOME, DOCKER_CONFIG and
+  // DOCKER_CONTEXT reach only the sudo process, never cargowall's own
+  // environment (SPAWN_ONLY_VARS).
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "DOCKER_TLS",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "DOCKER_API_VERSION",
+  "HOME"
+];
+var CARGOWALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
+var LOCAL_CONFIG_VARS = [
+  "CARGOWALL_DEFAULT_ACTION",
+  "CARGOWALL_ALLOWED_HOSTS",
+  "CARGOWALL_ALLOWED_CIDRS",
+  "CARGOWALL_BLOCKED_HOSTS",
+  "CARGOWALL_BLOCKED_CIDRS",
+  "CARGOWALL_SEARCH_DOMAINS"
+];
+var CARGOWALL_READS = [
+  "CARGOWALL_ALLOW_EXISTING_CONNECTIONS",
+  "CARGOWALL_API_FAILURE_MODE",
+  "CARGOWALL_API_URL",
+  "CARGOWALL_AUDIT_LOG",
+  "CARGOWALL_AUDIT_MODE",
+  "CARGOWALL_AUTO_ALLOW_CLOUD_METADATA",
+  "CARGOWALL_AUTO_ALLOW_GITHUB_HOSTS",
+  "CARGOWALL_AUTO_ALLOW_GITLAB_HOSTS",
+  "CARGOWALL_BPF_STATS",
+  "CARGOWALL_CONFIG",
+  "CARGOWALL_CONTAINER_EGRESS",
+  "CARGOWALL_DNS_QUERY_FILTERING",
+  "CARGOWALL_DNS_REDIRECT",
+  "CARGOWALL_DNS_REDIRECT_IPTABLES",
+  "CARGOWALL_DNS_UPSTREAM",
+  "CARGOWALL_DOCKER_DNS_INTERCEPTION",
+  "CARGOWALL_FAILURE_FILE",
+  "CARGOWALL_GITHUB_ACTION",
+  "CARGOWALL_GITLAB_CI",
+  "CARGOWALL_INTERFACE",
+  "CARGOWALL_JOB_KEY",
+  "CARGOWALL_PIDFILE",
+  "CARGOWALL_PREPOPULATE_DNS_CACHE",
+  "CARGOWALL_READY_FILE",
+  "CARGOWALL_RUNNER_WORKER_PID",
+  "CARGOWALL_STEP_ATTRIBUTION",
+  "CARGOWALL_STEP_ORDINAL_BASE",
+  "CARGOWALL_SUDO_ALLOW_COMMANDS",
+  "CARGOWALL_SUDO_LOCKDOWN",
+  "CARGOWALL_SUDO_LOCKDOWN_USER",
+  "CARGOWALL_TLS_SNI",
+  "CODECARGO_AUTH_TOKEN",
+  // Read directly, not through a flag.
+  "CARGOWALL_CLOUD_PROVIDER",
+  "CARGOWALL_AZURE_INFRA_HOSTS",
+  "CARGOWALL_GITHUB_SERVICE_HOSTS",
+  "CARGOWALL_GITLAB_SERVICE_HOSTS",
+  ...LOCAL_CONFIG_VARS
+];
+var TRUST_STORE_VARS = ["SSL_CERT_FILE", "SSL_CERT_DIR"];
+var JOB_PREFIXES = ["OTEL_EXPORTER_OTLP_"];
+function cargowallEnv(job, settings) {
+  const env = {};
+  for (const [name, value] of Object.entries(job)) {
+    if (value === void 0) continue;
+    if (JOB_VARS.includes(name) || JOB_PREFIXES.some((p) => name.startsWith(p))) {
+      env[name] = value;
+    }
   }
-  return {
-    ...env,
-    CARGOWALL_DEFAULT_ACTION: "deny",
-    ...inputs.allowedHosts && { CARGOWALL_ALLOWED_HOSTS: inputs.allowedHosts },
-    ...inputs.allowedCidrs && { CARGOWALL_ALLOWED_CIDRS: inputs.allowedCidrs },
-    ...inputs.searchDomains && { CARGOWALL_SEARCH_DOMAINS: inputs.searchDomains }
-  };
+  env.CARGOWALL_GITHUB_SERVICE_HOSTS = settings.githubServiceHosts;
+  env.CARGOWALL_AZURE_INFRA_HOSTS = settings.azureInfraHosts;
+  Object.assign(env, localConfigEnv(settings));
+  env.PATH = CARGOWALL_PATH;
+  setDefaultCertPath(env);
+  const set = (name) => (job[name] ?? "").trim() !== "";
+  const ignored = CARGOWALL_READS.filter(set).sort();
+  const trustStore = TRUST_STORE_VARS.filter(set);
+  return { env, preserved: preservedEnv(env), ignored, trustStore };
+}
+function envWarnings(e, fetchPosture) {
+  return [ignoredVarsWarning(e.ignored), trustStoreWarning(e.trustStore, fetchPosture, e.preserved)].filter(
+    (w) => w !== null
+  );
+}
+function localConfigEnv(settings) {
+  if (settings.configFile) return {};
+  const env = { CARGOWALL_DEFAULT_ACTION: "deny" };
+  if (settings.allowedHosts) env.CARGOWALL_ALLOWED_HOSTS = settings.allowedHosts;
+  if (settings.allowedCidrs) env.CARGOWALL_ALLOWED_CIDRS = settings.allowedCidrs;
+  if (settings.searchDomains) env.CARGOWALL_SEARCH_DOMAINS = settings.searchDomains;
+  return env;
+}
+function ignoredVarsWarning(ignored) {
+  if (ignored.length === 0) return null;
+  return `CargoWall ignores ${ignored.join(", ")} from the job's environment: only this step's inputs, its config-file and the CodeCargo policy configure it. Set what you need through one of those, where one covers the setting.`;
+}
+function trustStoreWarning(trustStore, fetchPosture, env) {
+  const otlp = Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT || env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT);
+  if (trustStore.length === 0 || fetchPosture === null && !otlp) return null;
+  const consequence = fetchPosture === "audit" ? "the policy fetch fails and the run is audited instead of enforced" : fetchPosture === "fail" ? "the policy fetch fails and the run is locked down" : fetchPosture !== null ? "the policy fetch fails and this step's own configuration applies" : "OTLP export fails";
+  return `CargoWall doesn't pass ${trustStore.join(", ")} to cargowall: a private CA it needs, for a TLS-intercepting proxy say, must be in the system trust store, or ${consequence}.`;
+}
+var SPAWN_ONLY_VARS = ["HOME", "DOCKER_CONFIG", "DOCKER_CONTEXT"];
+function preservedEnv(env) {
+  const out = { ...env };
+  for (const name of SPAWN_ONLY_VARS) delete out[name];
+  return out;
+}
+function setDefaultCertPath(env) {
+  const blank = (v) => (v ?? "").trim() === "";
+  if (blank(env.DOCKER_TLS_VERIFY) && blank(env.DOCKER_TLS) || !blank(env.DOCKER_CERT_PATH)) return;
+  const certs = !blank(env.DOCKER_CONFIG) ? env.DOCKER_CONFIG : !blank(env.HOME) ? `${env.HOME}/.docker` : void 0;
+  if (certs) env.DOCKER_CERT_PATH = certs;
 }
 
 // src/effective.ts
@@ -26871,23 +26988,19 @@ async function start() {
   if (skipPolicyFetch && apiUrl && !offline) {
     info("  Policy fetch: skipped \u2014 running this step's configuration; post-step audit push still attempted (needs id-token: write)");
   }
+  const cwEnv = cargowallEnv(process.env, { configFile, allowedHosts, allowedCidrs, searchDomains, githubServiceHosts, azureInfraHosts });
+  const sudo = await which("sudo", true);
+  envWarnings(cwEnv, apiFailurePosture).forEach((w) => warning(w));
   await repointResolvConf();
   info("Starting cargowall...");
   await clearStartupFiles();
-  const env = {
-    ...localConfigEnv(process.env, configFile, { allowedHosts, allowedCidrs, searchDomains }),
-    // Always set: requireNonEmptyHostList guarantees these are non-empty, and omitting
-    // them would hand cargowall's narrower built-in defaults to the user unannounced.
-    CARGOWALL_GITHUB_SERVICE_HOSTS: githubServiceHosts,
-    CARGOWALL_AZURE_INFRA_HOSTS: azureInfraHosts
-  };
   const logFd = (0, import_fs8.openSync)(CARGOWALL_LOG, "w");
   const spawnedAtMs = Date.now();
   saveState("cargowall-spawned-at", String(spawnedAtMs));
-  const child2 = (0, import_child_process.spawn)("sudo", [...sudoPreserveEnvArgs(env), "cargowall", ...args], {
+  const child2 = (0, import_child_process.spawn)(sudo, [...sudoPreserveEnvArgs(cwEnv.preserved), "cargowall", ...args], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env
+    env: cwEnv.env
   });
   let exitCode = null;
   child2.on("exit", (code) => {
